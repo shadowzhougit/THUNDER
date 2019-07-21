@@ -25,11 +25,40 @@ inline bool operator==(const dvec4& v1,
 {
     for (int i = 0; i < 4; i++)
     {
-        if (v1[i] != v2[i])
+        if (fabs(v1[i] - v2[i]) > EQUAL_ACCURACY)
             return false;
     }
 
     return true;
 }
+
+inline double dot(const dvec4& v1,
+                  const dvec4& v2)
+{
+    double d = 0;
+
+    for (int i = 0; i < 4; i++)
+    {
+        d += v1[i] * v2[i];
+    }
+
+    return d;
+}
+
+inline bool operator==(const dmat44& m1,
+                       const dmat44& m2)
+{
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++)
+        {
+            if (fabs(m1(i, j) - m2(i, j)) > EQUAL_ACCURACY)
+                return false;
+        }
+
+    return true;
+}
+
+dmat44 tensor(const dvec4& v1,
+              const dvec4& v2);
 
 #endif // LINEAR_ALGEBRA_H

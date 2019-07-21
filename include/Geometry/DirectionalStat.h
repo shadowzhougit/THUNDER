@@ -33,6 +33,15 @@
 #include "Precision.h"
 #include "Random.h"
 #include "Functions.h"
+#include "LinearAlgebra.h"
+
+/**
+ * @brief Calculate the projective arithmetic mean of a set of rotations in unit quaternions.
+ *
+ * @return the projective arithmetic mean
+ */
+dvec4 mean(const dmat4& src         /**< [in]  a set of rotations in unit quaternions */
+           );
 
 /**
  * @brief Calculate the projective arithmetic mean of a set of rotations in unit quaternions.
@@ -144,6 +153,8 @@ void inferACG(double& k1,       /**< [in] first parameter of a positive-definite
 void inferACG(dvec4& mean,      /**< [in] the mean of ACG distribution */
               const dmat4& src  /**< [in] the given data */
               );
+
+double inferACGStillCentral(const dmat4& src);
 
 /**
  * @brief Calculate the probability density function of von Mises Distribution M(mu, kappa).

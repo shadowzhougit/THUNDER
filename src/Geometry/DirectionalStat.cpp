@@ -1,20 +1,33 @@
-/*******************************************************************************
- * Author: Mingxu Hu
- * Dependency:
- * Test:
- * Execution:
- * Description:
+/** @file
+ *  @author Mingxu Hu
+ *  @version 1.4.14.190630
+ *  @copyright GPLv2
  *
- * Manual:
- * ****************************************************************************/
+ *  ChangeLog
+ *  AUTHOR      | TIME       | VERSION       | DESCRIPTION
+ *  ------      | ----       | -------       | -----------
+ *  Mingxu Hu   | 2019/06/30 | 1.4.14.190630 | mean function added
+ */
 
 #include "DirectionalStat.h"
 
-void mean(dvec4& dst,
-          const dmat4& src)
+dvec4 mean(const dmat4& src)
 {
-}
+    dmat44 T = dmat44::Zero();
 
+    for (int i = 0; i < src.rows(); i++)
+    {
+        T += tensor(src.row(i), src.row(i));
+    }
+
+    SelfAdjointEigenSolver<dmat44> eigenSolver(T);
+
+    int i;
+    eigenSolver.eigenvalues().maxCoeff(&i);
+    dvec4 m = eigenSolver.eigenvectors().col(i);
+
+    return m / m.norm();
+}
 
 double pdfACG(const dvec4& x,
               const dmat44& sig)
@@ -98,6 +111,8 @@ void inferACG(dmat44& dst,
 
     do
     {
+        // std::cout << B << std::endl;
+
         A = B;
 
         B = dmat44::Zero();
@@ -106,15 +121,19 @@ void inferACG(dmat44& dst,
         for (int i = 0; i < src.rows(); i++)
         {
             // get the tensor product of the i-th quaternion and itself
+            /***
             dmat44 tensor;
             for (int j = 0; j < 4; j++)
                 for (int k = 0; k < 4; k++)
                     tensor(j, k) = src(i, j) * src(i, k);
+            ***/
+            // dvec4 row = src.row(i);
+            dmat44 t = tensor(src.row(i), src.row(i));
 
             // get the factor
             double u = src.row(i) * A.inverse() * src.row(i).transpose();
 
-            B += tensor / u;
+            B += t / u;
 
             nf += 1.0 / u;
         }
@@ -153,10 +172,6 @@ void inferACG(double& k0,
 
     SelfAdjointEigenSolver<dmat44> eigenSolver(A);
 
-    //dvec4 ev = eigenSolver.eigenvalues();
-
-    //ev = ev.cwiseAbs();
-    
     uvec s = d_index_sort_descend(eigenSolver.eigenvalues());
     k0 = eigenSolver.eigenvalues()(s[0]);
     k1 = eigenSolver.eigenvalues()(s[1]);
@@ -249,6 +264,38 @@ void inferACG(dvec4& mean,
 #endif
 }
 
+double inferACGStillCentral(const dmat4& src)
+{
+    double xiA;
+    double xiB = 1;
+
+    // std::cout << xiB << std::endl;
+
+    do
+    {
+        xiA = xiB;
+
+        double t = 0;
+
+        for (int i = 0; i < src.rows(); i++)
+        {
+            t += gsl_pow_2(src(i, 0))
+               / (gsl_pow_2(src(i, 0)) / xiA
+                + gsl_pow_2(src(i, 1))
+                + gsl_pow_2(src(i, 2))
+                + gsl_pow_2(src(i, 3)));
+        }
+
+        // std::cout << "t = " << t << std::endl;
+
+        xiB = t * 4 / src.rows();
+
+        // std::cout << xiB << std::endl;
+    } while(fabs(xiA - xiB) > 1e-3);
+
+    return sqrt(xiA);
+}
+
 double pdfVMS(const dvec2& x,
               const dvec2& mu,
               const double k)
@@ -262,7 +309,7 @@ double pdfVMS(const dvec2& x,
 }
 
 void sampleVMS(dmat2& dst,
-               const vec2& mu,
+               const dvec2& mu,
                const double k,
                const double n)
 {
@@ -313,6 +360,8 @@ void sampleVMS(dmat2& dst,
                 dst(i, 0) = mu(0) * f - delta0;
                 dst(i, 1) = mu(1) * f + delta1;
             }
+
+            dst.row(i) /= dst.row(i).norm();
         }
     }
 }
@@ -326,7 +375,7 @@ void sampleVMS(dmat4& dst,
 
     dmat2 dst2D = dst.leftCols<2>();
 
-    sampleVMS(dst2D, vec2(mu(0), mu(1)), k, n);
+    sampleVMS(dst2D, dvec2(mu(0), mu(1)), k, n);
 
     dst.leftCols<2>() = dst2D;
 }

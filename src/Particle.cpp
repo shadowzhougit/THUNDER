@@ -1023,7 +1023,7 @@ void Particle::calVari(const ParticleType pt)
             _k3 = _k1;
             ***/
 
-            dvec4 mean;
+            dvec4 meanR;
 
             dvec4 quat;
 
@@ -1049,13 +1049,15 @@ void Particle::calVari(const ParticleType pt)
 
 #ifdef PARTICLE_ROT_MEAN_USING_STAT_CAL_VARI
 
-            inferACG(mean, _r);
+            meanR = mean(_r);
+
+            // inferACG(mean, _r);
 
             for (int i = 0; i < _nR; i++)
             {
                 quat = _r.row(i).transpose();
 
-                quaternion_mul(quat, quaternion_conj(mean), quat);
+                quaternion_mul(quat, quaternion_conj(meanR), quat);
 
                 _r.row(i) = quat.transpose();
             }
@@ -1064,13 +1066,19 @@ void Particle::calVari(const ParticleType pt)
 
             inferACG(_k1, _k2, _k3, _r);
 
+            double k = inferACGStillCentral(_r);
+
+            _k1 = 1.0 / gsl_pow_2(k);
+            _k2 = 1.0 / gsl_pow_2(k);
+            _k3 = 1.0 / gsl_pow_2(k);
+
 #ifdef PARTICLE_ROT_MEAN_USING_STAT_CAL_VARI
 
             for (int i = 0; i < _nR; i++)
             {
                 quat = _r.row(i).transpose();
 
-                quaternion_mul(quat, mean, quat);
+                quaternion_mul(quat, meanR, quat);
 
                 _r.row(i) = quat.transpose();
             }
