@@ -105,8 +105,11 @@ void Image::alloc(const long nCol,
 
 void Image::saveRLToBMP(const char* filename) const
 {
-    size_t nRowBMP = _nRow / 4 * 4;
-    size_t nColBMP = _nCol / 4 * 4;
+    // size_t nRowBMP = _nRow / 4 * 4;
+    // size_t nColBMP = _nCol / 4 * 4;
+
+    long nRowBMP = _nRow / 4 * 4;
+    long nColBMP = _nCol / 4 * 4;
 
     float* image = new float[nRowBMP * nColBMP];
 
@@ -137,8 +140,11 @@ void Image::saveRLToBMP(const char* filename) const
 
 void Image::saveFTToBMP(const char* filename, RFLOAT c) const
 {
-    size_t nRowBMP = _nRow / 4 * 4;
-    size_t nColBMP = _nCol / 4 * 4;
+    // size_t nRowBMP = _nRow / 4 * 4;
+    // size_t nColBMP = _nCol / 4 * 4;
+
+    long nRowBMP = _nRow / 4 * 4;
+    long nColBMP = _nCol / 4 * 4;
 
     float* image = new float[nRowBMP * nColBMP];
 
