@@ -154,7 +154,23 @@ void inferACG(dvec4& mean,      /**< [in] the mean of ACG distribution */
               const dmat4& src  /**< [in] the given data */
               );
 
-double inferACGStillCentral(const dmat4& src);
+/**
+ * @brief Calculate the k value in the special covariance matrix, given a set of unit quaternions.
+ *
+ * @return the k value in the special covariance matrix
+ */
+double inferACGStillCentral(const dmat4& src /**< [in] the set of unit quaternions */
+                            );
+
+/**
+ * @brief Calculate the probability density function of von Mises distribution, given the mean and the concentration parameter.
+ *
+ * @return the value of probability density function of von Mises distribution.
+ */
+double pdfVMSKappa(const dvec2& x,     /**< [in] the direction vector in 2D */
+                   const dvec2& mu,    /**< [in] the mean of the von Mises distribution */
+                   const double kappa  /**< [in] the concentration parameter */
+                   );
 
 /**
  * @brief Calculate the probability density function of von Mises Distribution M(mu, kappa).

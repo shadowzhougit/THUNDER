@@ -6,17 +6,16 @@
  *  ChangeLog
  *  AUTHOR      | TIME       | VERSION       | DESCRIPTION
  *  ------      | ----       | -------       | -----------
- *  Mingxu Hu   | 2019/06/29 | 1.4.14.090709 | new file
+ *  Mingxu Hu   | 2019/07/09 | 1.4.14.090709 | new file
+ *  Mingxu Hu   | 2019/08/21 | 1.4.14.090821 | DirectionalStatVMSPdfVMSKappaTest added
  */
 
 #include <gtest/gtest.h>
-//#include <gmock/gmock.h>
 
 #include <DirectionalStat.h>
 
 INITIALIZE_EASYLOGGINGPP
 
-//class DirectionalStatVMSTest : public :: testing:: Test
 class DirectionalStatVMSTest : public :: testing:: TestWithParam<int>
 {
 };
@@ -31,6 +30,16 @@ TEST_P(DirectionalStatVMSTest, SampleVMSNorm)
 }
 
 INSTANTIATE_TEST_CASE_P(DirectionalStatVMSTestRepeat, DirectionalStatVMSTest, ::testing::Range(0, 10000));
+
+TEST(DirectionalStatVMSPdfVMSKappaTest, DirectionalStatVMSPdfVMSKappaTestKappaEqualToZero)
+{
+    EXPECT_EQ(pdfVMSKappa(dvec2(1, 0), dvec2(1, 0), 0), 1.0 / (2 * M_PI));
+    EXPECT_EQ(pdfVMSKappa(dvec2(1, 0), dvec2(0, 1), 0), 1.0 / (2 * M_PI));
+    EXPECT_EQ(pdfVMSKappa(dvec2(0, 1), dvec2(1, 0), 0), 1.0 / (2 * M_PI));
+    EXPECT_EQ(pdfVMSKappa(dvec2(0, 1), dvec2(0, 1), 0), 1.0 / (2 * M_PI));
+    EXPECT_EQ(pdfVMSKappa(dvec2(sqrt(2) / 2, sqrt(2)), dvec2(0, 1), 0), 1.0 / (2 * M_PI));
+    EXPECT_EQ(pdfVMSKappa(dvec2(sqrt(2) / 2, sqrt(2)), dvec2(1, 0), 0), 1.0 / (2 * M_PI));
+}
 
 int main(int argc, char* argv[])
 {

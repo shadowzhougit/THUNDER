@@ -296,16 +296,27 @@ double inferACGStillCentral(const dmat4& src)
     return sqrt(xiA);
 }
 
+double pdfVMSKappa(const dvec2& x,
+                   const dvec2& mu,
+                   const double kappa)
+{
+    if (kappa < 5) // avoiding overflow
+    {
+        return exp(kappa * x.dot(mu)) / (2 * M_PI * gsl_sf_bessel_I0(kappa));
+    }
+    else
+    {
+        return gsl_ran_gaussian_pdf((x - mu).norm(), sqrt(1.0 / kappa));
+    }
+}
+
 double pdfVMS(const dvec2& x,
               const dvec2& mu,
               const double k)
 {
     double kappa = (1 - k) * (1 + 2 * k - gsl_pow_2(k)) / k / (2 - k);
 
-    if (kappa < 5) // avoiding overflow
-        return exp(kappa * x.dot(mu)) / (2 * M_PI * gsl_sf_bessel_I0(kappa));
-    else
-        return gsl_ran_gaussian_pdf((x - mu).norm(), sqrt(1.0 / kappa));
+    return pdfVMSKappa(x, mu, kappa);
 }
 
 void sampleVMS(dmat2& dst,
