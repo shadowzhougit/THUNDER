@@ -128,10 +128,16 @@ void Image::saveRLToBMP(const char* filename) const
     BMP bmp;
 
     if (bmp.open(filename, "wb") == 0)
+    {
         REPORT_ERROR("FAILING TO OPEN BITCAMP FILE");
+        abort();
+    }
 
     if (bmp.createBMP(image, nColBMP, nRowBMP) == false)
+    {
         REPORT_ERROR("FAILING TO CREATE BMP FILE");
+        abort();
+    }
 
     bmp.close();
 
