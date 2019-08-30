@@ -302,7 +302,26 @@ double pdfVMSKappa(const dvec2& x,
 {
     if (kappa < 5) // avoiding overflow
     {
-        return exp(kappa * x.dot(mu)) / (2 * M_PI * gsl_sf_bessel_I0(kappa));
+        gsl_sf_result u;
+
+        int status = gsl_sf_bessel_I0_e(kappa, &u);
+
+        /***
+        if (status != 0)
+        {
+            CLOG(FATAL, "LOGGER_SYS") << "gsl_sf_bessel_I0 ERROR, kappa = " << kappa << ", k = " << k;
+
+            // std::cout << "kappa = " << kappa << std::endl;
+
+            // REPORT_ERROR("gsl_sf_bessel_I0 ERROR");
+
+            abort();
+        }
+        ***/
+
+        return exp(kappa * x.dot(mu)) / (2 * M_PI * u.val);
+
+        // return exp(kappa * x.dot(mu)) / (2 * M_PI * gsl_sf_bessel_I0(kappa));
     }
     else
     {
@@ -395,6 +414,23 @@ void inferVMS(dvec2& mu,
               double& k,
               const dmat2& src)
 {
+    /***
+    for (int i = 0; i < src.rows(); i++)
+    {
+        src.row(i).array() /= src.row(i).norm();
+    }
+    ***/
+
+    /***
+    for (int i = 0; i < src.rows(); i++)
+    {
+        if (src.row(i).norm() != 1)
+        {
+            CLOG(FATAL, "LOGGER_SYS") << "inferVMS ERROR, src.row(i).norm() = " << src.row(i).norm();
+        }
+    }
+    ***/
+
     mu = dvec2::Zero();
 
     for (int i = 0; i < src.rows(); i++)
@@ -404,6 +440,13 @@ void inferVMS(dvec2& mu,
     }
 
     double R = mu.norm() / src.rows();
+
+    /***
+    if (R > 1)
+    {
+        CLOG(FATAL, "LOGGER_SYS") << "inferVMS ERROR, R = " << R;
+    }
+    ***/
 
     mu /= mu.norm();
 

@@ -31,6 +31,7 @@
 #include "Macro.h"
 #include "Typedef.h"
 #include "Precision.h"
+#include "Logging.h"
 #include "Random.h"
 #include "Functions.h"
 #include "LinearAlgebra.h"
