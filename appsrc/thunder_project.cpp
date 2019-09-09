@@ -62,6 +62,7 @@ void usage (int status)
         fputs("--metadata       set the filename of outputting metadata.\n", stdout);
         fputs("-n               set the number of projections.\n", stdout);
         fputs("--pixelsize      set the pixel size.\n", stdout);
+        fputs("--paddingfactor  set the padding factor of projector.\n", stdout);
         fputs("-j               set the number of threads per process to carry out work.\n", stdout);
 
         fputs("\n--help           display this help\n", stdout);
@@ -76,6 +77,7 @@ static const struct option long_options[] =
     {"output", required_argument, NULL, 'o'},
     {"metadata", required_argument, NULL, 'm'},
     {"pixelsize", required_argument, NULL, 'p'},
+    {"paddingfactor", required_argument, NULL, 'f'},
     {"help", no_argument, NULL, 'h'},
     {NULL, 0, NULL, 0}
 };
@@ -89,8 +91,9 @@ int main(int argc, char* argv[])
     int n;
     double pixelsize;
     int nThread;
+    int pf;
 
-    char option[6] = {'o', 'i', 'n', 'm', 'p', 'j'};
+    char option[] = {'o', 'i', 'n', 'm', 'p', 'j', 'f'};
 
     int option_index = 0;
 
@@ -126,6 +129,10 @@ int main(int argc, char* argv[])
             case('j'):
                 nThread = atoi(optarg);
                 option[5] = '\0';
+                break;
+            case('f'):
+                pf = atoi(optarg);
+                option[6] = '\0';
                 break;
             case('h'):
                 usage(EXIT_SUCCESS);
@@ -173,6 +180,7 @@ int main(int argc, char* argv[])
     CLOG(INFO, "LOGGER_SYS") << "Setting Projector";
 
     Projector proj;
+    proj.setPf(pf);
     proj.setProjectee(ref.copyVolume(), nThread);
 
     FFT ffwImg;

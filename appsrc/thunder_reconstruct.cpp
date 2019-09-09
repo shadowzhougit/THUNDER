@@ -58,6 +58,7 @@ void usage (int status)
         fputs("--symmetry       set the symmetry.\n", stdout);
         fputs("--boxsize        set the boxsize of input image.\n", stdout);
         fputs("--pixelsize      set the pixel size.\n", stdout);
+        fputs("--paddingfactor  set the padding factor of reconstructor.\n", stdout);
         fputs("-j               set the number of threads per process to carry out work.\n", stdout);
 
         fputs("\n--help           display this help\n", stdout);
@@ -73,6 +74,7 @@ static const struct option long_options[] =
     {"symmetry", required_argument, NULL, 's'},
     {"boxsize", required_argument, NULL, 'b'},
     {"pixelsize", required_argument, NULL, 'p'},
+    {"paddingfactor", required_argument, NULL, 'f'},
     {"help", no_argument, NULL, 'h'},
     {NULL, 0, NULL, 0}
 };
@@ -85,9 +87,9 @@ int main(int argc, char* argv[])
     char* input;
     char* symmetry;
     double pixelsize;
-    int boxsize, nThread;
+    int boxsize, nThread, pf;
 
-    char option[6] = {'o', 'i', 's', 'b', 'p', 'j'};
+    char option[] = {'o', 'i', 's', 'b', 'p', 'j', 'f'};
 
     int option_index = 0;
 
@@ -123,6 +125,10 @@ int main(int argc, char* argv[])
             case('j'):
                 nThread = atoi(optarg);
                 option[5] = '\0';
+                break;
+            case('f'):
+                pf = atoi(optarg);
+                option[6] = '\0';
                 break;
             case('h'):
                 usage(EXIT_SUCCESS);
@@ -191,7 +197,7 @@ int main(int argc, char* argv[])
 
     Symmetry sym(symmetry);
 
-    Reconstructor recon(MODE_3D, boxsize, boxsize, 2, &sym, 1.9, 15);
+    Reconstructor recon(MODE_3D, boxsize, boxsize, pf, &sym, 1.9, 15);
 
     recon.setMPIEnv();
     recon.allocSpace(nThread);
