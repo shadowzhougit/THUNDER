@@ -4,7 +4,7 @@
 # author Zhao Wang
 # author Shouqing Li
 # author Mingxu Hu
-# 
+#
 # version 1.4.11.081101
 # copyright THUNDER Non-Commercial Software License Agreement
 #
@@ -78,7 +78,7 @@ def quaternion_to_euler(src):
         beta  = math.atan2(abs_sb, mat[2, 2])
         alpha = math.atan2(mat[2, 1] / abs_sb, mat[2, 0] / abs_sb)
         gamma = math.atan2(mat[1, 2] / abs_sb, -mat[0, 2] / abs_sb)
-    else:    
+    else:
         alpha = 0
         beta  = 0
         gamma = math.atan2(mat[1, 0], mat[0, 0])
@@ -94,7 +94,7 @@ def main():
     prog_name = os.path.basename(sys.argv[0])
     usage = """
     Transform THU file to STAR file.
-    {prog} < -i input_thu file> < -o output_star file > 
+    {prog} < -i input_thu file> < -o output_star file >
     """.format(prog = prog_name)
 
     optParser = OptionParser(usage)
@@ -115,7 +115,7 @@ def main():
     if len(sys.argv) == 1:
         print usage
         print "    For more detail, see '-h' or '--help'."
-    
+
     if options.output_star:
         fout = open(options.output_star, "w")
         fout.write("\ndata_\n\nloop_\n")
@@ -139,7 +139,7 @@ def main():
             if len(s) > 20 and not s[24] == 0.0 :
                 s[1] = s[1] # defocusU
                 s[2] = s[2] # defocusV
-                
+
             s[3] = str(float(s[3]) * 180. / math.pi ) # defocus angle, from rad to degree
             s[4] = str(float(s[4]) / 10000000. )      # Cs, from Angstrom to mm
             s[6] = str(float(s[6]) * 180. / math.pi ) # phase shift, from rad to degree
@@ -161,4 +161,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+

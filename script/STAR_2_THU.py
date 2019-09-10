@@ -21,6 +21,19 @@ import os,sys
 import re
 from optparse import OptionParser
 
+def euler_to_quaternion(src):
+
+    psi = math.radians(src[0])
+    theta = math.radians(src[1])
+    phi = math.radians(src[2])
+
+    w = math.cos((phi + psi) / 2) * math.cos(theta / 2)
+    x = math.sin((phi - psi) / 2) * math.sin(theta / 2)
+    y = math.cos((phi - psi) / 2) * math.sin(theta / 2)
+    z = math.sin((phi + psi) / 2) * math.cos(theta / 2)
+
+    return w, x, y, z
+
 def main():
 
     prog_name = os.path.basename(sys.argv[0])
@@ -105,6 +118,13 @@ def main():
                 mN = sp[header_dict['micrographname']]
                 coordX = float(sp[header_dict['coordinatex']])
                 coordY = float(sp[header_dict['coordinatey']])
+
+                phi = float(sp[header_dict['anglerot']]) 
+                theta = float(sp[header_dict['angletilt']]) 
+                psi = float(sp[header_dict['anglepsi']]) 
+
+                quat0, quat1, quat2, quat3 = euler_to_quaternion([phi, theta, psi])
+
             except (ValueError, IndexError):
                 sys.stderr.write(
                     'Warning: skipping line #{} ({}) that cannot be parsed\n'.format(num + 1, sline))
@@ -153,10 +173,10 @@ def main():
                                           coordY = coordY,
                                           gI = gI,
                                           classI = 0,
-                                          quat0 = 0,
-                                          quat1 = 0,
-                                          quat2 = 0,
-                                          quat3 = 0,
+                                          quat0 = quat0,
+                                          quat1 = quat1,
+                                          quat2 = quat2,
+                                          quat3 = quat3,
                                           stdRot0 = 0,
                                           stdRot1 = 0,
                                           stdRot2 = 0,
