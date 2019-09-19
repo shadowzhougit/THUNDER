@@ -7,6 +7,7 @@
  *  AUTHOR      | TIME       | VERSION       | DESCRIPTION
  *  ------      | ----       | -------       | -----------
  *  Mingxu Hu   | 2019/06/22 | 1.4.13.190622 | change int to long to fix overflow issue
+ *  Mingxu Hu   | 2019/09/19 | 1.4.14.190919 | solve a bug for 3D volume transformation; the correct arrangement of fftw_plan_dft_c2r_3d, fftw_plan_dft_r2c_3d should be nSlc, nRow, nCol
  */
 
 #include "FFT.h"
@@ -22,111 +23,9 @@ FFT::FFT() : _srcR(NULL),
 
 FFT::~FFT() {}
 
-/*void FFT::fw(Image& img)
-{
-    FW_EXTRACT_P(img);
-    
-    #pragma omp critical  (line28)
-    fwPlan = TSFFTW_plan_dft_r2c_2d(img.nRowRL(),
-                                  img.nColRL(),
-                                  _srcR,
-                                  _dstC,
-                                  FFTW_ESTIMATE);
-
-    TSFFTW_execute(fwPlan);
-
-    FW_CLEAN_UP;
-}
-
-void FFT::bw(Image& img)
-{
-    BW_EXTRACT_P(img);
-   
-    #pragma omp critical  (line44)
-    bwPlan = TSFFTW_plan_dft_c2r_2d(img.nRowRL(),
-                                  img.nColRL(),
-                                  _srcC,
-                                  _dstR,
-                                  FFTW_ESTIMATE);
-
-    TSFFTW_execute(bwPlan);
-
-    SCALE_RL(img, 1.0 / img.sizeRL());
-
-    BW_CLEAN_UP(img);
-}
-*/
-
-/**
-void FFT::fw(Volume& vol)
-{
-    FW_EXTRACT_P(vol);
-
-    if (vol.nSlcRL() == 1)
-    {
-        #pragma omp critical  (line64)
-        fwPlan = TSFFTW_plan_dft_r2c_2d(vol.nRowRL(),
-                                      vol.nColRL(),
-                                      _srcR,
-                                      _dstC,
-                                      FFTW_ESTIMATE);
-    }
-    else
-    {
-        #pragma omp critical  (line73)
-        fwPlan = TSFFTW_plan_dft_r2c_3d(vol.nRowRL(),
-                                      vol.nColRL(),
-                                      vol.nSlcRL(),
-                                      _srcR,
-                                      _dstC,
-                                      FFTW_ESTIMATE);
-    }
-
-    TSFFTW_execute(fwPlan);
-
-    FW_CLEAN_UP;
-}
-
-void FFT::bw(Volume& vol)
-{
-    BW_EXTRACT_P(vol);
-
-    if (vol.nSlcRL() == 1)
-    {
-        #pragma omp critical  (line92)
-        fwPlan = TSFFTW_plan_dft_r2c_2d(vol.nRowRL(),
-                                      vol.nColRL(),
-                                      _srcR,
-                                      _dstC,
-                                      FFTW_ESTIMATE);
-    }
-    else
-    {
-        #pragma omp critical  (line102)
-        bwPlan = TSFFTW_plan_dft_c2r_3d(vol.nRowRL(),
-                                      vol.nColRL(),
-                                      vol.nSlcRL(),
-                                      _srcC,
-                                      _dstR,
-                                      FFTW_ESTIMATE);
-    }
-
-    TSFFTW_execute(bwPlan);
-
-    SCALE_RL(vol, 1.0 / vol.sizeRL());
-
-    BW_CLEAN_UP(vol);
-}*/
-
 void FFT::fw(Image& img,
              const unsigned int nThread)
 {
-    /***
-    img.alloc(FT_SPACE);
-    _dstC = (TSFFTW_COMPLEX*)&img[0];
-    _srcR = &img(0);
-    CHECK_SPACE_VALID(_dstC, _srcR);
-    ***/
     FW_EXTRACT_P(img);
 
     TSFFTW_plan_with_nthreads(nThread);
@@ -147,12 +46,6 @@ void FFT::fw(Image& img,
 void FFT::bw(Image& img,
              const unsigned int nThread)
 {
-    /***
-    img.alloc(RL_SPACE);
-    _dstR = &img(0);
-    _srcC = (TSFFTW_COMPLEX*)&img[0];
-    CHECK_SPACE_VALID(_dstR, _srcC);
-    ***/
     BW_EXTRACT_P(img);
 
     TSFFTW_plan_with_nthreads(nThread);
@@ -181,18 +74,30 @@ void FFT::fw(Volume& vol,
     TSFFTW_plan_with_nthreads(nThread);
 
     if (vol.nSlcRL() == 1)
+    {
         fwPlan = TSFFTW_plan_dft_r2c_2d(vol.nRowRL(),
                                         vol.nColRL(),
                                         _srcR,
                                         _dstC,
                                         FFTW_ESTIMATE);
+    }
     else
+    {
+        fwPlan = TSFFTW_plan_dft_r2c_3d(vol.nSlcRL(),
+                                        vol.nRowRL(),
+                                        vol.nColRL(),
+                                        _srcR,
+                                        _dstC,
+                                        FFTW_ESTIMATE);
+        /***
         fwPlan = TSFFTW_plan_dft_r2c_3d(vol.nRowRL(),
                                         vol.nColRL(),
                                         vol.nSlcRL(),
                                         _srcR,
                                         _dstC,
                                         FFTW_ESTIMATE);
+        ***/
+    }
 
     TSFFTW_plan_with_nthreads(1);
 
@@ -209,18 +114,31 @@ void FFT::bw(Volume& vol,
     TSFFTW_plan_with_nthreads(nThread);
 
     if (vol.nSlcRL() == 1)
+    {
         bwPlan = TSFFTW_plan_dft_c2r_2d(vol.nRowRL(),
-                                      vol.nColRL(),
-                                      _srcC,
-                                      _dstR,
-                                      FFTW_ESTIMATE);
+                                        vol.nColRL(),
+                                        _srcC,
+                                        _dstR,
+                                        FFTW_ESTIMATE);
+    }
     else
+    {
+        bwPlan = TSFFTW_plan_dft_c2r_3d(vol.nSlcRL(),
+                                        vol.nRowRL(),
+                                        vol.nColRL(),
+                                        _srcC,
+                                        _dstR,
+                                        FFTW_ESTIMATE);
+        /***
         bwPlan = TSFFTW_plan_dft_c2r_3d(vol.nRowRL(),
-                                      vol.nColRL(),
-                                      vol.nSlcRL(),
-                                      _srcC,
-                                      _dstR,
-                                      FFTW_ESTIMATE);
+                                        vol.nColRL(),
+                                        vol.nSlcRL(),
+                                        _srcC,
+                                        _dstR,
+                                        FFTW_ESTIMATE);
+        ***/
+    }
+
     TSFFTW_plan_with_nthreads(1);
 
     TSFFTW_execute(bwPlan);
@@ -241,10 +159,10 @@ void FFT::fwCreatePlan(const long nCol,
     TSFFTW_plan_with_nthreads(nThread);
 
     fwPlan = TSFFTW_plan_dft_r2c_2d(nRow,
-                                  nCol,
-                                  _srcR,
-                                  _dstC,
-                                  FFTW_MEASURE);
+                                    nCol,
+                                    _srcR,
+                                    _dstC,
+                                    FFTW_MEASURE);
 
     TSFFTW_plan_with_nthreads(1);
 
@@ -262,12 +180,12 @@ void FFT::fwCreatePlan(const long nCol,
 
     TSFFTW_plan_with_nthreads(nThread);
 
-    fwPlan = TSFFTW_plan_dft_r2c_3d(nRow,
-                                  nCol,
-                                  nSlc,
-                                  _srcR,
-                                  _dstC,
-                                  FFTW_MEASURE);
+    fwPlan = TSFFTW_plan_dft_r2c_3d(nSlc,
+                                    nRow,
+                                    nCol,
+                                    _srcR,
+                                    _dstC,
+                                    FFTW_MEASURE);
 
     TSFFTW_plan_with_nthreads(1);
 
@@ -285,10 +203,10 @@ void FFT::bwCreatePlan(const long nCol,
     TSFFTW_plan_with_nthreads(nThread);
 
     bwPlan = TSFFTW_plan_dft_c2r_2d(nRow,
-                                  nCol,
-                                  _srcC,
-                                  _dstR,
-                                  FFTW_MEASURE);
+                                    nCol,
+                                    _srcC,
+                                    _dstR,
+                                    FFTW_MEASURE);
 
     TSFFTW_plan_with_nthreads(1);
 
@@ -306,12 +224,12 @@ void FFT::bwCreatePlan(const long nCol,
 
     TSFFTW_plan_with_nthreads(nThread);
 
-    bwPlan = TSFFTW_plan_dft_c2r_3d(nRow,
-                                  nCol,
-                                  nSlc,
-                                  _srcC,
-                                  _dstR,
-                                  FFTW_MEASURE);
+    bwPlan = TSFFTW_plan_dft_c2r_3d(nSlc,
+                                    nRow,
+                                    nCol,
+                                    _srcC,
+                                    _dstR,
+                                    FFTW_MEASURE);
 
     TSFFTW_plan_with_nthreads(1);
 

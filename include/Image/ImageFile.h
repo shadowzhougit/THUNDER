@@ -10,7 +10,8 @@
  *  AUTHOR    | TIME       | VERSION       | DESCRIPTION
  *  ------    | ----       | -------       | -----------
  *  Mingxu Hu | 2015/03/23 | 0.0.1.050323  | new file
- *  Fande Yu  | 2018/09/22 | 1.4.11.080913 | annotation
+ *  Fande Yu  | 2018/09/22 | 1.4.11.180913 | annotation
+ *  Mingxu Hu | 2019/09/19 | 1.4.14.190919 | fix a bug in WRITE_VOLUME_CAST
  * 
  *
  *  @brief ImageFile.h contains the method of reading and writing different types of image. 
@@ -374,11 +375,31 @@ class ImageFile
         REPORT_ERROR("Fail to read in an image.");
 
 
+/***
 #define IMAGE_INDEX(i, j, nCol) \
     (j) * (nCol) + (i)
+***/
 
+inline size_t IMAGE_INDEX(const long i,
+                          const long j,
+                          const long nCol)
+{
+    return j * nCol + i;
+}
+
+/***
 #define VOLUME_INDEX(i, j, k, nCol, nRow) \
     (k) * (nCol) * (nRow) + (j) * (nCol) + (i)
+***/
+
+inline size_t VOLUME_INDEX(const long i,
+                           const long j,
+                           const long k,
+                           const long nCol,
+                           const long nRow)
+{
+    return k * nCol * nRow + j * nCol + i;
+}
 
 #define MESH_IMAGE_INDEX(i, j, nCol, nRow) \
     ((j) + (nRow) / 2) % (nRow) * (nCol) + ((i) + (nCol) / 2) % (nCol)
@@ -388,114 +409,70 @@ class ImageFile
   + ((j) + (nRow) / 2) % (nRow) * (nCol) \
   + ((i) + (nCol) / 2) % (nCol)
 
-
-
-
-/*
-#define IMAGE_READ_CAST(dst, type) \
-    [this, &dst]() \
-    { \
-        type* unCast = new type[dst.sizeRL()]; \
-        if (fread(unCast, 1, dst.sizeRL() * sizeof(type), _file) == 0) \
-            REPORT_ERROR("Fail to read in an image."); \
-        for (int j = 0; j < dst.nRowRL(); j++) \
-            for (int i = 0; i < dst.nColRL(); i++) \
-                dst(IMAGE_INDEX(i, j, dst.nColRL())) \
-              = (RFLOAT)unCast[MESH_IMAGE_INDEX(i, \
-                                                j, \
-                                                dst.nColRL(), \
-                                                dst.nRowRL())]; \
-        delete[] unCast; \
-    }()
-*/
-
 /**
  * @brief Cast data in Image object into RFLOAT from different data type while being read into dst.
  * 
  * Because the data type of image storage depends on mode, including "char", "short", "float".
  * They have to be casted into RFLOAT for following processing.
  */
-template <typename T> inline void  IMAGE_READ_CAST (FILE * imFile,  /**< [in] file waiting to be read */
-                                                    Image  &dst     /**< [out] Image object to store MRCImage */
-                                                   )
+template<typename T>
+inline void IMAGE_READ_CAST(FILE* imFile, /**< [in] file waiting to be read */
+                            Image  &dst     /**< [out] Image object to store MRCImage */
+                            )
 { 
-        T * unCast = new T[dst.sizeRL()]; 
-        if (fread(unCast, sizeof(T), dst.sizeRL()  ,imFile) == 0) 
-            REPORT_ERROR("Fail to read in an image."); 
-        for (int j = 0; j < dst.nRowRL(); j++) 
-            for (int i = 0; i < dst.nColRL(); i++) 
-                dst(IMAGE_INDEX(i, j, dst.nColRL())) 
+    T* unCast = new T[dst.sizeRL()]; 
+
+    if (fread(unCast, sizeof(T), dst.sizeRL(), imFile) == 0) 
+    {
+        REPORT_ERROR("Fail to read in an image."); 
+    }
+
+    for (int j = 0; j < dst.nRowRL(); j++) 
+        for (int i = 0; i < dst.nColRL(); i++) 
+        {
+            dst(IMAGE_INDEX(i, j, dst.nColRL())) 
               = (RFLOAT)unCast[MESH_IMAGE_INDEX(i, 
                                                 j, 
                                                 dst.nColRL(), 
                                                 dst.nRowRL())]; 
-        delete[] unCast; 
+        }
+
+    delete[] unCast; 
 }
 
-/*
-#define VOLUME_READ_CAST(dst, type) \
-    [this, &dst]() \
-    { \
-        type* unCast = new type[dst.sizeRL()]; \
-        if (fread(unCast, 1, dst.sizeRL() * sizeof(type), _file) == 0) \
-            REPORT_ERROR("Fail to read in an image."); \
-        for (int k = 0; k < dst.nSlcRL(); k++) \
-            for (int j = 0; j < dst.nRowRL(); j++) \
-                for (int i = 0; i < dst.nColRL(); i++) \
-                    dst(VOLUME_INDEX(i, j, k, dst.nColRL(), dst.nRowRL())) \
-                  = (RFLOAT)unCast[MESH_VOLUME_INDEX(i, \
-                                                     j, \
-                                                     k, \
-                                                     dst.nColRL(), \
-                                                     dst.nRowRL(), \
-                                                     dst.nSlcRL())];  \
-        delete[] unCast; \
-    }()
-
-*/
 /**
  * @brief Cast data in Volume object into RFLOAT from different data type while being read into dst.
  * 
  * Because the data type of Volume storage depends on mode, including "char", "short", "float".
  * They have to be casted into RFLOAT for following processing.
  */
-template <typename T> inline void  VOLUME_READ_CAST(FILE *imFile,  /**< [in] file waiting to be read */
-                                                    Volume &dst    /**< [out] Volume object to store volume image */
-                                                   ) 
+template<typename T>
+inline void VOLUME_READ_CAST(FILE* imFile,  /**< [in] file waiting to be read */
+                             Volume &dst    /**< [out] Volume object to store volume image */
+                             ) 
 { 
-        T* unCast = new T[dst.sizeRL() ]; 
-        if (fread(unCast, sizeof(T), dst.sizeRL() , imFile) == 0) 
-            REPORT_ERROR("Fail to read in an image."); 
-        for (size_t k = 0; k < dst.nSlcRL(); k++) 
-            for (size_t j = 0; j < dst.nRowRL(); j++) 
-                for (size_t i = 0; i < dst.nColRL(); i++) 
-                    dst(VOLUME_INDEX(i, j, k, dst.nColRL(), dst.nRowRL())) 
+    T* unCast = new T[dst.sizeRL()]; 
+    
+    if (fread(unCast, sizeof(T), dst.sizeRL() , imFile) == 0) 
+    {
+        REPORT_ERROR("Fail to read in an image."); 
+    }
+    
+    for (size_t k = 0; k < dst.nSlcRL(); k++) 
+        for (size_t j = 0; j < dst.nRowRL(); j++) 
+            for (size_t i = 0; i < dst.nColRL(); i++) 
+            {
+                dst(VOLUME_INDEX(i, j, k, dst.nColRL(), dst.nRowRL())) 
                   = (RFLOAT)unCast[MESH_VOLUME_INDEX(i, 
                                                      j, 
                                                      k, 
                                                      dst.nColRL(), 
                                                      dst.nRowRL(), 
                                                      dst.nSlcRL())];  
-        delete[] unCast; 
-}
+            }
 
-/*
-#define IMAGE_WRITE_CAST(src, type) \
-    [this, &src]() \
-    { \
-        type* cast = new type[src.sizeRL()]; \
-        for (int j = 0; j < src.nRowRL(); j++) \
-            for (int i = 0; i < src.nColRL(); i++) \
-                cast[IMAGE_INDEX(i, j, src.nColRL())] \
-              = (type)src.iGetRL(MESH_IMAGE_INDEX(i, \
-                                                  j, \
-                                                  src.nColRL(), \
-                                                  src.nRowRL())); \
-        if (fwrite(cast, 1, src.sizeRL() * sizeof(type), _file) == 0) \
-            REPORT_ERROR("Fail to write in an image."); \
-        delete[] cast; \
-    }()
-*/
+    delete[] unCast; 
+}
 
 /**
  * @brief Cast data in src and write into the file which imFile points to.
@@ -503,46 +480,30 @@ template <typename T> inline void  VOLUME_READ_CAST(FILE *imFile,  /**< [in] fil
  * Because the data type of image storage depends on mode, including "char", "short", "float".
  * They have to be casted into RFLOAT for following processing.
  */
-template <typename T> inline void  IMAGE_WRITE_CAST 
-                                  ( FILE *imFile,     /**< [out] data in src will be written */
-                                   const Image  &src  /**< [in] data source */  
-                                  )
+template<typename T>
+inline void IMAGE_WRITE_CAST(FILE *imFile,     /**< [out] data in src will be written */
+                             const Image  &src  /**< [in] data source */  
+                             )
 { 
-        T* cast = new T[src.sizeRL()]; 
-        for (int j = 0; j < src.nRowRL(); j++) 
-            for (int i = 0; i < src.nColRL(); i++) 
-                cast[IMAGE_INDEX(i, j, src.nColRL())] 
+    T* cast = new T[src.sizeRL()]; 
+
+    for (int j = 0; j < src.nRowRL(); j++) 
+        for (int i = 0; i < src.nColRL(); i++) 
+        {
+            cast[IMAGE_INDEX(i, j, src.nColRL())] 
                 = (T)src.iGetRL(MESH_IMAGE_INDEX(i, 
                                                   j, 
                                                   src.nColRL(), 
                                                   src.nRowRL())); 
-        if (fwrite(cast, sizeof(T), src.sizeRL() ,imFile) == 0) 
-            REPORT_ERROR("Fail to write in an image."); 
-        delete[] cast; 
+        }
+
+    if (fwrite(cast, sizeof(T), src.sizeRL(), imFile) == 0) 
+    {
+        REPORT_ERROR("Fail to write in an image."); 
+    }
+
+    delete[] cast; 
 }
-
-
-/*
-#define VOLUME_WRITE_CAST(src, type) \
-    [this, &src]() \
-    { \
-        type* cast = new type[src.sizeRL()]; \
-        for (int k = 0; k < src.nSlcRL(); k++) \
-            for (int j = 0; j < src.nRowRL(); j++) \
-                for (int i = 0; i < src.nColRL(); i++) \
-                    cast[VOLUME_INDEX(i, j, k, src.nColRL(), src.nSlcRL())] \
-                  = (type)src.iGetRL(MESH_VOLUME_INDEX(i, \
-                                                       j, \
-                                                       k, \
-                                                       src.nColRL(), \
-                                                       src.nRowRL(), \
-                                                       src.nSlcRL())); \
-        if (fwrite(cast, 1, src.sizeRL() * sizeof(type), _file) == 0) \
-            REPORT_ERROR("Fail to write in an image."); \
-        delete[] cast; \
-    }()
-*/
-
 
 
 /**
@@ -551,27 +512,33 @@ template <typename T> inline void  IMAGE_WRITE_CAST
  * Because the data type of Volume storage depends on mode, including "char", "short", "float".
  * They have to be casted into RFLOAT for following processing.
  */
-template <typename T>  inline void VOLUME_WRITE_CAST(FILE *imFile,       /**< [out] data in src will be written */
-                                                     const  Volume &src  /**< [in] data source */ 
-                                                    )    
+template<typename T>
+inline void VOLUME_WRITE_CAST(FILE* imFile,     /**< [out] data in src will be written */
+                              const Volume &src /**< [in] data source */ 
+                              )    
 {
-        T* cast = new T[src.sizeRL()]; 
-        for (size_t k = 0; k < src.nSlcRL(); k++) 
-            for (size_t j = 0; j < src.nRowRL(); j++) 
-                for (size_t i = 0; i < src.nColRL(); i++) 
-                {
-                    cast[VOLUME_INDEX(i, j, k, src.nColRL(), src.nSlcRL())] 
+    T* cast = new T[src.sizeRL()]; 
+    for (size_t k = 0; k < src.nSlcRL(); k++) 
+        for (size_t j = 0; j < src.nRowRL(); j++) 
+            for (size_t i = 0; i < src.nColRL(); i++)
+            {
+                cast[VOLUME_INDEX(i, j, k, src.nColRL(), src.nRowRL())]
                   = (T)src.iGetRL(MESH_VOLUME_INDEX(i, 
                                                     j, 
                                                     k, 
                                                     src.nColRL(), 
                                                     src.nRowRL(), 
                                                     src.nSlcRL())); 
-                }
-        if (fwrite(cast, sizeof(T) , src.sizeRL() , imFile) == 0) 
-            REPORT_ERROR("Fail to write in an image."); 
-        delete[] cast; 
+            }
+
+    if (fwrite(cast, sizeof(T) , src.sizeRL() , imFile) == 0) 
+    {
+        REPORT_ERROR("Fail to write in an image."); 
+    }
+
+    delete[] cast; 
 }
 
-#endif 
+#endif
+
 // IMAGE_FILE_H
