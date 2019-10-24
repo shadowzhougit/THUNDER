@@ -409,6 +409,7 @@ if("${GPU_VERSION}")
 
     add_dependencies(cuthuem FFTW)
     add_dependencies(cuthuem GSL)
+    add_dependencies(cuthuem BOOST)
 
 endif("${GPU_VERSION}")
 
