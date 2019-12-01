@@ -105,3 +105,17 @@ gsl_rng* get_random_engine()
     static ThreadLocalRNG rng;
     return rng.get();
 }
+
+uvec shuffledIndex(const size_t n)
+{
+    uvec s = uvec::Zero(n);
+
+    for (size_t i = 0; i < n; i++)
+        s(i) = i;
+
+    gsl_rng* engine = get_random_engine();
+
+    gsl_ran_shuffle(engine, s.data(), n, sizeof(size_t));
+
+    return s;
+}

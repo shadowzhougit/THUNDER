@@ -115,7 +115,7 @@ if("${ENABLE_SIMD}")
         message(WARNING "THUNDER does not suppot SIMD on Apple.")
         set(ENABLE_SIMD OFF)
         set(CMAKE_C_FLAGS "${COMMON_FLAGS}")
-        set(CMAKE_CXX_FLAGS "${COMMON_FLAGS}")
+        set(CMAKE_CXX_FLAGS "-D_FILE_OFFSET_BITS=64 ${COMMON_FLAGS}")
     else(APPLE)
         set(CMAKE_C_FLAGS "${COMMON_FLAGS} -mavx512f -mavx512cd")
         set(CMAKE_CXX_FLAGS "${COMMON_FLAGS} -mavx512f -mavx512cd")
@@ -267,7 +267,8 @@ endif(NOT ${NCCL_FOUND})
 include_directories(${PROJECT_SOURCE_DIR}/include
                     ${PROJECT_SOURCE_DIR}/include/Functions
                     ${PROJECT_SOURCE_DIR}/include/Geometry
-                    ${PROJECT_SOURCE_DIR}/include/Image)
+                    ${PROJECT_SOURCE_DIR}/include/Image
+                    ${PROJECT_SOURCE_DIR}/include/MemoryBazaar)
 # CONFIG
 
 if("${CPU_VERSION}")
@@ -319,7 +320,7 @@ if("${GPU_VERSION}")
     set(CONFIG_GPU_DIR ${PROJECT_BINARY_DIR}/Config_GPU)
     
     configure_file("${PROJECT_SOURCE_DIR}/THUNDERConfig.h.in"
-               "${CONFIG_GPU_DIR}/THUNDERConfig.h")
+                   "${CONFIG_GPU_DIR}/THUNDERConfig.h")
 
     #install(FILES "${PROJECT_BINARY_DIR}/THUNDERConfig.h" DESTINATION include)
     

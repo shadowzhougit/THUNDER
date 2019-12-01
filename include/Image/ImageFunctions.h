@@ -372,14 +372,6 @@ void translate(Image& dst,
                const RFLOAT nTransRow,
                const unsigned int nThread);
 
-//void translate(Image& dst,
-//               const RFLOAT nTransCol,
-//               const RFLOAT nTransRow,
-//               const int* iCol,
-//               const int* iRow,
-//               const int* iPxl,
-//               const int nPxl);
-
 void translate(Image& dst,
                const RFLOAT nTransCol,
                const RFLOAT nTransRow,
@@ -389,16 +381,20 @@ void translate(Image& dst,
                const int nPxl,
                const unsigned int nThread);
 
-//void translate(Complex* dst,
-//               const RFLOAT nTransCol,
-//               const RFLOAT nTransRow,
-//               const int nCol,
-//               const int nRow,
-//               const int* iCol,
-//               const int* iRow,
-//               const int nPxl);
-
 void translate(Complex* dst,
+               const RFLOAT nTransCol,
+               const RFLOAT nTransRow,
+               const int nCol,
+               const int nRow,
+               const int* iCol,
+               const int* iRow,
+               const int nPxl,
+               const unsigned int nThread);
+
+void translate(RFLOAT* dstR,
+               RFLOAT* dstI,
+               const RFLOAT* srcR,
+               const RFLOAT* srcI,
                const RFLOAT nTransCol,
                const RFLOAT nTransRow,
                const int nCol,

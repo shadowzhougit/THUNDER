@@ -48,6 +48,8 @@
  */
 #define MEGABYTE (1024 * 1024)
 
+#define GIGABYTE (1024 * 1024 * 1024)
+
 #define BLOCKSIZE 1024
 
 #define BLOCKSIZE_1D 1024
@@ -58,7 +60,6 @@
  * maximum length of filename
  */
 #define FILE_NAME_LENGTH 1024
-
 
 /**
  *  maximum length of the msg buffer

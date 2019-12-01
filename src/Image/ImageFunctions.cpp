@@ -447,27 +447,6 @@ void translate(Image& dst,
     }
 }
 
-//void translate(Complex* dst,
-//               const Complex* src,
-//               const RFLOAT nTransCol,
-//               const RFLOAT nTransRow,
-//               const int nCol,
-//               const int nRow,
-//               const int* iCol,
-//               const int* iRow,
-//               const int nPxl)
-//{
-//    RFLOAT rCol = nTransCol / nCol;
-//    RFLOAT rRow = nTransRow / nRow;
-//
-//    for (int i = 0; i < nPxl; i++)
-//    {
-//        RFLOAT phase = M_2X_PI * (iCol[i] * rCol + iRow[i] * rRow);
-//
-//        dst[i] = src[i] * COMPLEX_POLAR(-phase);
-//    }
-//}
-
 void translate(Complex* dst,
                const Complex* src,
                const RFLOAT nTransCol,
@@ -488,6 +467,34 @@ void translate(Complex* dst,
         RFLOAT phase = M_2X_PI * (iCol[i] * rCol + iRow[i] * rRow);
 
         dst[i] = src[i] * COMPLEX_POLAR(-phase);
+    }
+}
+
+void translate(RFLOAT* dstR,
+               RFLOAT* dstI,
+               const RFLOAT* srcR,
+               const RFLOAT* srcI,
+               const RFLOAT nTransCol,
+               const RFLOAT nTransRow,
+               const int nCol,
+               const int nRow,
+               const int* iCol,
+               const int* iRow,
+               const int nPxl,
+               const unsigned int nThread)
+{
+    RFLOAT rCol = nTransCol / nCol;
+    RFLOAT rRow = nTransRow / nRow;
+
+    #pragma omp parallel for num_threads(nThread)
+    for (int i = 0; i < nPxl; i++)
+    {
+        RFLOAT phase = M_2X_PI * (iCol[i] * rCol + iRow[i] * rRow);
+
+        Complex cp = COMPLEX_POLAR(-phase);
+
+        dstR[i] = srcR[i] * cp.dat[0] - srcI[i] * cp.dat[1];
+        dstI[i] = srcR[i] * cp.dat[1] + srcI[i] * cp.dat[0];
     }
 }
 

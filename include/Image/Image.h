@@ -112,6 +112,18 @@ class Image : public ImageBase
 {
     BOOST_MOVABLE_BUT_NOT_COPYABLE(Image)
 
+    friend bool operator==(const Image& i1,
+                           const Image& i2);
+
+    friend size_t serializeSize(const Image& i);
+
+    friend void serialize(void* m,
+                          const Image& i);
+
+    friend void deserialize(Image& i,
+                            const void* m,
+                            const size_t maxLength);
+
     protected:
 
         /**

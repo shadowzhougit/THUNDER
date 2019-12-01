@@ -10,7 +10,7 @@
 
 #include "Image.h"
 
-Image::Image() : _nCol(0), _nRow(0) {}
+Image::Image() : ImageBase(), _nCol(0), _nRow(0) {}
 
 Image::Image(const long nCol,
              const long nRow,

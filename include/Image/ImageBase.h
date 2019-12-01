@@ -242,13 +242,13 @@ class ImageBase
                                                   _sizeRL(that._sizeRL),
                                                   _sizeFT(that._sizeFT)
         {
-            that._sizeRL = 0;
-            that._sizeFT = 0;
-
 #ifdef FFTW_PTR
             that._dataRL = NULL;
             that._dataFT = NULL;
 #endif
+
+            that._sizeRL = 0;
+            that._sizeFT = 0;
         }
 
         ~ImageBase();

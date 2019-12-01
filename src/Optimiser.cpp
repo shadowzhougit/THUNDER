@@ -8,75 +8,8 @@
  * ****************************************************************************/
 
 #include "Optimiser.h"
-
-#ifdef ENABLE_SIMD_512
- RFLOAT* logDataVSPrior_m_n_huabin_SIMD512(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult);
- RFLOAT logDataVSPrior_m_huabin_SIMD512(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m);
-#else
-#ifdef ENABLE_SIMD_256
- RFLOAT* logDataVSPrior_m_n_huabin_SIMD256(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult);
- RFLOAT logDataVSPrior_m_huabin_SIMD256(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m);
-#else
-   RFLOAT logDataVSPrior_m_huabin(const Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m);
-   RFLOAT*  logDataVSPrior_m_n_huabin(const Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *result);
-#endif
-#endif
-
-void compareDVPVariable(vec& dvpHuabin, vec& dvpOrig, int processRank, int threadID, int n ,int m)
-{
-    fprintf(stderr, "n = %d, m = %d\n", n, m);
-    fprintf(stderr, "[%d:%d]: Elements number in dvpHuabin: [rows, cols] = [%ld, %ld]\n", processRank ,threadID, dvpHuabin.rows(), dvpHuabin.cols());
-    fprintf(stderr, "[%d:%d]: Elements number in dvpHuabin: [rows, cols] = [%ld, %ld]\n", processRank ,threadID, dvpOrig.rows(), dvpOrig.cols());
-    size_t cnt = 0;
-    for(int i = 0; i < dvpHuabin.rows(); i ++)
-    {
-        RFLOAT v1 = dvpHuabin(i);
-        RFLOAT v2 = dvpOrig(i);
-
-        RFLOAT error = fabsf(v1 -v2);
-        if(error >= 10E-6)
-        {
-            fprintf(stderr, "[%d:%d]: [v1hb, v2orig, error] = [%f, %f, %f]\n", processRank ,threadID, v1, v2, error);
-            cnt ++;
-
-            if(cnt == 100)
-            {
-                abort();
-            }
-        }
-    }
-
-    if(cnt == 0)
-    {
-
-        fprintf(stderr, "[%d:%d]: dvpHuabin and dvpOrig is exactly the same\n", processRank ,threadID);
-    }
-}
-
-void compareWInmHuabin(RFLOAT wOrig, RFLOAT wHuabin, int processRank, int threadID, int m)
-{
-
-    fprintf(stderr, "[%d:%d]:  m = %d\n", processRank, threadID, m);
-    RFLOAT error = fabs(wOrig - wHuabin);
-    size_t cnt = 0;
-    if(error >= 10E-6)
-    {
-        fprintf(stderr, "[%d:%d]: [wOrig, wHuabin, error] = [%f, %f, %f]\n", processRank ,threadID, wOrig, wHuabin, error);
-
-        cnt ++;
-
-        if(cnt == 100)
-        {
-            abort();
-        }
-    }
-
-    if(cnt == 0)
-    {
-
-        fprintf(stderr, "[%d:%d]: wHuabin and wOrig is exactly the same\n", processRank ,threadID);
-    }
-}
+#include "core/serializeImage.h"
+#include "core/memoryDistribution.h"
 
 #ifdef GPU_VERSION
 
@@ -381,6 +314,30 @@ void Optimiser::init()
         ALOG(INFO, "LOGGER_INIT") << "IDs of 2D Images Initialised";
         BLOG(INFO, "LOGGER_INIT") << "IDs of 2D Images Initialised";
 #endif
+ 
+        ALOG(INFO, "LOGGER_INIT") << "Assigning Memory Distribution for MemoryBazaar Objects";
+        BLOG(INFO, "LOGGER_INIT") << "Assigning Memory Distribution for MemoryBazaar Objects";
+
+       assignMemoryDistribution(_md,
+                                 TSGSL_MAX_RFLOAT(_para.maximumMemoryUsagePerProcessGB * GIGABYTE - (RFLOAT)referenceMemorySize(_para.size, _para.pf, _para.mode, _para.k), GIGABYTE),
+                                 serializeSize(Image(_para.size, _para.size, RL_SPACE)),
+                                 1,
+                                 _ID.size(),
+                                 3 * omp_get_max_threads());
+
+        std::cout << "md.nStallImg = " << _md.nStallImg << std::endl;
+        std::cout << "md.nStallImgOri = " << _md.nStallImgOri << std::endl;
+        std::cout << "md.nStallDatPR = " << _md.nStallDatPR << std::endl;
+        std::cout << "md.nStallDatPI = " << _md.nStallDatPI << std::endl;
+        std::cout << "md.nStallCtfP = " << _md.nStallCtfP << std::endl;
+        std::cout << "md.nStallSigRcpP = " << _md.nStallSigRcpP << std::endl;
+
+#ifdef VERBOSE_LEVEL_1
+        MPI_Barrier(_hemi);
+
+        ALOG(INFO, "LOGGER_INIT") << "Memory Distribution for MemoryBazaar Objects Assigned";
+        BLOG(INFO, "LOGGER_INIT") << "Memory Distribution for MemoryBazaar Objects Assigned";
+#endif
 
         ALOG(INFO, "LOGGER_INIT") << "Setting Parameter _N";
         BLOG(INFO, "LOGGER_INIT") << "Setting Parameter _N";
@@ -633,9 +590,21 @@ void Optimiser::expectation()
     if (_searchType == SEARCH_TYPE_GLOBAL)
     {
         if (_searchType != SEARCH_TYPE_CTF)
+        {
+#ifndef PIXEL_MAJOR
+            allocPreCal(true, false, false);
+#else
             allocPreCal(true, true, false);
+#endif
+        }
         else
+        {
+#ifndef PIXEL_MAJOR
+            allocPreCal(true, false, true);
+#else
             allocPreCal(true, true, true);
+#endif
+        }
 
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Space for Pre-calcuation in Expectation Allocated";
         BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Space for Pre-calcuation in Expectation Allocated";
@@ -733,171 +702,167 @@ void Optimiser::expectation()
 
         _nR = 0;
 
-        omp_lock_t* mtx = new omp_lock_t[_ID.size()];
+        // omp_lock_t* mtx = new omp_lock_t[_ID.size()];
 
         RFLOAT* baseLine = new RFLOAT[_ID.size()];
 
         #pragma omp parallel for
         FOR_EACH_2D_IMAGE
         {
-            omp_init_lock(&mtx[l]);
+            // omp_init_lock(&mtx[l]);
             baseLine[l] = GSL_NAN;
         }
+
+        // determining batch size
+
+        // size_t batchSize = GSL_MAX_INT(GSL_MIN_INT(AROUND(SCANNING_PHASE_BATCH_MEMORY_USAGE / _nPxl / sizeof(Complex)), nR), 1);
+
+        size_t batchSize = GSL_MAX_INT(GSL_MIN_INT(AROUND(SCANNING_PHASE_BATCH_MEMORY_USAGE / _nPxl / sizeof(Complex)), _para.k * nR), 1);
+
+        CLOG(INFO, "LOGGER_SYS") << "batchSize = " << batchSize;
+
 
         // t -> class
         // m -> rotation
         // n -> translation
 
-        //Add by huabin
-        RFLOAT *poolSIMDResult = (RFLOAT *)TSFFTW_malloc(_ID.size() * omp_get_max_threads() * sizeof(RFLOAT));
-        Complex* poolPriRotP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
-        Complex* poolPriAllP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
+        RFLOAT* poolPriRotPR = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
+        RFLOAT* poolPriRotPI = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
+        RFLOAT* poolPriAllPR = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
+        RFLOAT* poolPriAllPI = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
+        RFLOAT *poolSIMDResult = (RFLOAT*)TSFFTW_malloc(batchSize * _ID.size() * sizeof(RFLOAT));
 
+        /***
         for (size_t t = 0; t < (size_t)_para.k; t++)
         {
-            #pragma omp parallel for schedule(dynamic) private(rot2D, rot3D)
-            for (size_t m = 0; m < (size_t)nR; m++)
-            {
-                Complex* priRotP = poolPriRotP + _nPxl * omp_get_thread_num();
+            for (size_t m = 0; m < (size_t)(nR - 1) / batchSize + 1; m++)
+        ***/
+        for (size_t tm = 0; tm < (size_t)(_para.k * nR - 1) / batchSize + 1; tm++)
+        {
+                size_t chunk = ((tm + 1) * batchSize <= nR * _para.k) ? batchSize : (nR * _para.k - tm * batchSize);
 
-                Complex* priAllP = poolPriAllP + _nPxl * omp_get_thread_num();
+                // CLOG(INFO, "LOGGER_SYS") << "tm = " << tm;
+                // CLOG(INFO, "LOGGER_SYS") << "chunk = " << chunk;
 
+                RFLOAT* priRotPR = poolPriRotPR;
+                RFLOAT* priRotPI = poolPriRotPI;
+                RFLOAT* priAllPR = poolPriAllPR;
+                RFLOAT* priAllPI = poolPriAllPI;
 
-                //Add by huabin
-                RFLOAT* SIMDResult = poolSIMDResult + omp_get_thread_num() * _ID.size();
+                RFLOAT* SIMDResult = poolSIMDResult;
 
                 // perform projection
 
-                if (_para.mode == MODE_2D)
+                #pragma omp parallel for schedule(dynamic) private(rot2D, rot3D)
+                for (size_t tnp = 0; tnp < chunk; tnp++)
                 {
-                    par.rot(rot2D, m);
+                    size_t t = (tm * batchSize + tnp) / nR; // class index
+                    size_t m = (tm * batchSize + tnp) - t * nR; // rotation index
 
-                    _model.proj(t).project(priRotP, rot2D, _iCol, _iRow, _nPxl, 1);
-                }
-                else if (_para.mode == MODE_3D)
-                {
-                    par.rot(rot3D, m);
+                    if (_para.mode == MODE_2D)
+                    {
+                        // par.rot(rot2D, m * batchSize + np);
+                        par.rot(rot2D, m);
 
-                    _model.proj(t).project(priRotP, rot3D, _iCol, _iRow, _nPxl, 1);
-                }
-                else
-                {
-                    REPORT_ERROR("INEXISTENT MODE");
+                        _model.proj(t).project(priRotPR + tnp * _nPxl, priRotPI + tnp * _nPxl, rot2D, _iCol, _iRow, _nPxl, 1);
+                    }
+                    else if (_para.mode == MODE_3D)
+                    {
+                        //par.rot(rot3D, m * batchSize + np);
+                        par.rot(rot3D, m);
 
-                    abort();
+                        _model.proj(t).project(priRotPR + tnp * _nPxl, priRotPI + tnp * _nPxl, rot3D, _iCol, _iRow, _nPxl, 1);
+                    }
+                    else
+                   {
+                        REPORT_ERROR("INEXISTENT MODE");
+
+                        abort();
+                    }
                 }
 
                 for (size_t n = 0; n < (size_t)nT; n++)
                 {
-                    for (int i = 0; i < _nPxl; i++)
-                        priAllP[i] = traP[_nPxl * n + i] * priRotP[i];
+                    #pragma omp parallel for schedule(dynamic)
+                    for (size_t tnp = 0; tnp < chunk; tnp++)
+                    {
+                        for (int i = 0; i < _nPxl; i++)
+                        {
+                            priAllPR[i + tnp * _nPxl] = traP[_nPxl * n + i].dat[0] * priRotPR[i + tnp * _nPxl] - traP[_nPxl * n + i].dat[1] * priRotPI[i + tnp * _nPxl];
+
+                            priAllPI[i + tnp * _nPxl] = traP[_nPxl * n + i].dat[1] * priRotPR[i + tnp * _nPxl] + traP[_nPxl * n + i].dat[0] * priRotPI[i + tnp * _nPxl];
+                        }
+                    }
 
                     // higher logDataVSPrior, higher probability
 
-                    //Add by huabin
-                    memset(SIMDResult, '\0', _ID.size() * sizeof(RFLOAT));
+                    memset(SIMDResult, '\0', batchSize * _ID.size() * sizeof(RFLOAT));
 
-#ifdef ENABLE_SIMD_512
-            RFLOAT* dvp = logDataVSPrior_m_n_huabin_SIMD512(_datP,
-                                             priAllP,
-                                             _ctfP,
-                                             _sigRcpP,
-                                             (int)_ID.size(),
-                                             _nPxl,
-                                             SIMDResult);
-#else
-#ifdef ENABLE_SIMD_256
-            RFLOAT* dvp = logDataVSPrior_m_n_huabin_SIMD256(_datP,
-                                             priAllP,
-                                             _ctfP,
-                                             _sigRcpP,
-                                             (int)_ID.size(),
-                                             _nPxl,
-                                             SIMDResult);
-#else
-            RFLOAT* dvp = logDataVSPrior_m_n_huabin(_datP,
-                                             priAllP,
-                                             _ctfP,
-                                             _sigRcpP,
-                                             (int)_ID.size(),
-                                             _nPxl,
-                                             SIMDResult);
-#endif
-#endif
+                    RFLOAT* dvp = logDataVSPrior(_datPR,
+                                                 _datPI,
+                                                 priAllPR,
+                                                 priAllPI,
+                                                 _ctfP,
+                                                 _sigRcpP,
+                                                 _ID.size(),
+                                                 chunk,
+                                                 _nPxl,
+                                                 SIMDResult,
+                                                 omp_get_max_threads());
 
 #ifndef NAN_NO_CHECK
 
-           SEGMENT_NAN_CHECK(dvp, _ID.size());
+                    SEGMENT_NAN_CHECK(dvp, _ID.size());
 
 #endif
 
+                    #pragma omp parallel for schedule(dynamic)
                     FOR_EACH_2D_IMAGE
                     {
-                        omp_set_lock(&mtx[l]);
-
-                        if (TSGSL_isnan(baseLine[l]))
-                            baseLine[l] = dvp[l];
-                        else
+                        for (size_t tnp = 0; tnp < chunk; tnp++)
                         {
-                            if (dvp[l] > baseLine[l])
+                            size_t t = (tm * batchSize + tnp) / nR; // class index
+                            size_t m = (tm * batchSize + tnp) - t * nR; // rotation index
+
+                            if (TSGSL_isnan(baseLine[l]))
                             {
-                                RFLOAT offset = dvp[l] - baseLine[l];
-
-                                RFLOAT nf = exp(-offset);
-
-                                wC.row(l) *= nf;
-
-                                for (int td = 0; td < _para.k; td++)
-                                {
-                                    wR[td].row(l) *= nf;
-                                    wT[td].row(l) *= nf;
-                                }
-
-                                /***
-                                RFLOAT nf = exp(offset);
-
-                                if (TSGSL_isinf(nf))
-                                {
-                                    wC.row(l) = vec::Zero(_para.k).transpose();
-                                    wR.row(l) = vec::Zero(nR).transpose();
-                                    wT.row(l) = vec::Zero(nT).transpose();
-                                }
-                                else
-                                {
-                                    wC.row(l) /= nf;
-                                    wR.row(l) /= nf;
-                                    wT.row(l) /= nf;
-                                }
-                                ***/
-
-                                baseLine[l] += offset;
+                                baseLine[l] = dvp[tnp * _ID.size() + l];
                             }
+                            else
+                            {
+                                if (dvp[tnp * _ID.size() + l] > baseLine[l])
+                                {
+                                    RFLOAT offset = dvp[tnp * _ID.size() + l] - baseLine[l];
+
+                                    RFLOAT nf = exp(-offset);
+
+                                    wC.row(l) *= nf;
+
+                                    for (int td = 0; td < _para.k; td++)
+                                    {
+                                        wR[td].row(l) *= nf;
+                                        wT[td].row(l) *= nf;
+                                    }
+
+                                    baseLine[l] += offset;
+                                }
+                            }
+
+                            RFLOAT w = exp(dvp[tnp * _ID.size() + l] - baseLine[l]);
+
+                            wC(l, t) += w * (_par[l].wR(m) * _par[l].wT(n));
+
+                            wR[t](l, m) += w * _par[l].wT(n);
+
+                            wT[t](l, n) += w * _par[l].wR(m);
                         }
-
-                        RFLOAT w = exp(dvp[l] - baseLine[l]);
-
-                        /***
-                        wC(l, t) += w;
-
-                        wR(l, m) += w;
-
-                        wT(l, n) += w;
-                        ***/
-
-                        wC(l, t) += w * (_par[l].wR(m) * _par[l].wT(n));
-
-                        wR[t](l, m) += w * _par[l].wT(n);
-
-                        wT[t](l, n) += w * _par[l].wR(m);
-
-                        omp_unset_lock(&mtx[l]);
                     }
                 }
 
-                #pragma omp atomic
-                _nR += 1;
+                // #pragma omp atomic
+                _nR += chunk;
 
-                #pragma omp critical  (line833)
+                // #pragma omp critical  (line833)
                 if (_nR > (int)(nR * _para.k / 10))
                 {
                     _nR = 0;
@@ -909,15 +874,14 @@ void Optimiser::expectation()
                     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10
                                                << "\% Initial Phase of Global Search Performed";
                 }
-            }
-
         }
 
         TSFFTW_free(poolSIMDResult);
-        TSFFTW_free(poolPriRotP);
-        TSFFTW_free(poolPriAllP);
+        TSFFTW_free(poolPriRotPR);
+        TSFFTW_free(poolPriRotPI);
+        TSFFTW_free(poolPriAllPR);
+        TSFFTW_free(poolPriAllPI);
 
-        delete[] mtx;
         delete[] baseLine;
 
         // reset weights of particle filter
@@ -1149,8 +1113,15 @@ void Optimiser::expectation()
 
     nPer = 0;
 
+    // TODO, remove
     Complex* poolPriRotP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
+    // poolPriRotP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
+
+    // TODO, remove
     Complex* poolPriAllP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
+
+    RFLOAT* poolPriAllPR = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
+    RFLOAT* poolPriAllPI = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
 
     Complex* poolTraP = (Complex*)TSFFTW_malloc(_para.mLT * _nPxl * omp_get_max_threads() * sizeof(Complex));
 
@@ -1159,12 +1130,31 @@ void Optimiser::expectation()
     if (_searchType == SEARCH_TYPE_CTF)
         poolCtfP = (RFLOAT*)TSFFTW_malloc(_para.mLD * _nPxl * omp_get_max_threads() * sizeof(RFLOAT));
 
-    #pragma omp parallel for schedule(dynamic)
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> datPIDustman(&_datPI);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> sigRcpPDustman(&_sigRcpP);
+    #pragma omp parallel for schedule(dynamic) firstprivate(datPRDustman, datPIDustman, ctfPDustman, sigRcpPDustman)
     FOR_EACH_2D_IMAGE
     {
+        _datPR.endLastVisit(l * _nPxl);
+        _datPI.endLastVisit(l * _nPxl);
 
+        if (_searchType != SEARCH_TYPE_CTF)
+        {
+            _ctfP.endLastVisit(l * _nPxl);
+        }
+
+        _sigRcpP.endLastVisit(l * _nPxl);
+
+        // TODO, remove
         Complex* priRotP = poolPriRotP + _nPxl * omp_get_thread_num();
+
+        // TODO, remove
         Complex* priAllP = poolPriAllP + _nPxl * omp_get_thread_num();
+
+        RFLOAT* priAllPR = poolPriAllPR + _nPxl * omp_get_thread_num();
+        RFLOAT* priAllPI = poolPriAllPI + _nPxl * omp_get_thread_num();
 
         int nPhaseWithNoVariDecrease = 0;
 
@@ -1317,7 +1307,19 @@ void Optimiser::expectation()
                     FOR_EACH_T(_par[l])
                     {
                         for (int i = 0; i < _nPxl; i++)
+                        {
+                            // TODO, remove
                             priAllP[i] = traP[_nPxl * iT + i] * priRotP[i];
+
+                            // Complex multiplication
+                            // RFLOAT tR = traP[_nPxl * iT + i].dat[0];
+                            // RFLOAT tI = traP[_nPxl * iT + i].dat[1];
+
+                            // priAllPR[i] = tR * priRotPR[i] - tI * priRotPI[i];
+                            // priAllPI[i] = tR * priRotPI[i] + tI * priRotPR[i];
+                            priAllPR[i] = priAllP[i].dat[0];
+                            priAllPI[i] = priAllP[i].dat[1];
+                        }
 
                         FOR_EACH_D(_par[l])
                         {
@@ -1325,60 +1327,37 @@ void Optimiser::expectation()
 
                             RFLOAT w;
 
-#ifdef ENABLE_SIMD_512
+                            RFLOAT* datPR = &_datPR[l * _nPxl];
+                            RFLOAT* datPI = &_datPI[l * _nPxl];
+                            RFLOAT* sigRcpP = &_sigRcpP[l * _nPxl];
+
                             if (_searchType != SEARCH_TYPE_CTF)
                             {
-                                w = logDataVSPrior_m_huabin_SIMD512(_datP + l * _nPxl,
-                                                   priAllP,
-                                                   _ctfP + l * _nPxl,
-                                                   _sigRcpP + l * _nPxl,
+                                RFLOAT* ctfP = &_ctfP[l * _nPxl];
+
+                                w = logDataVSPrior(datPR,
+                                                   datPI,
+                                                   // _datPI + l * _nPxl,
+                                                   priAllPR,
+                                                   priAllPI,
+                                                   ctfP,
+                                                   // _ctfP + l * _nPxl,
+                                                   //_sigRcpP + l * _nPxl,
+                                                   sigRcpP,
                                                    _nPxl);
                             }
                             else
                             {
-                                w = logDataVSPrior_m_huabin_SIMD512(_datP + l * _nPxl,
-                                                   priAllP,
+                                w = logDataVSPrior(datPR,
+                                                   datPI,
+                                                   // _datPI + l * _nPxl,
+                                                   priAllPR,
+                                                   priAllPI,
                                                    ctfP + iD * _nPxl,
-                                                   _sigRcpP + l * _nPxl,
+                                                   // _sigRcpP + l * _nPxl,
+                                                   sigRcpP,
                                                    _nPxl);
                             }
-#else
-#ifdef ENABLE_SIMD_256
-                            if (_searchType != SEARCH_TYPE_CTF)
-                            {
-                                w = logDataVSPrior_m_huabin_SIMD256(_datP + l * _nPxl,
-                                                   priAllP,
-                                                   _ctfP + l * _nPxl,
-                                                   _sigRcpP + l * _nPxl,
-                                                   _nPxl);
-                            }
-                            else
-                            {
-                                w = logDataVSPrior_m_huabin_SIMD256(_datP + l * _nPxl,
-                                                   priAllP,
-                                                   ctfP + iD * _nPxl,
-                                                   _sigRcpP + l * _nPxl,
-                                                   _nPxl);
-                            }
-#else
-                            if (_searchType != SEARCH_TYPE_CTF)
-                            {
-                                w = logDataVSPrior_m_huabin(_datP + l * _nPxl,
-                                                   priAllP,
-                                                   _ctfP + l * _nPxl,
-                                                   _sigRcpP + l * _nPxl,
-                                                   _nPxl);
-                            }
-                            else
-                            {
-                                w = logDataVSPrior_m_huabin(_datP + l * _nPxl,
-                                                   priAllP,
-                                                   ctfP + iD * _nPxl,
-                                                   _sigRcpP + l * _nPxl,
-                                                   _nPxl);
-                            }
-#endif
-#endif
 
                             baseLine = TSGSL_isnan(baseLine) ? w : baseLine;
 
@@ -1661,6 +1640,8 @@ void Optimiser::expectation()
 
     TSFFTW_free(poolPriRotP);
     TSFFTW_free(poolPriAllP);
+    TSFFTW_free(poolPriAllPR);
+    TSFFTW_free(poolPriAllPI);
 
     TSFFTW_free(poolTraP);
 
@@ -1846,7 +1827,8 @@ void Optimiser::expectationG()
 
                 ExpectGlobal3D(rotP,
                                traP,
-                               _datP,
+                               _datPR,
+                               _datPI,
                                _ctfP,
                                _sigRcpP,
                                weightC,
@@ -1895,7 +1877,8 @@ void Optimiser::expectationG()
             }
 
             ExpectGlobal2D(vol,
-                           _datP,
+                           _datPR,
+                           _datPI,
                            _ctfP,
                            _sigRcpP,
                            trans,
@@ -2253,7 +2236,8 @@ void Optimiser::expectationG()
     int cpyNum = omp_get_max_threads() / deviceNum;
     int cpyNumL = (omp_get_max_threads() % deviceNum == 0) ? cpyNum : cpyNum + 1;
 
-    Complex* devdatP[deviceNum];
+    RFLOAT* devdatPR[deviceNum];
+    RFLOAT* devdatPI[deviceNum];
     RFLOAT* devctfP[deviceNum];
     RFLOAT* devsigP[deviceNum];
     RFLOAT* devdefO[deviceNum];
@@ -2262,7 +2246,8 @@ void Optimiser::expectationG()
     for (int i = 0; i < deviceNum; i++)
     {
         ExpectLocalIn(gpus[i],
-                      &devdatP[i],
+                      &devdatPR[i],
+                      &devdatPI[i],
                       &devctfP[i],
                       &devdefO[i],
                       &devsigP[i],
@@ -2341,6 +2326,11 @@ void Optimiser::expectationG()
                          _searchType);
     }
 
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> datPIDustman(&_datPI);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> sigRcpPDustman(&_sigRcpP);
+    
     if (_para.mode == MODE_3D && _para.k != 1)
     {
         for (int itr = 0; itr < _para.k; itr++)
@@ -2356,9 +2346,28 @@ void Optimiser::expectationG()
                                vdim);
             }
 
-            #pragma omp parallel for schedule(dynamic)
+            #pragma omp parallel for schedule(dynamic) firstprivate(datPRDustman, datPIDustman, ctfPDustman, sigRcpPDustman)
             for (size_t l = 0; l < vecImg[itr].size(); l++)
             {
+                _datPR.endLastVisit(vecImg[itr][l] * _nPxl);
+                _datPI.endLastVisit(vecImg[itr][l] * _nPxl);
+
+                if (_searchType != SEARCH_TYPE_CTF)
+                {
+                    _ctfP.endLastVisit(vecImg[itr][l] * _nPxl);
+                }
+
+                _sigRcpP.endLastVisit(vecImg[itr][l] * _nPxl);
+
+                RFLOAT* datPR = &_datPR[vecImg[itr][l] * _nPxl];
+                RFLOAT* datPI = &_datPI[vecImg[itr][l] * _nPxl];
+                RFLOAT* sigRcpP = &_sigRcpP[vecImg[itr][l] * _nPxl];
+                RFLOAT* ctfP;
+                if (_searchType != SEARCH_TYPE_CTF)
+                {
+                    ctfP = &_ctfP[vecImg[itr][l] * _nPxl];
+                }
+
                 int threadId = omp_get_thread_num();
                 int gpuIdx;
                 if (threadId / cpyNum > deviceNum)
@@ -2373,32 +2382,34 @@ void Optimiser::expectationG()
                 if (threadId < deviceNum * cpyNum)
                 {
                     ExpectLocalP(gpus[gpuIdx],
-                                 devdatP[gpuIdx],
+                                 devdatPR[gpuIdx],
+                                 devdatPI[gpuIdx],
                                  devctfP[gpuIdx],
-                                 devdefO[gpuIdx],
                                  devsigP[gpuIdx],
-                                 _datP,
-                                 _ctfP,
-                                 _defocusP,
-                                 _sigRcpP,
+                                 devdefO[gpuIdx],
+                                 datPR,
+                                 datPI,
+                                 ctfP,
+                                 sigRcpP,
+                                 _defocusP + vecImg[itr][l] * _nPxl,
                                  threadId % cpyNum,
-                                 vecImg[itr][l],
                                  _nPxl,
                                  _searchType);
                 }
                 else
                 {
                     ExpectLocalP(gpus[gpuIdx],
-                                 devdatP[gpuIdx],
+                                 devdatPR[gpuIdx],
+                                 devdatPI[gpuIdx],
                                  devctfP[gpuIdx],
-                                 devdefO[gpuIdx],
                                  devsigP[gpuIdx],
-                                 _datP,
-                                 _ctfP,
-                                 _defocusP,
-                                 _sigRcpP,
+                                 devdefO[gpuIdx],
+                                 datPR,
+                                 datPI,
+                                 ctfP,
+                                 sigRcpP,
+                                 _defocusP + vecImg[itr][l] * _nPxl,
                                  cpyNum,
-                                 vecImg[itr][l],
                                  _nPxl,
                                  _searchType);
                 }
@@ -2553,7 +2564,8 @@ void Optimiser::expectationG()
                                  datShift,
                                  //vecImg[itr][l],
                                  mcp[datId],
-                                 devdatP[gpuIdx],
+                                 devdatPR[gpuIdx],
+                                 devdatPI[gpuIdx],
                                  devctfP[gpuIdx],
                                  devsigP[gpuIdx],
                                  wC[threadId],
@@ -2810,9 +2822,28 @@ void Optimiser::expectationG()
             }
         }
 
-        #pragma omp parallel for schedule(dynamic)
+        #pragma omp parallel for schedule(dynamic) firstprivate(datPRDustman, datPIDustman, ctfPDustman, sigRcpPDustman)
         FOR_EACH_2D_IMAGE
         {
+            _datPR.endLastVisit(l * _nPxl);
+            _datPI.endLastVisit(l * _nPxl);
+
+            if (_searchType != SEARCH_TYPE_CTF)
+            {
+                _ctfP.endLastVisit(l * _nPxl);
+            }
+
+            _sigRcpP.endLastVisit(l * _nPxl);
+            
+            RFLOAT* datPR = &_datPR[l * _nPxl];
+            RFLOAT* datPI = &_datPI[l * _nPxl];
+            RFLOAT* sigRcpP = &_sigRcpP[l * _nPxl];
+            RFLOAT* ctfP;
+            if (_searchType != SEARCH_TYPE_CTF)
+            {
+                ctfP = &_ctfP[l * _nPxl];
+            }
+
             int threadId = omp_get_thread_num();
             int gpuIdx;
             if (threadId / cpyNum > deviceNum)
@@ -2827,32 +2858,34 @@ void Optimiser::expectationG()
             if (threadId < deviceNum * cpyNum)
             {
                 ExpectLocalP(gpus[gpuIdx],
-                             devdatP[gpuIdx],
+                             devdatPR[gpuIdx],
+                             devdatPI[gpuIdx],
                              devctfP[gpuIdx],
-                             devdefO[gpuIdx],
                              devsigP[gpuIdx],
-                             _datP,
-                             _ctfP,
-                             _defocusP,
-                             _sigRcpP,
+                             devdefO[gpuIdx],
+                             datPR,
+                             datPI,
+                             ctfP,
+                             sigRcpP,
+                             _defocusP + l * _nPxl,
                              threadId % cpyNum,
-                             l,
                              _nPxl,
                              _searchType);
             }
             else
             {
                 ExpectLocalP(gpus[gpuIdx],
-                             devdatP[gpuIdx],
+                             devdatPR[gpuIdx],
+                             devdatPI[gpuIdx],
                              devctfP[gpuIdx],
-                             devdefO[gpuIdx],
                              devsigP[gpuIdx],
-                             _datP,
-                             _ctfP,
-                             _defocusP,
-                             _sigRcpP,
+                             devdefO[gpuIdx],
+                             datPR,
+                             datPI,
+                             ctfP,
+                             sigRcpP,
+                             _defocusP + l * _nPxl,
                              cpyNum,
-                             l,
                              _nPxl,
                              _searchType);
             }
@@ -3069,7 +3102,8 @@ void Optimiser::expectationG()
                              datShift,
                              //l,
                              mcp[datId],
-                             devdatP[gpuIdx],
+                             devdatPR[gpuIdx],
+                             devdatPI[gpuIdx],
                              devctfP[gpuIdx],
                              devsigP[gpuIdx],
                              wC[threadId],
@@ -3348,7 +3382,8 @@ void Optimiser::expectationG()
     for (int i = 0; i < deviceNum; i++)
     {
         ExpectLocalFin(gpus[i],
-                       &devdatP[i],
+                       &devdatPR[i],
+                       &devdatPI[i],
                        &devctfP[i],
                        &devdefO[i],
                        &devfreQ[i],
@@ -4089,7 +4124,6 @@ void Optimiser::run()
 
     MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Freeing Image Stacks";
 
-    #pragma omp parallel for
     FOR_EACH_2D_IMAGE
     {
         _img[l].clear();
@@ -4164,9 +4198,15 @@ void Optimiser::run()
     {
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Re-Loading Images from Original Images";
 
-        _img.clear();
+        _img.cleanUp();
+
+        _img.setUp(omp_get_max_threads(), _ID.size(), _md.nStallImg, serializeSize(Image(_para.size, _para.size, RL_SPACE)), 1, _para.cacheDirectory);
+
         FOR_EACH_2D_IMAGE
-            _img.push_back(_imgOri[l].copyImage());
+        {
+            _img[l] = _imgOri[l].copyImage();
+            // _img.push_back(_imgOri[l].copyImage());
+        }
 
 #ifdef OPTIMISER_MASK_IMG
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Re-Masking Images";
@@ -4365,7 +4405,7 @@ void Optimiser::run()
 
 void Optimiser::clear()
 {
-    _img.clear();
+    _img.cleanUp();
     _par.clear();
     _ctf.clear();
 }
@@ -4610,8 +4650,10 @@ void Optimiser::initImg()
     ALOG(INFO, "LOGGER_INIT") << "Reading Images from Disk";
     BLOG(INFO, "LOGGER_INIT") << "Reading Images from Disk";
 
-    _img.clear();
-    _img.resize(_ID.size());
+    _img.cleanUp();
+
+    // _img.resize(_ID.size());
+    _img.setUp(omp_get_max_threads(), _ID.size(), _md.nStallImg, serializeSize(Image(_para.size, _para.size, RL_SPACE)), 1, _para.cacheDirectory);
 
     int nPer = 0;
     int nImg = 0;
@@ -4624,7 +4666,8 @@ void Optimiser::initImg()
 
     string imgName;
 
-    #pragma omp parallel for private(imgName)
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    #pragma omp parallel for private(imgName) firstprivate(imgDustman)
     FOR_EACH_2D_IMAGE
     {
         nImg += 1;
@@ -4696,7 +4739,7 @@ void Optimiser::initImg()
     ALOG(INFO, "LOGGER_INIT") << "Setting 0 to Offset between Images and Original Images";
     BLOG(INFO, "LOGGER_INIT") << "Setting 0 to Offset between Images and Original Images";
 
-    _offset = vector<dvec2>(_img.size(), dvec2(0, 0));
+    _offset = vector<dvec2>(_ID.size(), dvec2(0, 0));
 
 #ifdef VERBOSE_LEVEL_1
     MPI_Barrier(_hemi);
@@ -4818,7 +4861,8 @@ void Optimiser::statImg()
     RFLOAT stdS = 0;
     RFLOAT stdStdN = 0;
 
-    #pragma omp parallel for reduction(+:mean, stdN, stdD, stdS, stdStdN)
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    #pragma omp parallel for reduction(+:mean, stdN, stdD, stdS, stdStdN) firstprivate(imgDustman)
     FOR_EACH_2D_IMAGE
     {
         #pragma omp atomic
@@ -4927,7 +4971,8 @@ void Optimiser::displayStatImg()
 
 void Optimiser::substractBgImg()
 {
-    #pragma omp parallel for
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    #pragma omp parallel for firstprivate(imgDustman)
     FOR_EACH_2D_IMAGE
     {
         RFLOAT bgMean, bgStddev;
@@ -4963,15 +5008,24 @@ void Optimiser::substractBgImg()
 
 void Optimiser::maskImg()
 {
-    _imgOri.clear();
+    // _imgOri.clear();
+    _imgOri.cleanUp();
+
+    _imgOri.setUp(omp_get_max_threads(), _ID.size(), _md.nStallImgOri, serializeSize(Image(_para.size, _para.size, RL_SPACE)), 1, _para.cacheDirectory);
+
+    // _imgOri.resize(_ID.size());
 
     FOR_EACH_2D_IMAGE
-        _imgOri.push_back(_img[l].copyImage());
+    {
+        // _imgOri.push_back(_img[l].copyImage());
+        _imgOri[l] = _img[l].copyImage();
+    }
 
 #ifdef OPTIMISER_MASK_IMG
     if (_para.zeroMask)
     {
-        #pragma omp parallel for
+        MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+        #pragma omp parallel for firstprivate(imgDustman)
         FOR_EACH_2D_IMAGE
             softMask(_img[l],
                      _img[l],
@@ -4982,7 +5036,8 @@ void Optimiser::maskImg()
     }
     else
     {
-        #pragma omp parallel for
+        MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+        #pragma omp parallel for firstprivate(imgDustman)
         FOR_EACH_2D_IMAGE
             softMask(_img[l],
                      _img[l],
@@ -4999,9 +5054,14 @@ void Optimiser::normaliseImg()
 {
     RFLOAT scale = 1.0 / _stdN;
 
-    #pragma omp parallel for
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+    #pragma omp parallel for firstprivate(imgDustman, imgOriDustman)
     FOR_EACH_2D_IMAGE
     {
+        _img.endLastVisit(l);
+        _imgOri.endLastVisit(l);
+
         SCALE_RL(_img[l], scale);
         SCALE_RL(_imgOri[l], scale);
     }
@@ -5056,12 +5116,47 @@ void Optimiser::initCTF()
         _ctf.push_back(Image(size(), size(), FT_SPACE));
     }
 
-    GCTFinit(_ctf,
-             _ctfAttr,
-             _para.pixelSize,
-             _para.size,
-             (int)_ID.size());
+    int dimSizeFT = _para.size * (_para.size / 2 + 1);
+    int nImg = _ID.size();
+    int batch = IMAGE_BATCH;
+    Complex *ctfData;
+    ctfData = (Complex*)malloc(sizeof(Complex) * IMAGE_BATCH * dimSizeFT);
 
+    hostRegister(ctfData,
+                 IMAGE_BATCH * dimSizeFT);
+
+    for (int l = 0; l < nImg;)
+    {
+        if (l >= nImg)
+            break;
+
+        batch = (l + IMAGE_BATCH < nImg) 
+              ? IMAGE_BATCH : (nImg - l);
+
+        for (int i = 0; i < batch; i++)
+        {
+            for (int n = 0; n < dimSizeFT; n++)
+                ctfData[i * dimSizeFT + n] = _ctf[l + i][n];
+        }
+
+        GCTFinit(ctfData,
+                 _ctfAttr,
+                 _para.pixelSize,
+                 _para.size,
+                 l,
+                 batch);
+
+        for (int i = 0; i < batch; i++)
+        {
+            for (int n = 0; n < dimSizeFT; n++)
+                _ctf[l + i][n] = ctfData[i * dimSizeFT + n];
+        }
+
+        l += batch;
+    }
+
+    hostFree(ctfData);
+    free(ctfData);
 #else
 
     FOR_EACH_2D_IMAGE
@@ -5124,9 +5219,14 @@ void Optimiser::correctScale(const bool init,
     }
     else
     {
-        #pragma omp parallel for
+        MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+        MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+        #pragma omp parallel for firstprivate(imgDustman, imgOriDustman)
         FOR_EACH_2D_IMAGE
         {
+            _img.endLastVisit(l);
+            _imgOri.endLastVisit(l);
+
             FOR_EACH_PIXEL_FT(_img[l])
             {
                 _img[l][i] /= _scale(_groupID[l] - 1);
@@ -5157,7 +5257,9 @@ void Optimiser::initSigma()
 
     for (size_t l = 1; l < _ID.size(); l++)
     {
-        #pragma omp parallel for
+        MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+        MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+        #pragma omp parallel for firstprivate(imgDustman, imgOriDustman)
 #ifdef OPTIMISER_SIGMA_MASK
         ADD_FT(avg, _img[l]);
 #else
@@ -5184,9 +5286,14 @@ void Optimiser::initSigma()
 
     vec avgPs = vec::Zero(maxR());
 
-    #pragma omp parallel for
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+    #pragma omp parallel for firstprivate(imgDustman, imgOriDustman)
     FOR_EACH_2D_IMAGE
     {
+        _img.endLastVisit(l);
+        _imgOri.endLastVisit(l);
+
         vec ps(maxR());
 
         // powerSpectrum(ps, _imgOri[l], maxR());
@@ -6068,9 +6175,14 @@ void Optimiser::reCentreImg()
 
     dvec2 tran;
 
-    #pragma omp parallel for private(tran)
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+    #pragma omp parallel for private(tran) firstprivate(imgDustman, imgOriDustman)
     FOR_EACH_2D_IMAGE
     {
+        _img.endLastVisit(l);
+        _imgOri.endLastVisit(l);
+
         _par[l].rank1st(tran);
 
         _offset[l](0) -= tran(0);
@@ -6133,7 +6245,8 @@ void Optimiser::reMaskImg()
         {
             _fftImg.bwExecutePlan(_img[l], _para.nThreadsPerProcess);
 
-            #pragma omp parallel for
+            MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+            #pragma omp parallel for firstprivate(imgDustman)
             MUL_RL(_img[l], mask);
 
             _fftImg.fwExecutePlan(_img[l]);
@@ -6182,12 +6295,46 @@ void Optimiser::reMaskImgG()
         //    printf("write done!\n");
         //}
 
-        ReMask(_img,
-               _para.maskRadius,
-               _para.pixelSize,
-               EDGE_WIDTH_RL,
-               _para.size,
-               (int)_ID.size());
+        int dimSizeFT = _para.size * (_para.size / 2 + 1);
+        int nImg = _ID.size();
+        int batch = IMAGE_BATCH;
+        Complex *imgData;
+        imgData = (Complex*)malloc(sizeof(Complex) * IMAGE_BATCH * dimSizeFT);
+
+        hostRegister(imgData,
+                     IMAGE_BATCH * dimSizeFT);
+
+        for (int l = 0; l < nImg;)
+        {
+            if (l >= nImg)
+                break;
+
+            batch = (l + IMAGE_BATCH < nImg) 
+                  ? IMAGE_BATCH : (nImg - l);
+
+            for (int i = 0; i < batch; i++)
+            {
+                for (int n = 0; n < dimSizeFT; n++)
+                    imgData[i * dimSizeFT + n] = _img[l + i][n];
+            }
+
+            reMask(imgData,
+                   _para.maskRadius,
+                   _para.pixelSize,
+                   EDGE_WIDTH_RL,
+                   _para.size,
+                   batch);
+            
+            for (int i = 0; i < batch; i++)
+            {
+                for (int n = 0; n < dimSizeFT; n++)
+                    _img[l + i][n] = imgData[i * dimSizeFT + n];
+            }
+
+            l += batch;
+        }
+
+        hostFree(imgData);
     }
     else
     {
@@ -6215,9 +6362,13 @@ void Optimiser::normCorrection()
 
     NT_MASTER
     {
-        #pragma omp parallel for private(cls, rot2D, rot3D, tran, d)
+        MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+        MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+        #pragma omp parallel for private(cls, rot2D, rot3D, tran, d) firstprivate(imgDustman, imgOriDustman)
         FOR_EACH_2D_IMAGE
         {
+            _img.endLastVisit(l);
+            _imgOri.endLastVisit(l);
 
 #ifdef VERBOSE_LEVEL_3
             ALOG(INFO, "LOGGER_SYS") << "Calculating Power Spectrum of Remains of Image " << _ID[l];
@@ -6380,9 +6531,14 @@ void Optimiser::normCorrection()
 
     NT_MASTER
     {
-        #pragma omp parallel for
+        MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+        MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+        #pragma omp parallel for firstprivate(imgDustman, imgOriDustman)
         FOR_EACH_2D_IMAGE
         {
+            _img.endLastVisit(l);
+            _imgOri.endLastVisit(l);
+
             FOR_EACH_PIXEL_FT(_img[l])
             {
                 _img[l][i] *= sqrt(m / norm(_ID[l]));
@@ -6440,9 +6596,14 @@ void Optimiser::allReduceSigma(const bool mask,
     for (int l = 0; l < _nGroup; l++)
         omp_init_lock(&mtx[l]);
 
-    #pragma omp parallel for private(cls, rot2D, rot3D, tran, d) schedule(dynamic)
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+    #pragma omp parallel for private(cls, rot2D, rot3D, tran, d) schedule(dynamic) firstprivate(imgDustman, imgOriDustman)
     FOR_EACH_2D_IMAGE
     {
+        _img.endLastVisit(l);
+        _imgOri.endLastVisit(l);
+
 #ifdef OPTIMISER_SIGMA_RANK1ST
         for (int m = 0; m < 1; m++)
 #else
@@ -6821,7 +6982,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
 
             InsertI2D(modelF, modelT, O2D, counter, _hemi, _slav,
-                      _datP, _ctfP, _sigP, w, offS, nc, nr, nt, nd,
+                      _datPR, _datPI, _ctfP, _sigP, w, offS, nc, nr, nt, nd,
                       ctfaData, _iColPad, _iRowPad, _para.pixelSize,
                       cSearch, _para.k, _para.pf, _nPxl,
                       _para.mReco, _para.size, vdim, _ID.size());
@@ -6941,7 +7102,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                             }
                         }
 
-                        _model.reco(t).insertI(_datP, _ctfP, _sigP, w, offS, nr,
+                        _model.reco(t).insertI(_datPR, _datPI, _ctfP, _sigP, w, offS, nr,
                                                nt, nd, nc + shiftc, ctfaData,
                                                _para.pixelSize, cSearch, _para.pf,
                                                temp, _para.size, _ID.size());
@@ -7013,7 +7174,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     }
                 }
 
-                _model.reco(0).insertI(_datP, _ctfP, _sigP, w, offS, nr,
+                _model.reco(0).insertI(_datPR, _datPI, _ctfP, _sigP, w, offS, nr,
                                        nt, nd, ctfaData, _para.pixelSize,
                                        cSearch, _para.pf, _para.mReco,
                                        _para.size, _ID.size());
@@ -7033,9 +7194,15 @@ void Optimiser::reconstructRef(const bool fscFlag,
         }
 
 #else
-        Complex* poolTransImgP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
+        // Complex* poolTransImgP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
 
-        #pragma omp parallel for
+        RFLOAT* poolTransImgPR = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
+        RFLOAT* poolTransImgPI = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
+
+        MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
+        MemoryBazaarDustman<RFLOAT, BaseType, 4> datPIDustman(&_datPI);
+        MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
+        #pragma omp parallel for firstprivate(datPRDustman, datPIDustman, ctfPDustman)
         FOR_EACH_2D_IMAGE
         {
             RFLOAT* ctf;
@@ -7055,9 +7222,13 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
             w /= _para.mReco;
 
-            Complex* transImgP = poolTransImgP + _nPxl * omp_get_thread_num();
+            // Complex* transImgP = poolTransImgP + _nPxl * omp_get_thread_num();
+            RFLOAT* transImgPR = poolTransImgPR + _nPxl * omp_get_thread_num();
+            RFLOAT* transImgPI = poolTransImgPI + _nPxl * omp_get_thread_num();
 
-            Complex* orignImgP = _datP + _nPxl * l;
+            // Complex* orignImgP = _datP + _nPxl * l;
+            RFLOAT* originImgPR = &_datPR[_nPxl * l];
+            RFLOAT* originImgPI = &_datPI[_nPxl * l];
 
             for (int m = 0; m < _para.mReco; m++)
             {
@@ -7075,8 +7246,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     rotate2D(rot2D, dvec2(quat(0), quat(1)));
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                    translate(transImgP,
-                              orignImgP,
+                    translate(transImgPR,
+                              transImgPI,
+                              originImgPR,
+                              originImgPI,
                               -(tran - _offset[l])(0),
                               -(tran - _offset[l])(1),
                               _para.size,
@@ -7086,8 +7259,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
                               _nPxl,
                               1);
 #else
-                    translate(transImgP,
-                              orignImgP,
+                    translate(transImgPR,
+                              transImgPI,
+                              originImgPR,
+                              originImgPI,
                               -(tran)(0),
                               -(tran)(1),
                               _para.size,
@@ -7120,19 +7295,22 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     }
                     else
                     {
-                        ctf = _ctfP + _nPxl * l;
+                        // ctf = _ctfP + _nPxl * l;
+                        ctf = &(_ctfP[_nPxl * l]);
                     }
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     vec sig = _sig.row(_groupID[l] - 1).transpose();
 
-                    _model.reco(cls).insertP(transImgP,
+                    _model.reco(cls).insertP(transImgPR,
+                                             transImgPI,
                                              ctf,
                                              rot2D,
                                              w,
                                              &sig);
 #else
-                    _model.reco(cls).insertP(transImgP,
+                    _model.reco(cls).insertP(transImgPR,
+                                             transImgPI,
                                              ctf,
                                              rot2D,
                                              w);
@@ -7157,8 +7335,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     rotate3D(rot3D, quat);
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                    translate(transImgP,
-                              orignImgP,
+                    translate(transImgPR,
+                              transImgPI,
+                              originImgPR,
+                              originImgPI,
                               -(tran - _offset[l])(0),
                               -(tran - _offset[l])(1),
                               _para.size,
@@ -7168,8 +7348,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
                               _nPxl,
                               1);
 #else
-                    translate(transImgP,
-                              orignImgP,
+                    translate(transImgPR,
+                              transImgPI,
+                              originImgPR,
+                              originImgPI,
                               -(tran)(0),
                               -(tran)(1),
                               _para.size,
@@ -7202,19 +7384,21 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     }
                     else
                     {
-                        ctf = _ctfP + _nPxl * l;
+                        ctf = &(_ctfP[_nPxl * l]);
                     }
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     vec sig = _sig.row(_groupID[l] - 1).transpose();
 
-                    _model.reco(cls).insertP(transImgP,
+                    _model.reco(cls).insertP(transImgPR,
+                                             transImgPI,
                                              ctf,
                                              rot3D,
                                              w,
                                              &sig);
 #else
-                    _model.reco(cls).insertP(transImgP,
+                    _model.reco(cls).insertP(transImgPR,
+                                             transImgPI,
                                              ctf,
                                              rot3D,
                                              w);
@@ -8046,54 +8230,106 @@ void Optimiser::allocPreCal(const bool mask,
 {
     IF_MASTER return;
 
-    _datP = (Complex*)TSFFTW_malloc(_ID.size() * _nPxl * sizeof(Complex));
+    // RFLOAT ratio = (M_PI / 4) / (2 * (RFLOAT)_nPxl / (_para.size * _para.size));
 
-    _sigP = (RFLOAT*)TSFFTW_malloc(_ID.size() * _nPxl * sizeof(RFLOAT));
+    RFLOAT ratio = (M_PI / 8 * _para.size * _para.size) / ((RFLOAT)_nPxl);
 
-    _sigRcpP = (RFLOAT*)TSFFTW_malloc(_ID.size() * _nPxl * sizeof(RFLOAT));
+    // RFLOAT ratio = 1;
 
-    #pragma omp parallel for
+    std::cout << "Round " << _iter << ", ratio = " << ratio << std::endl;
+
+    // divide 4, as there are 4 containers in each stall
+
+    _datPR.setUp(omp_get_max_threads(), _ID.size() * _nPxl, GSL_MIN(_ID.size() / 4, AROUND(ratio * _md.nStallDatPR)), sizeof(RFLOAT), _nPxl, _para.cacheDirectory);
+
+    std::cout << "Round " << _iter << ", nStall of _datPR = " << _datPR.nStall() << std::endl;
+
+    _datPI.setUp(omp_get_max_threads(), _ID.size() * _nPxl, GSL_MIN(_ID.size() / 4, AROUND(ratio * _md.nStallDatPI)), sizeof(RFLOAT), _nPxl, _para.cacheDirectory);
+
+    std::cout << "Round " << _iter << ", nStall of _datPI = " << _datPI.nStall() << std::endl;
+
+    _sigRcpP.setUp(omp_get_max_threads(), _ID.size() * _nPxl, GSL_MIN(_ID.size() / 4, AROUND(ratio * _md.nStallSigRcpP)), sizeof(RFLOAT), _nPxl, _para.cacheDirectory);
+
+    std::cout << "Round " << _iter << ", nStall of _sigRcpP = " << _sigRcpP.nStall() << std::endl;
+
+    // uvec si = shuffledIndex(_ID.size());
+    uvec si = uvec::Zero(_ID.size());
+    for (size_t l = 0; l < _ID.size(); l++)
+        si(l) = l;
+
+    MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+    MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> datPIDustman(&_datPI);
+    MemoryBazaarDustman<RFLOAT, BaseType, 4> sigRcpPDustman(&_sigRcpP);
+    #pragma omp parallel for firstprivate(imgDustman, imgOriDustman, datPRDustman, datPIDustman, sigRcpPDustman)
     FOR_EACH_2D_IMAGE
     {
+        _img.endLastVisit();
+        _imgOri.endLastVisit();
+        _datPR.endLastVisit();
+        _datPI.endLastVisit();
+        _sigRcpP.endLastVisit();
+
+        size_t rl = si(l);
+
         for (int i = 0; i < _nPxl; i++)
         {
-            _datP[pixelMajor
-                ? (i * _ID.size() + l)
-                : (_nPxl * l + i)] = mask ? _img[l].iGetFT(_iPxl[i]) : _imgOri[l].iGetFT(_iPxl[i]);
+            // TODO remove
+            // _datP[pixelMajor
+            //    ? (i * _ID.size() + rl)
+            //    : (_nPxl * rl + i)] = mask ? _img[rl].iGetFT(_iPxl[i]) : _imgOri[rl].iGetFT(_iPxl[i]);
 
+            Complex data = mask ? _img[rl].iGetFT(_iPxl[i]) : _imgOri[rl].iGetFT(_iPxl[i]);
+
+            _datPR[pixelMajor
+                 ? (i * _ID.size() + rl)
+                 : (_nPxl * rl + i)] = data.dat[0];
+
+            _datPI[pixelMajor
+                 ? (i * _ID.size() + rl)
+                 : (_nPxl * rl + i)] = data.dat[1];
+
+            /***
             _sigP[pixelMajor
-                ? (i * _ID.size() + l)
-                : (_nPxl * l + i)] = _sig(_groupID[l] - 1, _iSig[i]);
+                ? (i * _ID.size() + rl)
+                : (_nPxl * rl + i)] = _sig(_groupID[rl] - 1, _iSig[i]);
+            ***/
 
             _sigRcpP[pixelMajor
-                   ? (i * _ID.size() + l)
-                   : (_nPxl * l + i)] = _sigRcp(_groupID[l] - 1, _iSig[i]);
+                   ? (i * _ID.size() + rl)
+                   : (_nPxl * rl + i)] = _sigRcp(_groupID[rl] - 1, _iSig[i]);
         }
     }
 
     if (!ctf)
     {
-        _ctfP = (RFLOAT*)TSFFTW_malloc(_ID.size() * _nPxl * sizeof(RFLOAT));
+        _ctfP.setUp(omp_get_max_threads(), _ID.size() * _nPxl, GSL_MIN(_ID.size() / 4, AROUND(ratio * _md.nStallCtfP)), sizeof(RFLOAT), _nPxl, _para.cacheDirectory);
+
+        std::cout << "Round " << _iter << ", nStall of _ctfP = " << _ctfP.nStall() << std::endl;
 
 #ifdef OPTIMISER_CTF_ON_THE_FLY
         RFLOAT* poolCTF = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
 #endif
 
-        #pragma omp parallel for
+        MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
+        #pragma omp parallel for firstprivate(ctfPDustman)
         FOR_EACH_2D_IMAGE
         {
+            size_t rl = si(l);
+
 #ifdef OPTIMISER_CTF_ON_THE_FLY
             RFLOAT* ctf = poolCTF + _nPxl * omp_get_thread_num();
 
             CTF(ctf,
                 _para.pixelSize,
-                _ctfAttr[l].voltage,
-                _ctfAttr[l].defocusU,
-                _ctfAttr[l].defocusV,
-                _ctfAttr[l].defocusTheta,
-                _ctfAttr[l].Cs,
-                _ctfAttr[l].amplitudeContrast,
-                _ctfAttr[l].phaseShift,
+                _ctfAttr[rl].voltage,
+                _ctfAttr[rl].defocusU,
+                _ctfAttr[rl].defocusV,
+                _ctfAttr[rl].defocusTheta,
+                _ctfAttr[rl].Cs,
+                _ctfAttr[rl].amplitudeContrast,
+                _ctfAttr[rl].phaseShift,
                 _para.size,
                 _para.size,
                 _iCol,
@@ -8104,15 +8340,15 @@ void Optimiser::allocPreCal(const bool mask,
             for (int i = 0; i < _nPxl; i++)
             {
                 _ctfP[pixelMajor
-                    ? (i * _ID.size() + l)
-                    : (_nPxl * l + i)] = ctf[i];
+                    ? (i * _ID.size() + rl)
+                    : (_nPxl * rl + i)] = ctf[i];
             }
 #else
             for (int i = 0; i < _nPxl; i++)
             {
                 _ctfP[pixelMajor
-                    ? (i * _ID.size() + l)
-                    : (_nPxl * l + i)] = REAL(_ctf[l].iGetFT(_iPxl[i]));
+                    ? (i * _ID.size() + rl)
+                    : (_nPxl * rl + i)] = REAL(_ctf[rl].iGetFT(_iPxl[i]));
             }
 #endif
         }
@@ -8144,28 +8380,31 @@ void Optimiser::allocPreCal(const bool mask,
         #pragma omp parallel for
         FOR_EACH_2D_IMAGE
         {
+
+            size_t rl = si(l);
+
             for (int i = 0; i < _nPxl; i++)
             {
                 RFLOAT angle = atan2(_iRow[i],
                                      _iCol[i])
-                             - _ctfAttr[l].defocusTheta;
+                             - _ctfAttr[rl].defocusTheta;
 
-                RFLOAT defocus = -(_ctfAttr[l].defocusU
-                                 + _ctfAttr[l].defocusV
-                                 + (_ctfAttr[l].defocusU - _ctfAttr[l].defocusV)
+                RFLOAT defocus = -(_ctfAttr[rl].defocusU
+                                 + _ctfAttr[rl].defocusV
+                                 + (_ctfAttr[rl].defocusU - _ctfAttr[rl].defocusV)
                                  * cos(2 * angle))
                                  / 2;
 
                 _defocusP[pixelMajor
-                        ? (i * _ID.size() + l)
-                        : (_nPxl * l + i)] = defocus;
+                        ? (i * _ID.size() + rl)
+                        : (_nPxl * rl + i)] = defocus;
             }
 
-            RFLOAT lambda = 12.2643274 / sqrt(_ctfAttr[l].voltage
-                                            * (1 + _ctfAttr[l].voltage * 0.978466e-6));
+            RFLOAT lambda = 12.2643274 / sqrt(_ctfAttr[rl].voltage
+                                            * (1 + _ctfAttr[rl].voltage * 0.978466e-6));
 
-            _K1[l] = M_PI * lambda;
-            _K2[l] = M_PI_2 * _ctfAttr[l].Cs * TSGSL_pow_3(lambda);
+            _K1[rl] = M_PI * lambda;
+            _K2[rl] = M_PI_2 * _ctfAttr[rl].Cs * TSGSL_pow_3(lambda);
         }
     }
 }
@@ -8187,9 +8426,18 @@ void Optimiser::freePreCal(const bool ctf)
 {
     IF_MASTER return;
 
-    TSFFTW_free(_datP);
-    TSFFTW_free(_sigP);
-    TSFFTW_free(_sigRcpP);
+    _datPR.cleanUp();
+
+    //TSFFTW_free(_datPI);
+
+    _datPI.cleanUp();
+
+    //TSFFTW_free(_sigP);
+    // _sigP.cleanUp();
+
+    //TSFFTW_free(_sigRcpP);
+
+    _sigRcpP.cleanUp();
 
     /***
     delete[] _datP;
@@ -8199,7 +8447,8 @@ void Optimiser::freePreCal(const bool ctf)
 
     if (!ctf)
     {
-        TSFFTW_free(_ctfP);
+        // TSFFTW_free(_ctfP);
+        _ctfP.cleanUp();
     }
     else
     {
@@ -8489,7 +8738,8 @@ void Optimiser::saveSubtract()
 
             _model.proj(cls).project(result, rotC, tran - _offset[l], _para.nThreadsPerProcess);
 
-            #pragma omp parallel for
+            MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
+            #pragma omp parallel for firstprivate(imgOriDustman)
             FOR_EACH_PIXEL_FT(diff)
             {
 #ifdef OPTIMISER_CTF_ON_THE_FLY
@@ -8587,7 +8837,8 @@ void Optimiser::saveBestProjections()
 #ifdef OPTIMISER_CTF_ON_THE_FLY
             // TODO
 #else
-            #pragma omp parallel for
+            MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
+            #pragma omp parallel for firstprivate(imgDustman)
             FOR_EACH_PIXEL_FT(diff)
                 diff[i] = _img[l][i] - result[i] * REAL(_ctf[l][i]);
 #endif
@@ -9179,1109 +9430,6 @@ void Optimiser::saveTau() const
         BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Tau B Round File To Path: " << filename;
     }}
 
-
-/**
- *  This function is add by huabin
- */
-//Change by huabin doubleToRFLOAT
-RFLOAT logDataVSPrior_m_huabin(const Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-   RFLOAT result2 = 0.0;
-   RFLOAT tmpReal = 0.0;
-   RFLOAT tmpImag = 0.0;
-   RFLOAT tmp1Real = 0.0;
-   RFLOAT tmp1Imag = 0.0;
-   RFLOAT tmp2;
-   for (int i = 0; i < m; i++)
-   {
-
-       tmpReal = ctf[i] * pri[i].dat[0];
-       tmpImag = ctf[i] * pri[i].dat[1];
-       tmp1Real = dat[i].dat[0] - tmpReal;
-       tmp1Imag = dat[i].dat[1] - tmpImag;
-
-       tmp2 = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag;
-       result2 += (tmp2 * sigRcp[i]);
-
-       //tmp3 = tmp2 * sigRcp[i];
-       //result2 += tmp3;
-
-   }
-
-   return result2;
-}
-
-
-/**
- *  SIMD256Float() and SIMD256Double() are added by huabin
- */
-
-#ifdef ENABLE_SIMD_256
-#ifdef SINGLE_PRECISION
-RFLOAT* SIMD256Float(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult)
-{
-
-    //vec resultSIMDFloat = vec::Zero(n);
-    RFLOAT* resultSIMDFloat = SIMDResult;
-    //memset(resultSIMDFloat, '\0', _ID.size() * sizeof(RFLOAT));
-
-    __m256 ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    __m256 xmm4, xmm5;
-    int i = 0;
-    int j = 0;
-    int idx = 0;
-    RFLOAT  tmp[8] __attribute__((aligned(64)));
-    RFLOAT tmpReal  = 0.0;
-    RFLOAT tmpImag  = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp1     = 0.0;
-    RFLOAT tmp2     = 0.0;
-
-
-    for(i = 0; i < m; i ++)
-    {
-        xmm4 = _mm256_set_ps(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-        xmm5 = _mm256_set_ps(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-        for(j = 0; j <= (n - 8); j += 8)
-        {
-            ymm6 = _mm256_setzero_ps();
-            idx = i * n + j;
-            ymm1 = _mm256_set_ps(ctf[idx+7], ctf[idx+6], ctf[idx+5], ctf[idx + 4], ctf[idx+3], ctf[idx+2], ctf[idx+1], ctf[idx]); //ctf[idx]
-            ymm2 = _mm256_set_ps(dat[idx + 7].dat[0], dat[idx + 6].dat[0], dat[idx + 5].dat[0],dat[idx + 4].dat[0], dat[idx + 3].dat[0], dat[idx + 2].dat[0], dat[idx + 1].dat[0],dat[idx].dat[0]);//dat[idx].dat[0]
-            ymm3 = _mm256_set_ps(dat[idx + 7].dat[1], dat[idx + 6].dat[1], dat[idx + 5].dat[1],dat[idx + 4].dat[1], dat[idx + 3].dat[1], dat[idx + 2].dat[1], dat[idx + 1].dat[1],dat[idx].dat[1]);//dat[idx].dat[1]
-            //ymm4 = _mm256_set_ps(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-            //ymm5 = _mm256_set_ps(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-            //ymm4 = _mm256_mul_ps(ymm1, ymm4); //tmpReal
-            //ymm5 = _mm256_mul_ps(ymm1, ymm5);//tmpImag
-
-            ymm4 = _mm256_mul_ps(ymm1, xmm4); //tmpReal
-            ymm5 = _mm256_mul_ps(ymm1, xmm5);//tmpImag
-
-            ymm4 = _mm256_sub_ps(ymm2, ymm4);//tmp1Real
-            ymm5 = _mm256_sub_ps(ymm3, ymm5); //tmp1Imag
-
-            ymm4 = _mm256_mul_ps(ymm4, ymm4);
-            ymm5 = _mm256_mul_ps(ymm5, ymm5);
-
-            ymm4 = _mm256_add_ps(ymm4, ymm5); //tmp1
-
-            ymm5 = _mm256_set_ps(sigRcp[idx+7], sigRcp[idx+6], sigRcp[idx+5], sigRcp[idx + 4], sigRcp[idx+3], sigRcp[idx+2], sigRcp[idx+1], sigRcp[idx]); //sigRcp
-
-            ymm4 = _mm256_mul_ps(ymm4, ymm5);//tmp2
-
-            ymm6 = _mm256_add_ps(ymm6, ymm4);//result2
-
-            _mm256_store_ps(tmp, ymm6);
-            resultSIMDFloat[j]+= tmp[0];
-            resultSIMDFloat[j + 1] += tmp[1];
-            resultSIMDFloat[j + 2] += tmp[2];
-            resultSIMDFloat[j + 3] += tmp[3];
-            resultSIMDFloat[j + 4] += tmp[4];
-            resultSIMDFloat[j + 5] += tmp[5];
-            resultSIMDFloat[j + 6] += tmp[6];
-            resultSIMDFloat[j + 7] += tmp[7];
-        }
-
-        //Process remainning value
-        for(; j < n; j ++)
-        {
-            int idx       = i * n + j;
-            tmpReal  = ctf[idx] * pri[i].dat[0];
-            tmpImag  = ctf[idx] * pri[i].dat[1];
-
-            tmp1Real = dat[idx].dat[0] - tmpReal; //temp.real
-            tmp1Imag = dat[idx].dat[1] - tmpImag;//temp.imag
-
-            tmp1          = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag; //tmp1
-            tmp2          = tmp1 * sigRcp[idx];//temp2
-            resultSIMDFloat[j]    += tmp2;
-
-        }
-
-    }
-
-    return resultSIMDFloat;
-}
-#else
-
-RFLOAT* SIMD256Double(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult)
-{
-
-    //vec resultSIMDDouble = vec::Zero(n);
-    RFLOAT *resultSIMDDouble = SIMDResult;
-    //memset(resultSIMDDouble, '\0', _ID.size() * sizeof(RFLOAT));
-    __m256d ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    __m256d xmm4, xmm5;
-    int i = 0;
-    int j = 0;
-    int idx = 0;
-    RFLOAT  tmp[4] __attribute__((aligned(64)));
-    RFLOAT tmpReal  = 0.0;
-    RFLOAT tmpImag  = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp1     = 0.0;
-    RFLOAT tmp2     = 0.0;
-
-
-    for(i = 0; i < m; i ++)
-    {
-        xmm4 = _mm256_set_pd(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-        xmm5 = _mm256_set_pd(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-        for(j = 0; j <= (n -4); j += 4)
-        {
-            ymm6 = _mm256_setzero_pd();
-            idx = i * n + j;
-            ymm1 = _mm256_set_pd(ctf[idx+3], ctf[idx+2], ctf[idx+1], ctf[idx]); //ctf[idx]
-            ymm2 = _mm256_set_pd(dat[idx + 3].dat[0], dat[idx + 2].dat[0], dat[idx + 1].dat[0],dat[idx].dat[0]);//dat[idx].dat[0]
-            ymm3 = _mm256_set_pd(dat[idx + 3].dat[1], dat[idx + 2].dat[1], dat[idx + 1].dat[1],dat[idx].dat[1]);//dat[idx].dat[1]
-            //ymm4 = _mm256_set_pd(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-            //ymm5 = _mm256_set_pd(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-            //ymm4 = _mm256_mul_pd(ymm1, ymm4); //tmpReal
-            //ymm5 = _mm256_mul_pd(ymm1, ymm5);//tmpImag
-
-            ymm4 = _mm256_mul_pd(ymm1, xmm4); //tmpReal
-            ymm5 = _mm256_mul_pd(ymm1, xmm5);//tmpImag
-
-
-            ymm4 = _mm256_sub_pd(ymm2, ymm4);//tmp1Real
-            ymm5 = _mm256_sub_pd(ymm3, ymm5); //tmp1Imag
-
-            ymm4 = _mm256_mul_pd(ymm4, ymm4);
-            ymm5 = _mm256_mul_pd(ymm5, ymm5);
-
-            ymm4 = _mm256_add_pd(ymm4, ymm5); //tmp1
-
-            ymm5 = _mm256_set_pd(sigRcp[idx+3], sigRcp[idx+2], sigRcp[idx+1], sigRcp[idx]); //sigRcp
-
-            ymm4 = _mm256_mul_pd(ymm4, ymm5);//tmp2
-
-            ymm6 = _mm256_add_pd(ymm6, ymm4);//result2
-
-            _mm256_store_pd(tmp, ymm6);
-            resultSIMDDouble[j] += tmp[0];
-            resultSIMDDouble[j + 1] += tmp[1];
-            resultSIMDDouble[j + 2] += tmp[2];
-            resultSIMDDouble[j + 3] += tmp[3];
-        }
-
-        //Process remainning value
-        for(; j < n; j ++)
-        {
-            int idx       = i * n + j;
-            tmpReal  = ctf[idx] * pri[i].dat[0];
-            tmpImag  = ctf[idx] * pri[i].dat[1];
-
-            tmp1Real = dat[idx].dat[0] - tmpReal; //temp.real
-            tmp1Imag = dat[idx].dat[1] - tmpImag;//temp.imag
-
-            tmp1          = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag; //tmp1
-            tmp2          = tmp1 * sigRcp[idx];//temp2
-            resultSIMDDouble[j]    += tmp2;//resultFoo
-
-        }
-
-    }
-
-    return resultSIMDDouble;
-}
-
-#endif
-#endif
-
-
-#ifdef ENABLE_SIMD_256
-RFLOAT* logDataVSPrior_m_n_huabin_SIMD256(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult)
-
-{
-#ifdef SINGLE_PRECISION
-    return SIMD256Float(dat, pri, ctf, sigRcp, n, m, SIMDResult);
-#else
-    return SIMD256Double(dat, pri, ctf, sigRcp, n, m, SIMDResult);
-#endif
-}
-#endif
-
-
-#ifdef ENABLE_SIMD_256
-#ifdef SINGLE_PRECISION
-RFLOAT SIMD256Float(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-    __m256 ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    ymm6 = _mm256_setzero_ps();
-    int i = 0;
-    for(i = 0; i <= (m - 8); i +=8)
-    {
-        ymm1 = _mm256_set_ps(ctf[i+7], ctf[i+6], ctf[i+5], ctf[i + 4], ctf[i+3], ctf[i+2], ctf[i+1], ctf[i]); //ctf[i]
-        ymm2 = _mm256_set_ps(dat[i+7].dat[0], dat[i+6].dat[0], dat[i+5].dat[0],dat[i + 4].dat[0], dat[i+3].dat[0], dat[i+2].dat[0], dat[i+1].dat[0],dat[i].dat[0]);//dat[i].dat[0]
-        ymm3 = _mm256_set_ps(dat[i+7].dat[1], dat[i+6].dat[1], dat[i+5].dat[1],dat[i + 4].dat[1], dat[i+3].dat[1], dat[i+2].dat[1], dat[i+1].dat[1],dat[i].dat[1]);//dat[i].dat[1]
-        ymm4 = _mm256_set_ps(pri[i+7].dat[0], pri[i+6].dat[0], pri[i+5].dat[0],pri[i + 4].dat[0], pri[i+3].dat[0], pri[i+2].dat[0], pri[i+1].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-        ymm5 = _mm256_set_ps(pri[i+7].dat[1], pri[i+6].dat[1], pri[i+5].dat[1],pri[i + 4].dat[1], pri[i+3].dat[1], pri[i+2].dat[1], pri[i+1].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-        ymm4 = _mm256_mul_ps(ymm1, ymm4); //tmpReal
-        ymm5 = _mm256_mul_ps(ymm1, ymm5);//tmpImag
-
-        ymm4 = _mm256_sub_ps(ymm2, ymm4);//tmp1Real
-        ymm5 = _mm256_sub_ps(ymm3, ymm5); //tmp1Imag
-
-        ymm4 = _mm256_mul_ps(ymm4, ymm4);
-        ymm5 = _mm256_mul_ps(ymm5, ymm5);
-
-        ymm4 = _mm256_add_ps(ymm4, ymm5); //tmp2
-        ymm5 = _mm256_set_ps(sigRcp[i+7], sigRcp[i+6], sigRcp[i+5], sigRcp[i + 4], sigRcp[i+3], sigRcp[i+2], sigRcp[i+1], sigRcp[i]); //sigRcp
-
-        ymm4 = _mm256_mul_ps(ymm4, ymm5);//tmp3
-        ymm6 = _mm256_add_ps(ymm6, ymm4);//result2
-
-    }
-
-
-    float tmp[8] __attribute__((aligned(64)));
-    _mm256_store_ps(tmp, ymm6);
-
-    RFLOAT result = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
-    RFLOAT tmpReal = 0.0;
-    RFLOAT tmpImag = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp2;
-    RFLOAT tmp3;
-
-    for (; i < m; i++)
-    {
-
-        tmpReal = ctf[i] * pri[i].dat[0];
-        tmpImag = ctf[i] * pri[i].dat[1];
-        tmp1Real = dat[i].dat[0] - tmpReal;
-        tmp1Imag = dat[i].dat[1] - tmpImag;
-
-        tmp2 = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag;
-        tmp3 = tmp2 * sigRcp[i];
-
-
-        result += tmp3;
-
-    }
-
-    return result;
-
-}
-#else
-RFLOAT SIMD256Double(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-    __m256d ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    ymm6 = _mm256_setzero_pd();
-    int i = 0;
-    for(i = 0; i <= (m - 4); i +=4)
-    {
-        ymm1 = _mm256_set_pd(ctf[i+3], ctf[i+2], ctf[i+1], ctf[i]); //ctf[i]
-        ymm2 = _mm256_set_pd(dat[i+3].dat[0], dat[i+2].dat[0], dat[i+1].dat[0],dat[i].dat[0]);//dat[i].dat[0]
-        ymm3 = _mm256_set_pd(dat[i+3].dat[1], dat[i+2].dat[1], dat[i+1].dat[1],dat[i].dat[1]);//dat[i].dat[1]
-        ymm4 = _mm256_set_pd(pri[i+3].dat[0], pri[i+2].dat[0], pri[i+1].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-        ymm5 = _mm256_set_pd(pri[i+3].dat[1], pri[i+2].dat[1], pri[i+1].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-
-        ymm4 = _mm256_mul_pd(ymm1, ymm4); //tmpReal
-        ymm5 = _mm256_mul_pd(ymm1, ymm5);//tmpImag
-
-        ymm4 = _mm256_sub_pd(ymm2, ymm4);//tmp1Real
-        ymm5 = _mm256_sub_pd(ymm3, ymm5); //tmp1Imag
-
-        ymm4 = _mm256_mul_pd(ymm4, ymm4);
-        ymm5 = _mm256_mul_pd(ymm5, ymm5);
-
-        ymm4 = _mm256_add_pd(ymm4, ymm5); //tmp2
-
-        ymm5 = _mm256_set_pd(sigRcp[i+3], sigRcp[i+2], sigRcp[i+1], sigRcp[i]); //sigRcp
-
-        ymm4 = _mm256_mul_pd(ymm4, ymm5);//tmp3
-
-        ymm6 = _mm256_add_pd(ymm6, ymm4);//result2
-
-    }
-
-
-   double  tmp[4] __attribute__((aligned(64)));
-    _mm256_store_pd(tmp, ymm6);
-
-    RFLOAT result = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-
-    RFLOAT tmpReal = 0.0;
-    RFLOAT tmpImag = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp2;
-    RFLOAT tmp3;
-
-    for (; i < m; i++)
-    {
-
-        tmpReal = ctf[i] * pri[i].dat[0];
-        tmpImag = ctf[i] * pri[i].dat[1];
-        tmp1Real = dat[i].dat[0] - tmpReal;
-        tmp1Imag = dat[i].dat[1] - tmpImag;
-
-        tmp2 = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag;
-        tmp3 = tmp2 * sigRcp[i];
-
-
-        result += tmp3;
-
-    }
-
-    return result;
-
-}
-#endif
-#endif
-
-#ifdef ENABLE_SIMD_256
-RFLOAT logDataVSPrior_m_huabin_SIMD256(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-#ifdef SINGLE_PRECISION
-    return SIMD256Float(dat, pri, ctf, sigRcp, m);
-#else
-    return SIMD256Double(dat, pri, ctf, sigRcp, m);
-#endif
-}
-#endif
-
-
-
-/* *************************************************************************************************** */
-
-
-#ifdef ENABLE_SIMD_512
-#ifdef SINGLE_PRECISION
-RFLOAT* SIMD512Float(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult)
-{
-
-    //vec resultSIMDFloat = vec::Zero(n);
-    RFLOAT *resultSIMDFloat = SIMDResult;
-    //memset(resultSIMDFloat, '\0', _ID.size() * sizeof(RFLOAT));
-    __m512 ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    __m512 xmm4, xmm5;
-    int i = 0;
-    int j = 0;
-    int idx = 0;
-    RFLOAT  tmp[16] __attribute__((aligned(64)));
-    RFLOAT tmpReal  = 0.0;
-    RFLOAT tmpImag  = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp1     = 0.0;
-    RFLOAT tmp2     = 0.0;
-
-
-    for(i = 0; i < m; i ++)
-    {
-            xmm4 = _mm512_set_ps(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0],\
-                                 pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-            xmm5 = _mm512_set_ps(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1],\
-                                 pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-        for(j = 0; j <= (n - 16); j += 16)
-        {
-            ymm6 = _mm512_setzero_ps();
-            idx = i * n + j;
-            ymm1 = _mm512_set_ps(ctf[idx+15], ctf[idx+14], ctf[idx+13], ctf[idx+12], ctf[idx+11], ctf[idx+10], ctf[idx+9], ctf[idx+8],\
-                                 ctf[idx+7],  ctf[idx+6],  ctf[idx+5],  ctf[idx+4],  ctf[idx+3],  ctf[idx+2],  ctf[idx+1], ctf[idx]); //ctf[idx]
-            ymm2 = _mm512_set_ps(dat[idx+15].dat[0], dat[idx+14].dat[0], dat[idx+13].dat[0],dat[idx+12].dat[0], dat[idx+11].dat[0], dat[idx+10].dat[0], dat[idx+9].dat[0],dat[idx+8].dat[0],\
-                                 dat[idx+7].dat[0], dat[idx+6].dat[0], dat[idx+5].dat[0],dat[idx+4].dat[0], dat[idx+3].dat[0], dat[idx+2].dat[0], dat[idx+1].dat[0],dat[idx].dat[0]);//dat[idx].dat[0]
-            ymm3 = _mm512_set_ps(dat[idx+15].dat[1], dat[idx+14].dat[1], dat[idx+13].dat[1],dat[idx+12].dat[1], dat[idx+11].dat[1], dat[idx+10].dat[1], dat[idx+9].dat[1],dat[idx+8].dat[1],\
-                                 dat[idx+7].dat[1], dat[idx+6].dat[1], dat[idx+5].dat[1],dat[idx+4].dat[1], dat[idx+3].dat[1], dat[idx+2].dat[1], dat[idx+1].dat[1],dat[idx].dat[1]);//dat[idx].dat[1]
-            //Following two lines seems can be moved to outter loop
-            //ymm4 = _mm512_set_ps(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-            //ymm5 = _mm512_set_ps(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1],                     pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-
-            ymm4 = _mm512_mul_ps(ymm1, xmm4); //tmpReal
-            ymm5 = _mm512_mul_ps(ymm1, xmm5);//tmpImag
-
-            ymm4 = _mm512_sub_ps(ymm2, ymm4);//tmp1Real
-            ymm5 = _mm512_sub_ps(ymm3, ymm5); //tmp1Imag
-
-            ymm4 = _mm512_mul_ps(ymm4, ymm4);
-            ymm5 = _mm512_mul_ps(ymm5, ymm5);
-
-            ymm4 = _mm512_add_ps(ymm4, ymm5); //tmp1
-
-            ymm5 = _mm512_set_ps(sigRcp[idx+15], sigRcp[idx+14], sigRcp[idx+13], sigRcp[idx+12], sigRcp[idx+11], sigRcp[idx+10], sigRcp[idx+9], sigRcp[idx+8],\
-                                 sigRcp[idx+7],  sigRcp[idx+6],  sigRcp[idx+5],  sigRcp[idx+4],  sigRcp[idx+3],  sigRcp[idx+2],  sigRcp[idx+1], sigRcp[idx]); //sigRcp
-
-            ymm4 = _mm512_mul_ps(ymm4, ymm5);//tmp2
-
-            ymm6 = _mm512_add_ps(ymm6, ymm4);//result2
-
-            _mm512_store_ps(tmp, ymm6);
-            resultSIMDFloat[j]+= tmp[0];
-            resultSIMDFloat[j + 1] += tmp[1];
-            resultSIMDFloat[j + 2] += tmp[2];
-            resultSIMDFloat[j + 3] += tmp[3];
-            resultSIMDFloat[j + 4] += tmp[4];
-            resultSIMDFloat[j + 5] += tmp[5];
-            resultSIMDFloat[j + 6] += tmp[6];
-            resultSIMDFloat[j + 7] += tmp[7];
-            resultSIMDFloat[j + 8] += tmp[8];
-            resultSIMDFloat[j + 9] += tmp[9];
-            resultSIMDFloat[j + 10] += tmp[10];
-            resultSIMDFloat[j + 11] += tmp[11];
-            resultSIMDFloat[j + 12] += tmp[12];
-            resultSIMDFloat[j + 13] += tmp[13];
-            resultSIMDFloat[j + 14] += tmp[14];
-            resultSIMDFloat[j + 15] += tmp[15];
-        }
-
-        //Process remainning value
-        for(; j < n; j ++)
-        {
-            int idx       = i * n + j;
-            tmpReal  = ctf[idx] * pri[i].dat[0];
-            tmpImag  = ctf[idx] * pri[i].dat[1];
-
-            tmp1Real = dat[idx].dat[0] - tmpReal; //temp.real
-            tmp1Imag = dat[idx].dat[1] - tmpImag;//temp.imag
-
-            tmp1          = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag; //tmp1
-            tmp2          = tmp1 * sigRcp[idx];//temp2
-            resultSIMDFloat[j]    += tmp2;
-
-        }
-
-    }
-
-    return resultSIMDFloat;
-}
-
-#else
-
-RFLOAT* SIMD512Double(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDFloat)
-{
-
-    //vec resultSIMDDouble = vec::Zero(n);
-    RFLOAT *resultSIMDDouble = SIMDFloat;
-    //memset(resultSIMDDouble, '\0', _ID.size() * sizeof(RFLOAT));
-    __m512d ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    __m512d xmm4, xmm5;
-    int i = 0;
-    int j = 0;
-    int idx = 0;
-    RFLOAT  tmp[8] __attribute__((aligned(64)));
-    RFLOAT tmpReal  = 0.0;
-    RFLOAT tmpImag  = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp1     = 0.0;
-    RFLOAT tmp2     = 0.0;
-
-
-    for(i = 0; i < m; i ++)
-    {
-        xmm4 = _mm512_set_pd(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-        xmm5 = _mm512_set_pd(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-        for(j = 0; j <= (n - 8); j += 8)
-        {
-            ymm6 = _mm512_setzero_pd();
-            idx = i * n + j;
-            ymm1 = _mm512_set_pd(ctf[idx+7], ctf[idx+6], ctf[idx+5], ctf[idx+4],\
-                                 ctf[idx+3], ctf[idx+2], ctf[idx+1], ctf[idx]); //ctf[idx]
-            ymm2 = _mm512_set_pd(dat[idx+7].dat[0], dat[idx+6].dat[0], dat[idx+5].dat[0],dat[idx+4].dat[0],\
-                                 dat[idx+3].dat[0], dat[idx+2].dat[0], dat[idx+1].dat[0],dat[idx].dat[0]);//dat[idx].dat[0]
-            ymm3 = _mm512_set_pd(dat[idx+7].dat[1], dat[idx+6].dat[1], dat[idx+5].dat[1],dat[idx+4].dat[1],\
-                                 dat[idx+3].dat[1], dat[idx+2].dat[1], dat[idx+1].dat[1],dat[idx].dat[1]);//dat[idx].dat[1]
-            //ymm4 = _mm512_set_pd(pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0], pri[i].dat[0], pri[i].dat[0], pri[i].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-            //ymm5 = _mm512_set_pd(pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1], pri[i].dat[1], pri[i].dat[1], pri[i].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-
-            ymm4 = _mm512_mul_pd(ymm1, xmm4); //tmpReal
-            ymm5 = _mm512_mul_pd(ymm1, xmm5);//tmpImag
-
-            ymm4 = _mm512_sub_pd(ymm2, ymm4);//tmp1Real
-            ymm5 = _mm512_sub_pd(ymm3, ymm5); //tmp1Imag
-
-            ymm4 = _mm512_mul_pd(ymm4, ymm4);
-            ymm5 = _mm512_mul_pd(ymm5, ymm5);
-
-            ymm4 = _mm512_add_pd(ymm4, ymm5); //tmp1
-
-            ymm5 = _mm512_set_pd(sigRcp[idx+7], sigRcp[idx+6], sigRcp[idx+5], sigRcp[idx+4],\
-                                 sigRcp[idx+3], sigRcp[idx+2], sigRcp[idx+1], sigRcp[idx]); //sigRcp
-
-            ymm4 = _mm512_mul_pd(ymm4, ymm5);//tmp2
-
-            ymm6 = _mm512_add_pd(ymm6, ymm4);//result2
-
-            _mm512_store_pd(tmp, ymm6);
-            resultSIMDDouble[j]     += tmp[0];
-            resultSIMDDouble[j + 1] += tmp[1];
-            resultSIMDDouble[j + 2] += tmp[2];
-            resultSIMDDouble[j + 3] += tmp[3];
-            resultSIMDDouble[j + 4] += tmp[4];
-            resultSIMDDouble[j + 5] += tmp[5];
-            resultSIMDDouble[j + 6] += tmp[6];
-            resultSIMDDouble[j + 7] += tmp[7];
-        }
-
-        //Process remainning value
-        for(; j < n; j ++)
-        {
-            int idx       = i * n + j;
-            tmpReal  = ctf[idx] * pri[i].dat[0];
-            tmpImag  = ctf[idx] * pri[i].dat[1];
-
-            tmp1Real = dat[idx].dat[0] - tmpReal; //temp.real
-            tmp1Imag = dat[idx].dat[1] - tmpImag;//temp.imag
-
-            tmp1          = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag; //tmp1
-            tmp2          = tmp1 * sigRcp[idx];//temp2
-            resultSIMDDouble[j]    += tmp2;//resultFoo
-
-        }
-
-    }
-
-    return resultSIMDDouble;
-}
-
-#endif
-#endif
-
-
-#ifdef ENABLE_SIMD_512
-RFLOAT* logDataVSPrior_m_n_huabin_SIMD512(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *SIMDResult)
-
-{
-#ifdef SINGLE_PRECISION
-    return SIMD512Float(dat, pri, ctf, sigRcp, n, m, SIMDResult);
-#else
-    return SIMD512Double(dat, pri, ctf, sigRcp, n, m, SIMDResult);
-#endif
-}
-#endif
-
-
-#ifdef ENABLE_SIMD_512
-#ifdef SINGLE_PRECISION
-RFLOAT SIMD512Float(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-    __m512 ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    ymm6 = _mm512_setzero_ps();
-    int i = 0;
-    for(i = 0; i <= (m - 16); i +=16)
-    {
-        ymm1 = _mm512_set_ps(ctf[i+15], ctf[i+14], ctf[i+13], ctf[i+12], ctf[i+11], ctf[i+10], ctf[i+9], ctf[i+8],ctf[i+7], ctf[i+6], ctf[i+5], ctf[i+4], ctf[i+3], ctf[i+2], ctf[i+1], ctf[i]); //ctf[i]
-
-        ymm2 = _mm512_set_ps(dat[i+15].dat[0], dat[i+14].dat[0], dat[i+13].dat[0],dat[i+12].dat[0], dat[i+11].dat[0], dat[i+10].dat[0], dat[i+9].dat[0],dat[i+8].dat[0],\
-                             dat[i+7].dat[0],  dat[i+6].dat[0],  dat[i+5].dat[0], dat[i+4].dat[0],  dat[i +3].dat[0], dat[i +2].dat[0], dat[i+1].dat[0],dat[i].dat[0]);//dat[i].dat[0]
-
-        ymm3 = _mm512_set_ps(dat[i+15].dat[1], dat[i+14].dat[1], dat[i+13].dat[1],dat[i+12].dat[1], dat[i+11].dat[1], dat[i+10].dat[1], dat[i+9].dat[1],dat[i+8].dat[1],\
-                             dat[i+7].dat[1],  dat[i+6].dat[1],  dat[i+5].dat[1], dat[i+4].dat[1],  dat[i+3].dat[1],  dat[i+2].dat[1],  dat[i+1].dat[1],dat[i].dat[1]);//dat[i].dat[1]
-
-        ymm4 = _mm512_set_ps(pri[i+15].dat[0], pri[i+14].dat[0], pri[i+13].dat[0],pri[i+12].dat[0], pri[i+11].dat[0], pri[i+10].dat[0], pri[i+9].dat[0],pri[i+8].dat[0],\
-                             pri[i+7].dat[0],  pri[i+6].dat[0],  pri[i+5].dat[0], pri[i+4].dat[0],  pri[i+3].dat[0],  pri[i+2].dat[0],  pri[i+1].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-
-        ymm5 = _mm512_set_ps(pri[i+15].dat[1], pri[i+14].dat[1], pri[i+13].dat[1],pri[i+12].dat[1], pri[i+11].dat[1], pri[i+10].dat[1], pri[i+9].dat[1],pri[i+8].dat[1],\
-                             pri[i+7].dat[1],  pri[i+6].dat[1],  pri[i+5].dat[1], pri[i+4].dat[1],  pri[i+3].dat[1],  pri[i+2].dat[1],  pri[i+1].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-        ymm4 = _mm512_mul_ps(ymm1, ymm4); //tmpReal
-        ymm5 = _mm512_mul_ps(ymm1, ymm5);//tmpImag
-
-        ymm4 = _mm512_sub_ps(ymm2, ymm4);//tmp1Real
-        ymm5 = _mm512_sub_ps(ymm3, ymm5); //tmp1Imag
-
-        ymm4 = _mm512_mul_ps(ymm4, ymm4);
-        ymm5 = _mm512_mul_ps(ymm5, ymm5);
-
-        ymm4 = _mm512_add_ps(ymm4, ymm5); //tmp2
-        ymm5 = _mm512_set_ps(sigRcp[i+15], sigRcp[i+14], sigRcp[i+13], sigRcp[i+12], sigRcp[i+11], sigRcp[i+10], sigRcp[i+9], sigRcp[i+8],\
-                             sigRcp[i+7],  sigRcp[i+6],  sigRcp[i+5],  sigRcp[i + 4], sigRcp[i+3], sigRcp[i+2], sigRcp[i+1], sigRcp[i]); //sigRcp
-
-        ymm4 = _mm512_mul_ps(ymm4, ymm5);//tmp3
-        ymm6 = _mm512_add_ps(ymm6, ymm4);//result2
-
-    }
-
-
-    float tmp[16] __attribute__((aligned(64)));
-    _mm512_store_ps(tmp, ymm6);
-
-    RFLOAT result = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7] + \
-                    tmp[8] + tmp[9] + tmp[10] + tmp[11] + tmp[12] + tmp[13] + tmp[14] + tmp[15];
-    RFLOAT tmpReal = 0.0;
-    RFLOAT tmpImag = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp2;
-    RFLOAT tmp3;
-
-    for (; i < m; i++)
-    {
-
-        tmpReal = ctf[i] * pri[i].dat[0];
-        tmpImag = ctf[i] * pri[i].dat[1];
-        tmp1Real = dat[i].dat[0] - tmpReal;
-        tmp1Imag = dat[i].dat[1] - tmpImag;
-
-        tmp2 = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag;
-        tmp3 = tmp2 * sigRcp[i];
-
-
-        result += tmp3;
-
-    }
-
-    return result;
-
-}
-
-#else
-RFLOAT SIMD512Double(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-    __m512d ymm1, ymm2, ymm3, ymm4, ymm5,ymm6;
-    ymm6 = _mm512_setzero_pd();
-    int i = 0;
-    for(i = 0; i <= (m - 8); i +=8)
-    {
-        ymm1 = _mm512_set_pd(ctf[i+7], ctf[i+6], ctf[i+5], ctf[i + 4], ctf[i+3], ctf[i+2], ctf[i+1], ctf[i]); //ctf[i]
-        ymm2 = _mm512_set_pd(dat[i+7].dat[0], dat[i+6].dat[0], dat[i+5].dat[0],dat[i + 4].dat[0],dat[i+3].dat[0], dat[i+2].dat[0], dat[i+1].dat[0],dat[i].dat[0]);//dat[i].dat[0]
-        ymm3 = _mm512_set_pd(dat[i+7].dat[1], dat[i+6].dat[1], dat[i+5].dat[1],dat[i + 4].dat[1],dat[i+3].dat[1], dat[i+2].dat[1], dat[i+1].dat[1],dat[i].dat[1]);//dat[i].dat[1]
-        ymm4 = _mm512_set_pd(pri[i+7].dat[0], pri[i+6].dat[0], pri[i+5].dat[0],pri[i + 4].dat[0],pri[i+3].dat[0], pri[i+2].dat[0], pri[i+1].dat[0],pri[i].dat[0]);//pri[i].dat[0]
-        ymm5 = _mm512_set_pd(pri[i+7].dat[1], pri[i+6].dat[1], pri[i+5].dat[1],pri[i + 4].dat[1],pri[i+3].dat[1], pri[i+2].dat[1], pri[i+1].dat[1],pri[i].dat[1]);//pri[i].dat[1]
-
-
-        ymm4 = _mm512_mul_pd(ymm1, ymm4); //tmpReal
-        ymm5 = _mm512_mul_pd(ymm1, ymm5);//tmpImag
-
-        ymm4 = _mm512_sub_pd(ymm2, ymm4);//tmp1Real
-        ymm5 = _mm512_sub_pd(ymm3, ymm5); //tmp1Imag
-
-        ymm4 = _mm512_mul_pd(ymm4, ymm4);
-        ymm5 = _mm512_mul_pd(ymm5, ymm5);
-
-        ymm4 = _mm512_add_pd(ymm4, ymm5); //tmp2
-
-        ymm5 = _mm512_set_pd(sigRcp[i+7], sigRcp[i+6], sigRcp[i+5], sigRcp[i+4], sigRcp[i+3], sigRcp[i+2], sigRcp[i+1], sigRcp[i]); //sigRcp
-
-        ymm4 = _mm512_mul_pd(ymm4, ymm5);//tmp3
-
-        ymm6 = _mm512_add_pd(ymm6, ymm4);//result2
-
-    }
-
-
-   double  tmp[8] __attribute__((aligned(64)));
-    _mm512_store_pd(tmp, ymm6);
-
-    RFLOAT result = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
-
-    RFLOAT tmpReal = 0.0;
-    RFLOAT tmpImag = 0.0;
-    RFLOAT tmp1Real = 0.0;
-    RFLOAT tmp1Imag = 0.0;
-    RFLOAT tmp2;
-    RFLOAT tmp3;
-
-    for (; i < m; i++)
-    {
-
-        tmpReal = ctf[i] * pri[i].dat[0];
-        tmpImag = ctf[i] * pri[i].dat[1];
-        tmp1Real = dat[i].dat[0] - tmpReal;
-        tmp1Imag = dat[i].dat[1] - tmpImag;
-
-        tmp2 = tmp1Real * tmp1Real + tmp1Imag * tmp1Imag;
-        tmp3 = tmp2 * sigRcp[i];
-
-
-        result += tmp3;
-
-    }
-
-    return result;
-
-}
-
-#endif
-#endif
-
-#ifdef ENABLE_SIMD_512
-RFLOAT logDataVSPrior_m_huabin_SIMD512(Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int m)
-{
-
-    #ifdef SINGLE_PRECISION
-        return SIMD512Float(dat, pri, ctf, sigRcp, m);
-    #else
-        return SIMD512Double(dat, pri, ctf, sigRcp, m);
-    #endif
-}
-#endif
-
-/* **************************************************************************************************** */
-
-/**
- *  This function is add by huabin
- */
-RFLOAT* logDataVSPrior_m_n_huabin(const Complex* dat, const Complex* pri, const RFLOAT* ctf, const RFLOAT* sigRcp, const int n, const int m, RFLOAT *result)
-{
-
-
-    //vec result2 = vec::Zero(n);
-    RFLOAT *result2 = result;
-    //memset(result2, '\0', _ID.size() * sizeof(RFLOAT));
-
-//Change by huabin doubleToRFLOAT
-    RFLOAT tmpCPMulReal  = 0.0;
-//Change by huabin doubleToRFLOAT
-    RFLOAT tmpCPMulImag  = 0.0;
-//Change by huabin doubleToRFLOAT
-    RFLOAT tmpDSubCPReal = 0.0;
-//Change by huabin doubleToRFLOAT
-    RFLOAT tmpDSubCPImag = 0.0;
-//Change by huabin doubleToRFLOAT
-    RFLOAT tmp1          = 0.0;
-//Change by huabin doubleToRFLOAT
-    //RFLOAT tmp2          = 0.0;
-
-
-    for(int i = 0; i < m; i ++)
-    {
-        for(int j = 0; j < n; j++)
-        {
-            int idx = i * n + j;
-
-            tmpCPMulReal  = ctf[idx] * pri[i].dat[0];
-            tmpCPMulImag  = ctf[idx] * pri[i].dat[1];
-
-            tmpDSubCPReal = dat[idx].dat[0] - tmpCPMulReal; //temp.real
-            tmpDSubCPImag = dat[idx].dat[1] - tmpCPMulImag;//temp.imag
-
-            tmp1          = tmpDSubCPReal * tmpDSubCPReal + tmpDSubCPImag * tmpDSubCPImag; //tmp1
-            result2[j]    += (tmp1 * sigRcp[idx]);//temp2
-            //tmp2          = tmp1 * sigRcp[idx];//temp2
-            //result2(j)    += tmp2;//result2
-        }
-    }
-
-    return result2;
-}
-
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const RFLOAT rU,
-                      const RFLOAT rL)
-{
-    RFLOAT result = 0;
-
-    RFLOAT rU2 = TSGSL_pow_2(rU);
-    RFLOAT rL2 = TSGSL_pow_2(rL);
-
-    IMAGE_FOR_PIXEL_R_FT(rU + 1)
-    {
-        RFLOAT u = QUAD(i, j);
-
-        if ((u < rU2) && (u >= rL2))
-        {
-            int v = AROUND(NORM(i, j));
-            if ((v < rU) &&
-                (v >= rL))
-            {
-                int index = dat.iFTHalf(i, j);
-
-                result += ABS2(dat.iGetFT(index)
-                             - REAL(ctf.iGetFT(index))
-                             * pri.iGetFT(index))
-                        * sigRcp(v);
-            }
-        }
-    }
-
-    return result;
-}
-
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const int* iPxl,
-                      const int* iSig,
-                      const int m)
-{
-    RFLOAT result = 0;
-
-    for (int i = 0; i < m; i++)
-        result += ABS2(dat.iGetFT(iPxl[i])
-                     - REAL(ctf.iGetFT(iPxl[i]))
-                     * pri.iGetFT(iPxl[i]))
-                * sigRcp(iSig[i]);
-
-    return result;
-}
-
-RFLOAT logDataVSPrior(const Complex* dat,
-                      const Complex* pri,
-                      const RFLOAT* ctf,
-                      const RFLOAT* sigRcp,
-                      const int m)
-{
-    RFLOAT result = 0;
-
-    for (int i = 0; i < m; i++)
-        result += ABS2(dat[i] - ctf[i] * pri[i])
-                * sigRcp[i];
-
-    return result;
-}
-
-RFLOAT logDataVSPrior(const Complex* dat,
-                      const Complex* pri,
-                      const RFLOAT* frequency,
-                      const RFLOAT* defocus,
-                      const RFLOAT df,
-                      const RFLOAT K1,
-                      const RFLOAT K2,
-                      const RFLOAT w1,
-                      const RFLOAT w2,
-                      const RFLOAT* sigRcp,
-                      const int m)
-{
-    RFLOAT result = 0;
-
-    for (int i = 0; i < m; i++)
-    {
-        RFLOAT ki = K1 * defocus[i] * df * TSGSL_pow_2(frequency[i])
-                  + K2 * TSGSL_pow_4(frequency[i]);
-
-        RFLOAT ctf = -w1 * sin(ki) + w2 * cos(ki);
-
-        result += ABS2(dat[i] - ctf * pri[i])
-                * sigRcp[i];
-
-    }
-
-    return result;
-}
-
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& tra,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const RFLOAT rU,
-                      const RFLOAT rL)
-{
-    RFLOAT result = 0;
-
-    RFLOAT rU2 = TSGSL_pow_2(rU);
-    RFLOAT rL2 = TSGSL_pow_2(rL);
-
-    IMAGE_FOR_PIXEL_R_FT(rU + 1)
-    {
-        RFLOAT u = QUAD(i, j);
-
-        if ((u < rU2) && (u >= rL2))
-        {
-            int v = AROUND(NORM(i, j));
-            if ((v < rU) &&
-                (v >= rL))
-            {
-                int index = dat.iFTHalf(i, j);
-
-                result += ABS2(dat.iGetFT(index)
-                             - REAL(ctf.iGetFT(index))
-                             * pri.iGetFT(index)
-                             * tra.iGetFT(index))
-                        * sigRcp(v);
-            }
-        }
-    }
-
-    return result;
-}
-
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& tra,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const int* iPxl,
-                      const int* iSig,
-                      const int m)
-{
-    RFLOAT result = 0;
-
-    for (int i = 0; i < m; i++)
-    {
-        int index = iPxl[i];
-
-        result += ABS2(dat.iGetFT(index)
-                     - REAL(ctf.iGetFT(index))
-                     * pri.iGetFT(index)
-                     * tra.iGetFT(index))
-                * sigRcp(iSig[i]);
-    }
-
-    return result;
-}
-
-vec logDataVSPrior(const vector<Image>& dat,
-                   const Image& pri,
-                   const vector<Image>& ctf,
-                   const vector<int>& groupID,
-                   const mat& sigRcp,
-                   const RFLOAT rU,
-                   const RFLOAT rL)
-{
-    int n = dat.size();
-
-    vec result = vec::Zero(n);
-
-    RFLOAT rU2 = TSGSL_pow_2(rU);
-    RFLOAT rL2 = TSGSL_pow_2(rL);
-
-    IMAGE_FOR_PIXEL_R_FT(rU + 1)
-    {
-        RFLOAT u = QUAD(i, j);
-
-        if ((u < rU2) && (u >= rL2))
-        {
-            int v = AROUND(NORM(i, j));
-            if ((v < rU) &&
-                (v >= rL))
-            {
-                int index = dat[0].iFTHalf(i, j);
-
-                for (int l = 0; l < n; l++)
-                {
-                    result(l) += ABS2(dat[l].iGetFT(index)
-                                    - REAL(ctf[l].iGetFT(index))
-                                    * pri.iGetFT(index))
-                               * sigRcp(groupID[l] - 1, v);
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-vec logDataVSPrior(const vector<Image>& dat,
-                   const Image& pri,
-                   const vector<Image>& ctf,
-                   const vector<int>& groupID,
-                   const mat& sigRcp,
-                   const int* iPxl,
-                   const int* iSig,
-                   const int m)
-{
-    int n = dat.size();
-
-    vec result = vec::Zero(n);
-
-    for (int l = 0; l < n; l++)
-    {
-        int gL = groupID[l] - 1;
-
-        const Image& datL = dat[l];
-        const Image& ctfL = ctf[l];
-
-        for (int i = 0; i < m; i++)
-        {
-            int index = iPxl[i];
-
-            result(l) += ABS2(datL.iGetFT(index)
-                            - REAL(ctfL.iGetFT(index))
-                            * pri.iGetFT(index))
-                       * sigRcp(gL, iSig[i]);
-        }
-    }
-
-    return result;
-}
-
-/***
-vec logDataVSPrior(const Complex* const* dat,
-                   const Complex* pri,
-                   const RFLOAT* const* ctf,
-                   const RFLOAT* const* sigRcp,
-                   const int n,
-                   const int m)
-{
-    vec result = vec::Zero(n);
-
-    for (int l = 0; l < n; l++)
-        for (int i = 0; i < m; i++)
-            result(l) += ABS2(dat[l][i]
-                            - ctf[l][i]
-                            * pri[i])
-                       * sigRcp[l][i];
-
-    return result;
-}
-***/
-
-vec logDataVSPrior(const Complex* dat,
-                   const Complex* pri,
-                   const RFLOAT* ctf,
-                   const RFLOAT* sigRcp,
-                   const int n,
-                   const int m)
-{
-    vec result = vec::Zero(n);
-
-    // imageMajor
-
-    /***
-    for (int i = 0; i < n * m; i++)
-        result(i / m) += ABS2(dat[i] - ctf[i] * pri[i % m])
-#ifdef OPTIMISER_CTF_WRAP
-                       * fabs(ctf[i])
-#endif
-                       * sigRcp[i];
-    ***/
-
-    // pixelMajor
-
-    for (int i = 0; i < m; i++)
-        for (int j = 0; j < n; j++)
-        {
-            size_t idx = i * n + j;
-
-            result(j) += ABS2(dat[idx] - ctf[idx] * pri[i])
-                       * sigRcp[idx];
-        }
-
-    return result;
-}
-
-RFLOAT dataVSPrior(const Image& dat,
-                   const Image& pri,
-                   const Image& ctf,
-                   const vec& sigRcp,
-                   const RFLOAT rU,
-                   const RFLOAT rL)
-{
-    return exp(logDataVSPrior(dat, pri, ctf, sigRcp, rU, rL));
-}
-
-RFLOAT dataVSPrior(const Image& dat,
-                   const Image& pri,
-                   const Image& tra,
-                   const Image& ctf,
-                   const vec& sigRcp,
-                   const RFLOAT rU,
-                   const RFLOAT rL)
-{
-    return exp(logDataVSPrior(dat, pri, tra, ctf, sigRcp, rU, rL));
-}
 
 void scaleDataVSPrior(vec& sXA,
                       vec& sAA,

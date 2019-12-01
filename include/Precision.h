@@ -94,6 +94,7 @@
      */
     #define TS_MAX_RFLOAT_VALUE FLT_MAX
 
+
     /**
      * @brief a Complex object contains 2 single precision floats
      */
@@ -230,6 +231,17 @@ RFLOAT TSGSL_sf_bessel_Jnu(const RFLOAT nu, const RFLOAT x);
 RFLOAT TSGSL_sf_sinc(const RFLOAT x);
 
 
+/**
+ *  @brief  Doctor Hu, please add the description for this function 
+ */
+inline RFLOAT TS_FABS(const RFLOAT x)
+{
+#ifdef SINGLE_PRECISION
+    return fabsf(x);
+#else
+    return fabs(x);
+#endif
+}
 
 /**
  *  @brief Calculate the trigonometric sin of an angle x with type RFLOAT, which is either of single precision or double precision, determined at compiled time.

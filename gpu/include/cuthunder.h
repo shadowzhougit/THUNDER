@@ -18,6 +18,7 @@
 
 #include "ManagedArrayTexture.h"
 #include "ManagedCalPoint.h"
+#include "MemoryBazaar.h"
 
 #include <mpi.h>
 #include <vector>
@@ -90,7 +91,8 @@ void expectPrefre(int gpuIdx,
  * @param
  */
 void expectLocalIn(int gpuIdx,
-                   Complex** devdatP,
+                   RFLOAT** devdatPR,
+                   RFLOAT** devdatPI,
                    RFLOAT** devctfP,
                    RFLOAT** devdefO,
                    RFLOAT** devsigP,
@@ -105,16 +107,18 @@ void expectLocalIn(int gpuIdx,
  * @param
  */
 void expectLocalP(int gpuIdx,
-                  Complex* devdatP,
+                  RFLOAT* devdatPR,
+                  RFLOAT* devdatPI,
                   RFLOAT* devctfP,
-                  RFLOAT* devdefO,
                   RFLOAT* devsigP,
-                  Complex* datP,
+                  RFLOAT* devdefO,
+                  RFLOAT* datPR,
+                  RFLOAT* datPI,
                   RFLOAT* ctfP,
-                  RFLOAT* defO,
                   RFLOAT* sigRcpP,
+                  RFLOAT* defO,
                   int threadId,
-                  int imgId,
+                  //int imgId,
                   int npxl,
                   int cSearch);
 
@@ -237,7 +241,8 @@ void expectLocalM(int gpuIdx,
                   //RFLOAT* dvpA,
                   //RFLOAT* baseL,
                   ManagedCalPoint* mcp,
-                  Complex* devdatP,
+                  RFLOAT* devdatPR,
+                  RFLOAT* devdatPI,
                   RFLOAT* devctfP,
                   RFLOAT* devsigP,
                   RFLOAT* wC,
@@ -273,7 +278,8 @@ void expectLocalHostF(int gpuIdx,
  * @param
  */
 void expectLocalFin(int gpuIdx,
-                    Complex** devdatP,
+                    RFLOAT** devdatPR,
+                    RFLOAT** devdatPI,
                     RFLOAT** devctfP,
                     RFLOAT** devdefO,
                     RFLOAT** devfreQ,
@@ -313,9 +319,10 @@ void expectPrecal(vector<CTFAttr*>& ctfaData,
  * @param
  */
 void expectGlobal2D(Complex* volume,
-                    Complex* datP,
-                    RFLOAT* ctfP,
-                    RFLOAT* sigRcpP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                     double* trans,
                     RFLOAT* wC,
                     RFLOAT* wR,
@@ -377,9 +384,10 @@ void expectProject(Complex* volume,
  */
 void expectGlobal3D(Complex* rotP,
                     Complex* traP,
-                    Complex* datP,
-                    RFLOAT* ctfP,
-                    RFLOAT* sigRcpP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                     RFLOAT* wC,
                     RFLOAT* wR,
                     RFLOAT* wT,
@@ -405,9 +413,10 @@ void InsertI2D(Complex *F2D,
                int *counter,
                MPI_Comm& hemi,
                MPI_Comm& slav,
-               Complex *datP,
-               RFLOAT *ctfP,
-               RFLOAT *sigRcpP,
+               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                RFLOAT *w,
                double *offS,
                int *nC,
@@ -439,9 +448,10 @@ void InsertFT(Complex *F3D,
               int *counter,
               MPI_Comm& hemi,
               MPI_Comm& slav,
-              Complex *datP,
-              RFLOAT *ctfP,
-              RFLOAT *sigRcpP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
               CTFAttr *ctfaData,
               double *offS,
               RFLOAT *w,
@@ -472,9 +482,10 @@ void InsertFT(Complex *F3D,
               int *counter,
               MPI_Comm& hemi,
               MPI_Comm& slav,
-              Complex *datP,
-              RFLOAT *ctfP,
-              RFLOAT *sigRcpP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
               CTFAttr *ctfaData,
               double *offS,
               RFLOAT *w,
@@ -844,12 +855,29 @@ void TranslateI(int gpuIdx,
                 int dim);
 
 /**
+ * @brief .
+ *
+ * @param
+ * @param
+ */
+void hostRegister(Complex* img,
+                  int totalNum);
+
+/**
+ * @brief .
+ *
+ * @param
+ * @param
+ */
+void hostFree(Complex* img);
+
+/**
  * @brief ReMask.
  *
  * @param
  * @param
  */
-void reMask(vector<Complex*>& imgData,
+void reMask(Complex* imgData,
             RFLOAT maskRadius,
             RFLOAT pixelSize,
             RFLOAT ew,
@@ -863,7 +891,7 @@ void reMask(vector<Complex*>& imgData,
  * @param
  * @param
  */
-void GCTF(vector<Complex*>& imgData,
+void GCTF(Complex* ctf,
           vector<CTFAttr*>& ctfaData,
           RFLOAT pixelSize,
           int ndim,

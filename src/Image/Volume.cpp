@@ -10,7 +10,7 @@
 
 #include "Volume.h"
 
-Volume::Volume() : _nCol(0), _nRow(0), _nSlc(0) {}
+Volume::Volume() : ImageBase(), _nCol(0), _nRow(0), _nSlc(0) {}
 
 Volume::Volume(const long nCol,
                const long nRow,

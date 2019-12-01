@@ -276,11 +276,30 @@ class Projector
                      const unsigned int nThread         /**< [in]  the number of threads to be used */
                      ) const;
 
+        void project(RFLOAT* dstR,                      /**< [out] the projected image, stored by Complex type */
+                     RFLOAT* dstI,
+                     const dmat22& mat,                 /**< [in]  the 2D rotation matrix */
+                     const int* iCol,                   /**< [in]  the index of column */
+                     const int* iRow,                   /**< [in]  the index of row */
+                     const int nPxl,                    /**< [in]  the number of pixels */
+                     const unsigned int nThread         /**< [in]  the number of threads to be used */
+                     ) const;
+
+ 
         /**
          * @brief Project an image using multiple threads, given the rotation matrix and the pre-determined pixel indices, while the projected image stored by Complex type.
          */
         void project(Complex* dst,                      /**< [out] the projected image, stored by Complex type */
                      const dmat22& mat,                 /**< [in]  the 2D rotation matrix */
+                     const int* iCol,                   /**< [in]  the index of column */
+                     const int* iRow,                   /**< [in]  the index of row */
+                     const int nPxl,                    /**< [in]  the number of pixels */
+                     const unsigned int nThread         /**< [in]  the number of threads to be used */
+                     ) const;
+
+        void project(RFLOAT* dstR,                      /**< [out] the projected image, stored by Complex type */
+                     RFLOAT* dstI,
+                     const dmat33& mat,                 /**< [in]  the 2D rotation matrix */
                      const int* iCol,                   /**< [in]  the index of column */
                      const int* iRow,                   /**< [in]  the index of row */
                      const int nPxl,                    /**< [in]  the number of pixels */

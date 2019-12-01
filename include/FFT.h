@@ -42,7 +42,7 @@
  * @brief This macro checks whether the source and destination of Fourier transform are both repaired.
  */
 #define CHECK_SPACE_VALID(dst, /**< [in] the destination of Fourier transform */ \
-                          src  /**< [in[ the source of Fourier transform */ \
+                          src  /**< [in] the source of Fourier transform */ \
                           ) \
 { \
     if (src == NULL) \

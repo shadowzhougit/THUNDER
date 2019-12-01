@@ -373,6 +373,44 @@ void Projector::project(Complex* dst,
     }
 }
 
+void Projector::project(RFLOAT* dstR,
+                        RFLOAT* dstI,
+                        const dmat22& mat,
+                        const int* iCol,
+                        const int* iRow,
+                        const int nPxl,
+                        const unsigned int nThread) const
+{
+    Complex* dst = new Complex[nPxl];
+
+    project(dst, mat, iCol, iRow, nPxl, nThread);
+
+    for (int i = 0; i < nPxl; i++)
+    {
+        dstR[i] = dst[i].dat[0];
+        dstI[i] = dst[i].dat[1];
+    }
+}
+
+void Projector::project(RFLOAT* dstR,
+                        RFLOAT* dstI,
+                        const dmat33& mat,
+                        const int* iCol,
+                        const int* iRow,
+                        const int nPxl,
+                        const unsigned int nThread) const
+{
+    Complex* dst = new Complex[nPxl];
+
+    project(dst, mat, iCol, iRow, nPxl, nThread);
+
+    for (int i = 0; i < nPxl; i++)
+    {
+        dstR[i] = dst[i].dat[0];
+        dstI[i] = dst[i].dat[1];
+    }
+}
+
 //void Projector::project(Image& dst,
 //                        const dmat22& rot,
 //                        const dvec2& t) const

@@ -705,6 +705,26 @@ void Reconstructor::insertP(const Image& src,
     }
 }
 
+void Reconstructor::insertP(const RFLOAT* srcR,
+                            const RFLOAT* srcI,
+                            const RFLOAT* ctf,
+                            const dmat22& rot,
+                            const RFLOAT w,
+                            const vec* sig)
+{
+    Complex* src = new Complex[_nPxl];
+
+    for (int i = 0; i < _nPxl; i++)
+    {
+        src[i].dat[0] = srcR[i];
+        src[i].dat[1] = srcI[i];
+    }
+
+    insertP(src, ctf, rot, w, sig);
+
+    delete[] src;
+}
+
 void Reconstructor::insertP(const Complex* src,
                             const RFLOAT* ctf,
                             const dmat22& rot,
@@ -777,6 +797,26 @@ void Reconstructor::insertP(const Complex* src,
 
 #endif
         }
+}
+
+void Reconstructor::insertP(const RFLOAT* srcR,
+                            const RFLOAT* srcI,
+                            const RFLOAT* ctf,
+                            const dmat33& rot,
+                            const RFLOAT w,
+                            const vec* sig)
+{
+    Complex* src = new Complex[_nPxl];
+
+    for (int i = 0; i < _nPxl; i++)
+    {
+        src[i].dat[0] = srcR[i];
+        src[i].dat[1] = srcI[i];
+    }
+
+    insertP(src, ctf, rot, w, sig);
+
+    delete[] src;
 }
 
 void Reconstructor::insertP(const Complex* src,
@@ -864,9 +904,10 @@ void Reconstructor::insertP(const Complex* src,
 
 #ifdef GPU_INSERT
 
-void Reconstructor::insertI(Complex* datP,
-                            RFLOAT* ctfP,
-                            RFLOAT* sigP,
+void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                            MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                            MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                            MemoryBazaar<RFLOAT, BaseType, 4>& sigP,
                             RFLOAT* w,
                             double* offS,
                             double* nr,
@@ -895,7 +936,8 @@ void Reconstructor::insertI(Complex* datP,
              counter,
              _hemi,
              _slav,
-             datP,
+             datPR,
+             datPI,
              ctfP,
              sigP,
              ctfaData,
@@ -925,9 +967,10 @@ void Reconstructor::insertI(Complex* datP,
     delete[] counter;
 }
 
-void Reconstructor::insertI(Complex* datP,
-                            RFLOAT* ctfP,
-                            RFLOAT* sigP,
+void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                            MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                            MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                            MemoryBazaar<RFLOAT, BaseType, 4>& sigP,
                             RFLOAT* w,
                             double* offS,
                             double* nr,
@@ -955,7 +998,8 @@ void Reconstructor::insertI(Complex* datP,
              counter,
              _hemi,
              _slav,
-             datP,
+             datPR,
+             datPI,
              ctfP,
              sigP,
              ctfaData,

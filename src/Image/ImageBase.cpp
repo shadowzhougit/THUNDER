@@ -10,29 +10,15 @@
 
 #include "ImageBase.h"
 
-ImageBase::ImageBase() : _sizeRL(0), _sizeFT(0)
+ImageBase::ImageBase() : _dataRL(NULL), _dataFT(NULL), _sizeRL(0), _sizeFT(0)
 {
+    /***
 #ifdef FFTW_PTR
     _dataRL = NULL;
     _dataFT = NULL;
 #endif
+    ***/
 }
-
-/***
-ImageBase::ImageBase(BOOST_RV_REF(ImageBase) that) : _dataRL(boost::move(that._dataRL)),
-                                                     _dataFT(boost::move(that._dataFT)),
-                                                     _sizeRL(that._sizeRL),
-                                                     _sizeFT(that._sizeFT)
-{
-    that._sizeRL = 0;
-    that._sizeFT = 0;
-
-#ifdef FFTW_PTR
-    that._dataRL = NULL;
-    that._dataFT = NULL;
-#endif
-}
-***/
 
 ImageBase::~ImageBase()
 {
@@ -75,12 +61,12 @@ void ImageBase::swap(ImageBase& that)
 
 bool ImageBase::isEmptyRL() const
 {
-    return !_dataRL;
+    return (_dataRL == NULL);
 }
 
 bool ImageBase::isEmptyFT() const
 {
-    return !_dataFT;
+    return (_dataFT == NULL);
 }
 
 size_t ImageBase::sizeRL() const { return _sizeRL; }

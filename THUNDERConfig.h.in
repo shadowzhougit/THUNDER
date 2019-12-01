@@ -7,3 +7,4 @@
 #cmakedefine GPU_VERSION
 #cmakedefine ENABLE_SIMD_256
 #cmakedefine ENABLE_SIMD_512
+#cmakedefine APPLE

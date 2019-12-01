@@ -21,8 +21,8 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <errno.h>
-
 #include <json/json.h>
+#include <unistd.h>
 
 #include "Config.h"
 #include "Logging.h"
@@ -37,6 +37,89 @@
 
 using namespace std;
 
+//int mkDir(string s, mode_t mode)
+//{
+//    size_t pos = 0;
+//    string dir;
+//    int mdRet = 0;
+//    while ((pos = s.find_first_of('/', pos)) != string::npos)
+//    {
+//        dir = s.substr(0, pos++);
+
+//        if (dir.size() == 0)
+//        {
+//            continue;
+//        } 
+
+//        if ((mdRet = mkdir(dir.c_str(), mode)) && errno != EEXIST)
+//        {
+//            return mdRet;
+//        }
+        
+//    }
+
+//    return mdRet;
+//}
+
+
+void mkDir(string s, mode_t mode)
+{
+    size_t pos = 0;
+    string dir;
+    int mdRet = 0;
+    while ((pos = s.find_first_of('/', pos)) != string::npos)
+    {
+        dir = s.substr(0, pos++);
+
+        if (dir.size() == 0)
+        {
+            continue;
+        } 
+
+        if ((mdRet = mkdir(dir.c_str(), mode)) && errno != EEXIST)
+        {
+            return;
+        }
+    }
+
+}
+
+
+int createCacheDirctory(OptimiserPara &thunderPara)
+{
+    if (thunderPara.cacheDirectory != NULL)
+    {
+        int len = strlen(thunderPara.cacheDirectory);
+        if (len > 0)
+        {
+            if (thunderPara.cacheDirectory[len - 1] != '/' )
+            {
+                if (len < (FILE_NAME_LENGTH - 1))
+                {
+                    thunderPara.cacheDirectory[len] = '/';
+                }
+
+                else
+                {
+                    printf("Length of CacheDirectory[%d] is too long, maximum is: %d\n", len, FILE_NAME_LENGTH);
+                    abort();
+                }
+            }
+        }
+
+        mkDir(string(thunderPara.cacheDirectory), 0755);
+    }
+    struct stat st;
+    stat(thunderPara.cacheDirectory, &st);
+    if(S_ISDIR(st.st_mode))
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
 
 inline Json::Value JSONCPP_READ_ERROR_HANDLER(const Json::Value src,
                                               const std::string basicClass,
@@ -45,9 +128,9 @@ inline Json::Value JSONCPP_READ_ERROR_HANDLER(const Json::Value src,
 {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     if (src[basicClass] == Json::nullValue)
     {
-
         //CLOG(FATAL, "LOGGER_SYS") << "Json parameter file BASIC CLASS \""
         //                          << basicClass
         //                          << "\" is not exit. Please make sure of it. ";
@@ -55,21 +138,24 @@ inline Json::Value JSONCPP_READ_ERROR_HANDLER(const Json::Value src,
         /**
          *  Note: This function is called before initLogger, so we should not use aboved log function in advanced.
          */
-        if(rank == 0)
+        if (rank == 0)
         {
             fprintf(stderr, "\n  ERROR: Json parameter file BASIC CLASS \"%s\" does not exist, please check it.\n", basicClass.c_str());
         }
+
         abort();
     }
+
     else if (src[basicClass][optionKey] == Json::nullValue)
     {
-        
-        if(rank == 0)
+        if (rank == 0)
         {
             fprintf(stderr, "\n  ERROR: Json parameter file KEY \"%s\" in BASIC CLASS \"%s\" does not exist, please check it\n", optionKey.c_str(), basicClass.c_str());
         }
+
         abort();
     }
+
     else
     {
         return src[basicClass][optionKey];
@@ -80,27 +166,27 @@ inline Json::Value JSONCPP_READ_ERROR_HANDLER(const Json::Value src,
  *  This function is added by huabin
  *  This function is used to covert seconds to day:hour:min:sec format
 
-void fmt_time(int timeInSeconds, char *outputBuffer)
-{
-    int day = 0;
-    int hour = 0;
-    int min = 0;
-    int sec = 0;
-    int inputSeconds = timeInSeconds;
+ void fmt_time(int timeInSeconds, char *outputBuffer)
+ {
+ int day = 0;
+ int hour = 0;
+ int min = 0;
+ int sec = 0;
+ int inputSeconds = timeInSeconds;
 
-    day = timeInSeconds / (24 * 3600);
-    timeInSeconds = timeInSeconds % (24 * 3600);
-    hour = timeInSeconds/3600;
-    timeInSeconds = timeInSeconds%3600;
-    min = timeInSeconds/60;
-    timeInSeconds = timeInSeconds%60;
-    sec = timeInSeconds;
-    snprintf(outputBuffer, 512, "%ds (%d days:%d hours:%d mins:%d seconds)\n", inputSeconds, day, hour, min, sec);
-}
-***/
+ day = timeInSeconds / (24 * 3600);
+ timeInSeconds = timeInSeconds % (24 * 3600);
+ hour = timeInSeconds/3600;
+ timeInSeconds = timeInSeconds%3600;
+ min = timeInSeconds/60;
+ timeInSeconds = timeInSeconds%60;
+ sec = timeInSeconds;
+ snprintf(outputBuffer, 512, "%ds (%d days:%d hours:%d mins:%d seconds)\n", inputSeconds, day, hour, min, sec);
+ }
+ ***/
 
 template <size_t N>
-static inline void copy_string(char (&array)[N], const std::string& source)
+static inline void copy_string(char (&array)[N], const std::string &source)
 {
     if (source.size() + 1 >= N)
     {
@@ -119,11 +205,13 @@ static inline void copy_string(char (&array)[N], const std::string& source)
 void readPara(OptimiserPara &dst, const Json::Value src)
 {
     dst.nThreadsPerProcess = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_N_THREADS_PER_PROCESS).asInt();
+    dst.maximumMemoryUsagePerProcessGB = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_MAXIMUM_MEMORY_USAGE_PER_PROCESS_IN_GB).asFloat();
 
     if (JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_MODE).asString() == "2D")
     {
         dst.mode = MODE_2D;
     }
+
     else if (JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_MODE).asString() == "3D")
     {
         dst.mode = MODE_3D;
@@ -139,7 +227,6 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     dst.gSearch = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_G_SEARCH).asBool();
     dst.lSearch = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_L_SEARCH).asBool();
     dst.cSearch = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_C_SEARCH).asBool();
-
     dst.k = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_K).asInt();
     dst.size = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_SIZE).asInt();
     dst.pixelSize = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_PIXEL_SIZE).asFloat();
@@ -158,14 +245,12 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     dst.maskFSC = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_MASK_FSC).asBool();
     dst.parGra = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_PAR_GRA).asBool();
     dst.refAutoRecentre = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_REF_AUTO_RECENTRE).asBool();
-
     dst.performMask = JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_PERFORM_MASK).asBool();
     dst.globalMask = JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_GLOBAL_MASK).asBool();
     copy_string(dst.mask, JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_MASK).asString());
-
     dst.subtract = JSONCPP_READ_ERROR_HANDLER(src, "Subtract", KEY_SUBTRACT).asBool();
     copy_string(dst.regionCentre, JSONCPP_READ_ERROR_HANDLER(src, "Subtract", KEY_REGION_CENTRE).asString());
-
+    copy_string(dst.cacheDirectory, JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_CACHE_DIRECTORY).asString());
     dst.iterMax = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_ITER_MAX).asInt();
     dst.goldenStandard = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_GOLDEN_STANDARD).asBool();
     dst.pf = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_PF).asInt();
@@ -175,14 +260,12 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     if (dst.mode == MODE_2D)
     {
         dst.mS = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_S_2D).asInt();
-
         dst.mLR = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_R_2D).asInt();
     }
 
     else if (dst.mode == MODE_3D)
     {
         dst.mS = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_S_3D).asInt();
-
         dst.mLR = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_R_3D).asInt();
     }
 
@@ -206,7 +289,6 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     dst.groupScl = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_GROUP_SCL).asBool();
     dst.zeroMask = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_ZERO_MASK).asBool();
     dst.ctfRefineS = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_CTF_REFINE_S).asFloat();
-
     dst.transSearchFactor = JSONCPP_READ_ERROR_HANDLER(src, "Professional", KEY_TRANS_SEARCH_FACTOR).asFloat();
     dst.perturbFactorL = JSONCPP_READ_ERROR_HANDLER(src, "Professional", KEY_PERTURB_FACTOR_L).asFloat();
     dst.perturbFactorSGlobal = JSONCPP_READ_ERROR_HANDLER(src, "Professional", KEY_PERTURB_FACTOR_S_GLOBAL).asFloat();
@@ -227,6 +309,7 @@ void logPara(const Json::Value src)
         {
             logPara(src[mem[i]]);
         }
+
         else if (src[mem[i]].type() == Json::arrayValue)
         {
             for (int j = 0; j < (int)src[mem[i]].size(); j++)
@@ -303,18 +386,21 @@ void initGlobalPara(char *logFileFullName, Json::Reader &jsonReader, Json::Value
     {
         strcpy(finalOutputDir, currWorkDir);
         strcat(finalOutputDir, "/");
+
         /**
          *  Charactors "./" should not appear in the path
          */
         if (outputDir[0] == '.' && outputDir[1] == '/')
         {
             int k = 2;
+
             for (int i = strlen(finalOutputDir); outputDir[k] != '\0'; i ++)
             {
                 finalOutputDir[i] = outputDir[k];
                 k++;
             }
         }
+
         else
         {
             strcat(finalOutputDir, outputDir);
@@ -328,19 +414,19 @@ void initGlobalPara(char *logFileFullName, Json::Reader &jsonReader, Json::Value
 
     strcpy(logFileFullName, finalOutputDir);
     strcat(logFileFullName, "thunder.log");
-
     /**
-     *  Construct value for dstPrefix 
+     *  Construct value for dstPrefix
      */
-   strcpy(thunderPara.dstPrefix, finalOutputDir);
-   strcat(thunderPara.dstPrefix, thunderPara.outputFilePrefix);
-   len = strlen(thunderPara.outputFilePrefix);
-   if(len > 0 && thunderPara.outputFilePrefix[len - 1] != '_')
-   {
-        strcat(thunderPara.dstPrefix, "_");
-   }
+    strcpy(thunderPara.dstPrefix, finalOutputDir);
+    strcat(thunderPara.dstPrefix, thunderPara.outputFilePrefix);
+    len = strlen(thunderPara.outputFilePrefix);
 
-   strcpy(thunderPara.outputDirFullPath, finalOutputDir);
+    if (len > 0 && thunderPara.outputFilePrefix[len - 1] != '_')
+    {
+        strcat(thunderPara.dstPrefix, "_");
+    }
+
+    strcpy(thunderPara.outputDirFullPath, finalOutputDir);
 }
 
 int main(int argc, char *argv[])
@@ -360,6 +446,7 @@ int main(int argc, char *argv[])
              << endl;
         return 0;
     }
+
     else if (argc != 2)
     {
         cout << "Wrong Number of Parameters Input!"
@@ -372,19 +459,26 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     int size;
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-
     Json::Reader jsonReader;
     Json::Value jsonRoot;
     OptimiserPara thunderPara;
     char logFileFullName[FILE_NAME_LENGTH];
     memset(logFileFullName, '\0', sizeof(logFileFullName));
-
     /**
      *  Init some global parameters based on json file provided in argument argv[1]
      */
     initGlobalPara(logFileFullName, jsonReader, jsonRoot, thunderPara, argv[1]);
     initLogger(logFileFullName, rank);
+    int flag = createCacheDirctory(thunderPara);
+    if(flag == 1)
+    {
+        CLOG(INFO, "LOGGER_SYS") << "Cache directory is: " << thunderPara.cacheDirectory;
+    }
+    else
+    {
+        REPORT_ERROR("ERROR IN INITIALISING FFTW THREADS");
+        abort();
+    }
 
     if (rank == 0)
     {
@@ -403,6 +497,7 @@ int main(int argc, char *argv[])
             CLOG(FATAL, "LOGGER_SYS") << "THUNDER REQUIRES AT LEAST 3 PROCESSES IN MPI";
             abort();
         }
+
         else if (size == 4)
         {
             CLOG(WARNING, "LOGGER_SYS") << "2 PROCESSES IN HEMISPHERE A, 1 PROCESS IN HEMISPHERE B, SEVERE INBALANCE";
@@ -422,10 +517,11 @@ int main(int argc, char *argv[])
 #ifdef VERBOSE_LEVEL_1
     CLOG(INFO, "LOGGER_SYS") << "Process " << rank << " Initialised";
 #endif
+
     if (rank == 0)
     {
-       CLOG(INFO, "LOGGER_SYS") << "Logging JSON Parameters";
-       logPara(jsonRoot);
+        CLOG(INFO, "LOGGER_SYS") << "Logging JSON Parameters";
+        logPara(jsonRoot);
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -483,6 +579,5 @@ int main(int argc, char *argv[])
     opt.run();
     MPI_Finalize();
     TSFFTW_cleanup_threads();
-
     return 0;
 }

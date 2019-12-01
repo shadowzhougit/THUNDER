@@ -592,6 +592,13 @@ class Reconstructor : public Parallel
                      const vec*    sig = NULL /**< [in] the average power spectrum of noise */
                     );
 
+        void insertP(const RFLOAT* srcR,
+                     const RFLOAT* srcI,
+                     const RFLOAT* ctf,
+                     const dmat22& rot,
+                     const RFLOAT w,
+                     const vec* sig = NULL);
+
         /**
         * @brief  Insert a 2D Fourier transform of image pixel data with associated 2D rotaion matrix, weights and average power spectrum of noise by CPU. 
         * The image data src will be accumulated onto the relative grid points of volume _F by translation vector, rotation matrix and interpolation. The rotation matrix will be recorded into vector _rot. The weights will be saved in vector _w.
@@ -602,6 +609,13 @@ class Reconstructor : public Parallel
                      const RFLOAT   w,         /**< [in] the weights that measure the possibility of the rotation matrix and translation vector */
                      const vec*     sig = NULL /**< [in] the average power spectrum of noise */
                     );
+
+        void insertP(const RFLOAT* srcR,
+                     const RFLOAT* srcI,
+                     const RFLOAT* ctf,
+                     const dmat33& rot,
+                     const RFLOAT w,
+                     const vec* sig = NULL);
 
         /**
          * @brief Insert a 2D Fourier transform of image pixel data with associated 3D rotation matrix, weights into member data, 2D translation vector and average power spectrum of noise by CPU. 
@@ -619,9 +633,10 @@ class Reconstructor : public Parallel
         /**
          * @brief Insert the complex 2D images into reconstructor by GPU. 
          */
-        void insertI(Complex* datP,      /**< [in]  */
-                     RFLOAT*  ctfP,      /**< [in]  */
-                     RFLOAT*  sigP,      /**< [in]  */
+        void insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR, /**< [in]  */
+                     MemoryBazaar<RFLOAT, BaseType, 4>& datPI, /**< [in]  */
+                     MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,  /**< [in]  */
+                     MemoryBazaar<RFLOAT, BaseType, 4>& sigP,  /**< [in]  */
                      RFLOAT*  w,         /**< [in] the weights that measure the possibility of the rotation matrix and translation vector */
                      double*  offS,      /**< [in]  */
                      double*  nr,        /**< [in]  */
@@ -640,9 +655,10 @@ class Reconstructor : public Parallel
         /**
          * @brief Insert the complex 2D images into reconstructor by GPU. 
          */
-        void insertI(Complex* datP,      /**< [in]  */
-                     RFLOAT*  ctfP,      /**< [in]  */
-                     RFLOAT*  sigP,      /**< [in]  */
+        void insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR, /**< [in]  */
+                     MemoryBazaar<RFLOAT, BaseType, 4>& datPI, /**< [in]  */
+                     MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,  /**< [in]  */
+                     MemoryBazaar<RFLOAT, BaseType, 4>& sigP,  /**< [in]  */
                      RFLOAT*  w,         /**< [in] the weights that measure the possibility of the rotation matrix and translation vector */
                      double*  offS,      /**< [in]  */
                      double*  nr,        /**< [in]  */

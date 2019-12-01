@@ -25,7 +25,10 @@
 
 #include "Logging.h"
 #include "Precision.h"
+#include "Typedef.h"
 
 gsl_rng* get_random_engine();
+
+uvec shuffledIndex(const size_t n);
 
 #endif // RANDOM_H

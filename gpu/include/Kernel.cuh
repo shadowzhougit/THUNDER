@@ -258,7 +258,8 @@ __global__ void kernel_Project2D(Complex* priRotP,
  */
 __global__ void kernel_logDataVSL(Complex* priRotP,
                                   Complex* devtraP,
-                                  Complex* devdatP,
+                                  RFLOAT* devdatPR,
+                                  RFLOAT* devdatPI,
                                   RFLOAT* devctfP,
                                   RFLOAT* devsigP,
                                   RFLOAT* devDvp,
@@ -274,7 +275,8 @@ __global__ void kernel_logDataVSL(Complex* priRotP,
  */
 __global__ void kernel_logDataVSLC(Complex* priRotP,
                                    Complex* devtraP,
-                                   Complex* devdatP,
+                                   RFLOAT* devdatPR,
+                                   RFLOAT* devdatPI,
                                    RFLOAT* devctfP,
                                    RFLOAT* devsigP,
                                    RFLOAT* devDvp,
@@ -288,7 +290,8 @@ __global__ void kernel_logDataVSLC(Complex* priRotP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_logDataVS(Complex* devdatP,
+__global__ void kernel_logDataVS(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* priRotP,
                                  Complex* devtraP,
                                  RFLOAT* devctfP,
@@ -514,7 +517,8 @@ __global__ void kernel_getRandomR(double* dev_mat,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_tran,
                                  int* dev_nc,
@@ -532,7 +536,8 @@ __global__ void kernel_Translate(Complex* devdatP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_offS,
                                  double* dev_tran,
@@ -551,7 +556,8 @@ __global__ void kernel_Translate(Complex* devdatP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_tran,
                                  int* deviCol,
@@ -568,7 +574,8 @@ __global__ void kernel_Translate(Complex* devdatP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_offS,
                                  double* dev_tran,
@@ -1443,7 +1450,6 @@ __global__ void kernel_MulMask(RFLOAT *dev_image,
 __global__ void kernel_CTF(Complex *devCtf,
                            CTFAttr *ctfData,
                            RFLOAT pixelSize,
-                           int imgIdx,
                            int nRow,
                            int nCol,
                            size_t imgSize);

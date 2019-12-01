@@ -35,7 +35,8 @@ void ExpectPrefre(int gpuIdx,
 }
 
 void ExpectLocalIn(int gpuIdx,
-                   Complex** devdatP,
+                   RFLOAT** devdatPR,
+                   RFLOAT** devdatPI,
                    RFLOAT** devctfP,
                    RFLOAT** devdefO,
                    RFLOAT** devsigP,
@@ -44,7 +45,8 @@ void ExpectLocalIn(int gpuIdx,
                    int searchType)
 {
     cuthunder::expectLocalIn(gpuIdx,
-                             reinterpret_cast<cuthunder::Complex**>(devdatP),
+                             devdatPR,
+                             devdatPI,
                              devctfP,
                              devdefO,
                              devsigP,
@@ -79,30 +81,34 @@ void ExpectLocalV3D(int gpuIdx,
 }
 
 void ExpectLocalP(int gpuIdx,
-                  Complex* devdatP,
+                  RFLOAT* devdatPR,
+                  RFLOAT* devdatPI,
                   RFLOAT* devctfP,
-                  RFLOAT* devdefO,
                   RFLOAT* devsigP,
-                  Complex* datP,
+                  RFLOAT* devdefO,
+                  RFLOAT* datPR,
+                  RFLOAT* datPI,
                   RFLOAT* ctfP,
+                  RFLOAT* sigRcpP,
                   RFLOAT* defO,
-                  RFLOAT* sigP,
                   int threadId,
-                  int imgId,
+                  //int imgId,
                   int npxl,
                   int cSearch)
 {
     cuthunder::expectLocalP(gpuIdx,
-                            reinterpret_cast<cuthunder::Complex*>(devdatP),
+                            devdatPR,
+                            devdatPI,
                             devctfP,
-                            devdefO,
                             devsigP,
-                            reinterpret_cast<cuthunder::Complex*>(datP),
+                            devdefO,
+                            datPR,
+                            datPI,
                             ctfP,
+                            sigRcpP,
                             defO,
-                            sigP,
                             threadId,
-                            imgId,
+                            //imgId,
                             npxl,
                             cSearch);
 
@@ -240,7 +246,8 @@ void ExpectLocalM(int gpuIdx,
                   //RFLOAT* dvpA,
                   //RFLOAT* baseL,
                   ManagedCalPoint* mcp,
-                  Complex* devdatP,
+                  RFLOAT* devdatPR,
+                  RFLOAT* devdatPI,
                   RFLOAT* devctfP,
                   RFLOAT* devsigP,
                   RFLOAT* wC,
@@ -256,7 +263,8 @@ void ExpectLocalM(int gpuIdx,
                             //dvpA,
                             //baseL,
                             mcp,
-                            reinterpret_cast<cuthunder::Complex*>(devdatP),
+                            devdatPR,
+                            devdatPI,
                             devctfP,
                             devsigP,
                             wC,
@@ -295,7 +303,8 @@ void ExpectLocalHostF(int gpuIdx,
 }
 
 void ExpectLocalFin(int gpuIdx,
-                    Complex** devdatP,
+                    RFLOAT** devdatPR,
+                    RFLOAT** devdatPI,
                     RFLOAT** devctfP,
                     RFLOAT** devdefO,
                     RFLOAT** devfreQ,
@@ -303,7 +312,8 @@ void ExpectLocalFin(int gpuIdx,
                     int cSearch)
 {
     cuthunder::expectLocalFin(gpuIdx,
-                              reinterpret_cast<cuthunder::Complex**>(devdatP),
+                              devdatPR,
+                              devdatPI,
                               devctfP,
                               devdefO,
                               devfreQ,
@@ -351,9 +361,10 @@ void ExpectPrecal(vector<CTFAttr>& ctfAttr,
 }
 
 void ExpectGlobal2D(Complex* vol,
-                    Complex* datP,
-                    RFLOAT* ctfP,
-                    RFLOAT* sigRcpP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                     double* trans,
                     RFLOAT* wC,
                     RFLOAT* wR,
@@ -376,7 +387,8 @@ void ExpectGlobal2D(Complex* vol,
     LOG(INFO) << "Prepare Parameter for Expectation Global.";
 
     cuthunder::expectGlobal2D(reinterpret_cast<cuthunder::Complex*>(vol),
-                              reinterpret_cast<cuthunder::Complex*>(datP),
+                              datPR,
+                              datPI,
                               ctfP,
                               sigRcpP,
                               trans,
@@ -451,9 +463,10 @@ void ExpectProject(Complex* volume,
 
 void ExpectGlobal3D(Complex* rotP,
                     Complex* traP,
-                    Complex* datP,
-                    RFLOAT* ctfP,
-                    RFLOAT* sigRcpP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                     RFLOAT* wC,
                     RFLOAT* wR,
                     RFLOAT* wT,
@@ -471,7 +484,8 @@ void ExpectGlobal3D(Complex* rotP,
 
     cuthunder::expectGlobal3D(reinterpret_cast<cuthunder::Complex*>(rotP),
                               reinterpret_cast<cuthunder::Complex*>(traP),
-                              reinterpret_cast<cuthunder::Complex*>(datP),
+                              datPR,
+                              datPI,
                               ctfP,
                               sigRcpP,
                               wC,
@@ -494,9 +508,10 @@ void InsertI2D(Complex* F2D,
                int* counter,
                MPI_Comm& hemi,
                MPI_Comm& slav,
-               Complex* datP,
-               RFLOAT* ctfP,
-               RFLOAT* sigRcpP,
+               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                RFLOAT *w,
                double *offS,
                int *nC,
@@ -524,7 +539,8 @@ void InsertI2D(Complex* F2D,
                          counter,
                          hemi,
                          slav,
-                         reinterpret_cast<cuthunder::Complex*>(datP),
+                         datPR,
+                         datPI,
                          ctfP,
                          sigRcpP,
                          w,
@@ -553,9 +569,10 @@ void InsertFT(Volume& F3D,
               int* counter,
               MPI_Comm& hemi,
               MPI_Comm& slav,
-              Complex* datP,
-              RFLOAT* ctfP,
-              RFLOAT* sigRcpP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
               CTFAttr* ctfaData,
               double *offS,
               RFLOAT *w,
@@ -590,7 +607,8 @@ void InsertFT(Volume& F3D,
                         counter,
                         hemi,
                         slav,
-                        reinterpret_cast<cuthunder::Complex*>(datP),
+                        datPR,
+                        datPI,
                         ctfP,
                         sigRcpP,
                         reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
@@ -625,9 +643,10 @@ void InsertFT(Volume& F3D,
               int* counter,
               MPI_Comm& hemi,
               MPI_Comm& slav,
-              Complex* datP,
-              RFLOAT* ctfP,
-              RFLOAT* sigRcpP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
               CTFAttr* ctfaData,
               double *offS,
               RFLOAT *w,
@@ -661,7 +680,8 @@ void InsertFT(Volume& F3D,
                         counter,
                         hemi,
                         slav,
-                        reinterpret_cast<cuthunder::Complex*>(datP),
+                        datPR,
+                        datPI,
                         ctfP,
                         sigRcpP,
                         reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
@@ -1293,7 +1313,19 @@ void TranslateI(int gpuIdx,
                           dim);
 }
 
-void ReMask(vector<Image>& img,
+void hostRegister(Complex* img,
+                  int totalNum)
+{
+    cuthunder::hostRegister(reinterpret_cast<cuthunder::Complex*>(img),
+                            totalNum);
+}
+
+void hostFree(Complex* img)
+{
+    cuthunder::hostFree(reinterpret_cast<cuthunder::Complex*>(img));
+}
+
+void reMask(Complex* img,
             RFLOAT maskRadius,
             RFLOAT pixelSize,
             RFLOAT ew,
@@ -1302,13 +1334,13 @@ void ReMask(vector<Image>& img,
 {
     LOG(INFO) << "Step1: Prepare Parameter for Remask.";
 
-    std::vector<cuthunder::Complex*> imgData;
-    for (int i = 0; i < imgNum; i++)
-    {
-        imgData.push_back(reinterpret_cast<cuthunder::Complex*>(&img[i][0]));
-    }
+    //std::vector<cuthunder::Complex*> imgData;
+    //for (int i = 0; i < imgNum; i++)
+    //{
+    //    imgData.push_back(reinterpret_cast<cuthunder::Complex*>(&img[i][0]));
+    //}
 
-    cuthunder::reMask(imgData,
+    cuthunder::reMask(reinterpret_cast<cuthunder::Complex*>(img),
                       maskRadius,
                       pixelSize,
                       ew,
@@ -1316,24 +1348,25 @@ void ReMask(vector<Image>& img,
                       imgNum);
 }
 
-void GCTFinit(vector<Image>& img,
+void GCTFinit(Complex* ctf,
               vector<CTFAttr>& ctfAttr,
               RFLOAT pixelSize,
               int idim,
+              int shift,
               int imgNum)
 {
     LOG(INFO) << "Step1: Prepare Parameter for CTF calculation";
 
     std::vector<cuthunder::CTFAttr*> ctfaData;
-    std::vector<cuthunder::Complex*> imgData;
+    //std::vector<cuthunder::Complex*> imgData;
 
     for (int i = 0; i < imgNum; i++)
     {
-        imgData.push_back(reinterpret_cast<cuthunder::Complex*>(&img[i][0]));
-        ctfaData.push_back(reinterpret_cast<cuthunder::CTFAttr*>(&ctfAttr[i]));
+        //imgData.push_back(reinterpret_cast<cuthunder::Complex*>(&img[i][0]));
+        ctfaData.push_back(reinterpret_cast<cuthunder::CTFAttr*>(&ctfAttr[shift + i]));
     }
 
-    cuthunder::GCTF(imgData,
+    cuthunder::GCTF(reinterpret_cast<cuthunder::Complex*>(ctf),
                     ctfaData,
                     pixelSize,
                     idim,

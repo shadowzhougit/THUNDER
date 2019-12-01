@@ -39,6 +39,9 @@
 #include "Particle.h"
 #include "Database.h"
 #include "Model.h"
+#include "MemoryBazaar.h"
+
+#include "core/logDataVSPrior.h"
 
 #ifdef GPU_VERSION
 #include "Interface.h"
@@ -74,6 +77,10 @@
 
 #define AVERAGE_TWO_HEMISPHERE_THRES 0.95
 
+#define IMAGE_BATCH 4096
+
+#define SCANNING_PHASE_BATCH_MEMORY_USAGE (1.0 * GIGABYTE)
+
 struct OptimiserPara
 {
 
@@ -83,6 +90,13 @@ struct OptimiserPara
      * maximum number of threads in a process
      */
     int nThreadsPerProcess;
+
+#define KEY_MAXIMUM_MEMORY_USAGE_PER_PROCESS_IN_GB "Maximum Memory Usage Per Process (GB)"
+
+    /** 
+     * maximum memory usage per process in GB
+     */
+    RFLOAT maximumMemoryUsagePerProcessGB;
 
 #define KEY_MODE "2D or 3D Mode"
 
@@ -198,7 +212,6 @@ struct OptimiserPara
 
     char outputFilePrefix[PREFIX_MAX_LEN];
 
-
 #define KEY_CORE_FSC "Calculate FSC Using Core Region"
 
     bool coreFSC;
@@ -238,6 +251,10 @@ struct OptimiserPara
      * mask
      */
     char mask[FILE_NAME_LENGTH];
+
+#define KEY_CACHE_DIRECTORY "Path of Cache Files"
+
+    char cacheDirectory[FILE_NAME_LENGTH];
 
 #define KEY_ITER_MAX "Max Number of Iteration"
 
@@ -452,6 +469,37 @@ struct OptimiserPara
     }
 };
 
+struct MemoryDistribution
+{
+    RFLOAT memoryImg;
+    RFLOAT memoryImgOri;
+    RFLOAT memoryDatPR;
+    RFLOAT memoryDatPI;
+    RFLOAT memoryCtfP;
+    RFLOAT memorySigRcpP;
+    // RFLOAT memorySigP;
+
+    size_t nStallImg;
+    size_t nStallImgOri;
+    size_t nStallDatPR;
+    size_t nStallDatPI;
+    size_t nStallCtfP;
+    size_t nStallSigRcpP;
+    // size_t nStallSigP;
+
+    /***
+    MemoryDistribution()
+    {
+        nStallImg = 100;
+        nStallImgOri = 100;
+        nStallDatPR = 100;
+        nStallDatPI = 100;
+        nStallCtfP = 100;
+        nStallSigRcpP = 100;
+    }
+    ***/
+};
+
 void display(const OptimiserPara& para);
 
 class Optimiser : public Parallel
@@ -537,15 +585,19 @@ class Optimiser : public Parallel
          */
         vector<int> _ID;
 
+        MemoryDistribution _md;
+
         /**
          * 2D images
          */
-        vector<Image> _img;
+        // vector<Image> _img;
+        MemoryBazaar<Image, DerivedType, 4> _img;
 
         /**
          * unmasked 2D images
          */
-        vector<Image> _imgOri;
+        // vector<Image> _imgOri;
+        MemoryBazaar<Image, DerivedType, 4> _imgOri;
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
         /**
@@ -656,7 +708,7 @@ class Optimiser : public Parallel
          */
         int _nR;
 
-        int _nPxl;
+        size_t _nPxl;
 
         int* _iPxl;
 
@@ -670,13 +722,23 @@ class Optimiser : public Parallel
 
         int* _iRowPad;
 
-        Complex* _datP;
+        // TODO remove
+        // Complex* _datP;
 
-        RFLOAT* _ctfP;
+        // RFLOAT* _datPR;
+        MemoryBazaar<RFLOAT, BaseType, 4> _datPR;
 
-        RFLOAT* _sigP;
+        // RFLOAT* _datPI;
+        MemoryBazaar<RFLOAT, BaseType, 4> _datPI;
 
-        RFLOAT* _sigRcpP;
+        MemoryBazaar<RFLOAT, BaseType, 4> _ctfP;
+
+        // RFLOAT* _sigP;
+        MemoryBazaar<RFLOAT, BaseType, 4> _sigP;
+
+        // RFLOAT* _sigRcpP;
+
+        MemoryBazaar<RFLOAT, BaseType, 4> _sigRcpP;
 
         /**
          * spatial frequency of each pixel
@@ -725,9 +787,9 @@ class Optimiser : public Parallel
             _iColPad = NULL;
             _iRowPad = NULL;
 
-            _datP = NULL;
-            _ctfP = NULL;
-            _sigRcpP = NULL;
+            // _datP = NULL;
+            // _ctfP = NULL;
+            // _sigRcpP = NULL;
         }
 
 #ifdef GPU_VERSION
@@ -1011,166 +1073,6 @@ void recordTopK(RFLOAT* topW,
                 const size_t iT,
                 const int k);
                 ***/
-
-/**
- * This function calculates the logarithm of the possibility that the image is
- * from the projection.
- *
- * @param dat image
- * @param pri projection
- * @param ctf CTF
- * @param sig sigma of noise
- * @param rU  the upper boundary of frequency of the signal for comparison
- * @param rL  the lower boundary of frequency of the signal for comparison
- */
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const RFLOAT rU,
-                      const RFLOAT rL);
-
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const int* iPxl,
-                      const int* iSig,
-                      const int m);
-
-RFLOAT logDataVSPrior(const Complex* dat,
-                      const Complex* pri,
-                      const RFLOAT* ctf,
-                      const RFLOAT* sigRcp,
-                      const int m);
-
-RFLOAT logDataVSPrior(const Complex* dat,
-                      const Complex* pri,
-                      const RFLOAT* frequency,
-                      const RFLOAT* defocus,
-                      const RFLOAT df,
-                      const RFLOAT K1,
-                      const RFLOAT K2,
-                      const RFLOAT w1,
-                      const RFLOAT w2,
-                      const RFLOAT* sigRcp,
-                      const int m);
-
-/**
- * This function calculates the logarithm of the possibility that the image is
- * from the projection translation couple.
- *
- * @param dat image
- * @param pri projection
- * @param tra translation
- * @param ctf CTF
- * @param sig sigma of noise
- * @param rU  the upper boundary of frequency of the signal for comparison
- * @param rL  the lower boundary of frequency of the signal for comparison
- */
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& tra,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const RFLOAT rU,
-                      const RFLOAT rL);
-
-/**
- * This function calculates th logarithm of possibility that images is from the
- * projection translation couple. The pixels needed for calculation are assigned
- * by an array.
- *
- * @param dat  image
- * @param pri  projection
- * @param tra  translation
- * @param ctf  CTF
- * @param sig  sigma of noise
- * @param iPxl the indices of the pixels
- * @param iSig the indices of the sigma of the corresponding pixels
- */
-RFLOAT logDataVSPrior(const Image& dat,
-                      const Image& pri,
-                      const Image& tra,
-                      const Image& ctf,
-                      const vec& sigRcp,
-                      const int* iPxl,
-                      const int* iSig,
-                      const int m);
-
-/**
- * This function calculates the logarithm of the possibilities of a series of
- * images is from a certain projection.
- *
- * @param dat     a series of images
- * @param pri     a certain projection
- * @param ctf     a series of CTFs corresponding to the images
- * @param groupID the group the corresponding image belongs to
- * @param sig     sigma of noise
- * @param rU  the upper boundary of frequency of the signal for comparison
- * @param rL  the lower boundary of frequency of the signal for comparison
- */
-vec logDataVSPrior(const vector<Image>& dat,
-                   const Image& pri,
-                   const vector<Image>& ctf,
-                   const vector<int>& groupID,
-                   const mat& sigRcp,
-                   const RFLOAT rU,
-                   const RFLOAT rL);
-
-vec logDataVSPrior(const vector<Image>& dat,
-                   const Image& pri,
-                   const vector<Image>& ctf,
-                   const vector<int>& groupID,
-                   const mat& sigRcp,
-                   const int* iPxl,
-                   const int* iSig,
-                   const int m);
-
-/***
-vec logDataVSPrior(const Complex* const* dat,
-                   const Complex* pri,
-                   const RFLOAT* const* ctf,
-                   const RFLOAT* const* sigRcp,
-                   const int n,
-                   const int m);
-***/
-
-/**
- * This function calculates the logarithm of the possibilities of a series of
- * images is from a certain projection. The series of images have been packed in
- * a continous allocated memory. Besides, the corresponding CTF value and
- * reciprocal of sigma of noise of each pixel have also been packed in a 
- * continous allocated memory.
- *
- * @param dat    a series of images
- * @param pri    a certain projection
- * @param ctf    CTF values of each pixel correspondingly
- * @param sigRcp the reciprocal of sigma of noise of each pixel correspondingly
- * @param n      the number of images
- * @param m      the number of pixels in each image
- */
-vec logDataVSPrior(const Complex* dat,
-                   const Complex* pri,
-                   const RFLOAT* ctf,
-                   const RFLOAT* sigRcp,
-                   const int n,
-                   const int m);
-
-RFLOAT dataVSPrior(const Image& dat,
-                   const Image& pri,
-                   const Image& ctf,
-                   const vec& sigRcp,
-                   const RFLOAT rU,
-                   const RFLOAT rL);
-
-RFLOAT dataVSPrior(const Image& dat,
-                   const Image& pri,
-                   const Image& tra,
-                   const Image& ctf,
-                   const vec& sigRcp,
-                   const RFLOAT rU,
-                   const RFLOAT rL);
 
 void scaleDataVSPrior(vec& sXA,
                       vec& sAA,

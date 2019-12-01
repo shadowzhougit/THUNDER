@@ -826,7 +826,8 @@ __global__ void kernel_Project2D(Complex* priRotP,
  */
 __global__ void kernel_logDataVSL(Complex* priRotP,
                                   Complex* devtraP,
-                                  Complex* devdatP,
+                                  RFLOAT* devdatPR,
+                                  RFLOAT* devdatPI,
                                   RFLOAT* devctfP,
                                   RFLOAT* devsigP,
                                   RFLOAT* devDvp,
@@ -841,14 +842,18 @@ __global__ void kernel_logDataVSL(Complex* priRotP,
     int nrIdx = blockIdx.x / nT * npxl;
     int ntIdx = (blockIdx.x % nT) * npxl;
 
-    Complex temp(0.0, 0.0), tempC(0.0, 0.0);
+    Complex temp(0.0, 0.0);
+    RFLOAT realC = 0;
+    RFLOAT imagC = 0;
     RFLOAT tempD = 0;
 
     for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
     {
-        temp  = devtraP[ntIdx + itr] * priRotP[nrIdx + itr];
-        tempC = devdatP[itr] - temp * devctfP[itr];
-        tempD = tempC.real() * tempC.real() + tempC.imag() * tempC.imag();
+        temp  = (devtraP[ntIdx + itr] * priRotP[nrIdx + itr])
+              * devctfP[itr];
+        realC = devdatPR[itr] - temp.real();
+        imagC = devdatPI[itr] - temp.imag();
+        tempD = realC * realC + imagC * imagC;
         resL[threadIdx.x] += tempD * devsigP[itr];
         //if (blockIdx.x == 2)
         //{
@@ -888,7 +893,8 @@ __global__ void kernel_logDataVSL(Complex* priRotP,
  */
 __global__ void kernel_logDataVSLC(Complex* priRotP,
                                    Complex* devtraP,
-                                   Complex* devdatP,
+                                   RFLOAT* devdatPR,
+                                   RFLOAT* devdatPI,
                                    RFLOAT* devctfP,
                                    RFLOAT* devsigP,
                                    RFLOAT* devDvp,
@@ -904,7 +910,9 @@ __global__ void kernel_logDataVSLC(Complex* priRotP,
     int ntIdx = (blockIdx.x % (nT * nD)) / nD;
     int ndIdx = (blockIdx.x % (nT * nD)) % nD;
 
-    Complex temp(0.0, 0.0), tempC(0.0, 0.0);
+    Complex temp(0.0, 0.0);
+    RFLOAT realC = 0;
+    RFLOAT imagC = 0;
     RFLOAT tempD = 0;
 
     nrIdx *= npxl;
@@ -912,9 +920,11 @@ __global__ void kernel_logDataVSLC(Complex* priRotP,
     ndIdx *= npxl;
     for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
     {
-        temp  = devtraP[ntIdx + itr] * priRotP[nrIdx + itr];
-        tempC = devdatP[itr] - temp * devctfP[ndIdx + itr];
-        tempD = tempC.real() * tempC.real() + tempC.imag() * tempC.imag();
+        temp  = (devtraP[ntIdx + itr] * priRotP[nrIdx + itr])
+              * devctfP[ndIdx + itr];
+        realC = devdatPR[itr] - temp.real();
+        imagC = devdatPI[itr] - temp.imag();
+        tempD = realC * realC + imagC * imagC;
         result[threadIdx.x] += tempD * devsigP[itr];
     }
 
@@ -944,7 +954,8 @@ __global__ void kernel_logDataVSLC(Complex* priRotP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_logDataVS(Complex* devdatP,
+__global__ void kernel_logDataVS(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* priRotP,
                                  Complex* devtraP,
                                  RFLOAT* devctfP,
@@ -970,7 +981,9 @@ __global__ void kernel_logDataVS(Complex* devdatP,
     int imgIdx = blockIdx.x / (rbatch * nT);
     int dvpIdx = imgIdx * nR * nT + (r + nrIdx) * nT + ntIdx;
 
-    Complex temp(0.0, 0.0), tempC(0.0, 0.0);
+    Complex temp(0.0, 0.0);
+    RFLOAT realC = 0;
+    RFLOAT imagC = 0;
     RFLOAT tempD = 0;
 
     nrIdx *= npxl;
@@ -978,9 +991,11 @@ __global__ void kernel_logDataVS(Complex* devdatP,
     imgIdx *= npxl;
     for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
     {
-        temp  = devtraP[ntIdx + itr] * priRotP[nrIdx + itr];
-        tempC = devdatP[imgIdx + itr] - temp * devctfP[imgIdx + itr];
-        tempD = tempC.real() * tempC.real() + tempC.imag() * tempC.imag();
+        temp  = (devtraP[ntIdx + itr] * priRotP[nrIdx + itr]) 
+              * devctfP[imgIdx + itr];
+        realC = devdatPR[imgIdx + itr] - temp.real();
+        imagC = devdatPI[imgIdx + itr] - temp.imag();
+        tempD = realC * realC + imagC * imagC;
         result[threadIdx.x] += tempD * devsigP[imgIdx + itr];
     }
 
@@ -1949,7 +1964,8 @@ __global__ void kernel_getRandomR(double* dev_mat,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_tran,
                                  int* dev_nc,
@@ -1967,6 +1983,7 @@ __global__ void kernel_Translate(Complex* devdatP,
         int off = (blockIdx.x * mReco + insertIdx) * 2;
 
         Complex imgTemp(0.0, 0.0);
+        Complex datTemp(0.0, 0.0);
         RFLOAT phase, col, row;
 
         col = -(RFLOAT)(dev_tran[off]) / idim;
@@ -1984,7 +2001,9 @@ __global__ void kernel_Translate(Complex* devdatP,
 #else
             imgTemp.set(cos(-phase), sin(-phase));
 #endif
-            devtranP[blockIdx.x * npxl + itr] = devdatP[blockIdx.x * npxl + itr] * imgTemp;
+            datTemp.set(devdatPR[blockIdx.x * npxl + itr],
+                        devdatPI[blockIdx.x * npxl + itr]);
+            devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
         }
     }
 }
@@ -1995,7 +2014,8 @@ __global__ void kernel_Translate(Complex* devdatP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_offS,
                                  double* dev_tran,
@@ -2014,6 +2034,7 @@ __global__ void kernel_Translate(Complex* devdatP,
         int off = (blockIdx.x * mReco + insertIdx) * 2;
 
         Complex imgTemp(0.0, 0.0);
+        Complex datTemp(0.0, 0.0);
         RFLOAT phase, col, row;
 
         col = -(RFLOAT)(dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim;
@@ -2031,7 +2052,9 @@ __global__ void kernel_Translate(Complex* devdatP,
 #else
             imgTemp.set(cos(-phase), sin(-phase));
 #endif
-            devtranP[blockIdx.x * npxl + itr] = devdatP[blockIdx.x * npxl + itr] * imgTemp;
+            datTemp.set(devdatPR[blockIdx.x * npxl + itr],
+                        devdatPI[blockIdx.x * npxl + itr]);
+            devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
         }
     }
 }
@@ -2042,7 +2065,8 @@ __global__ void kernel_Translate(Complex* devdatP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_tran,
                                  int* deviCol,
@@ -2057,6 +2081,7 @@ __global__ void kernel_Translate(Complex* devdatP,
     int off = (blockIdx.x * mReco + insertIdx) * 2;
 
     Complex imgTemp(0.0, 0.0);
+    Complex datTemp(0.0, 0.0);
     RFLOAT phase, col, row;
 
     col = -(RFLOAT)(dev_tran[off]) / idim;
@@ -2075,7 +2100,9 @@ __global__ void kernel_Translate(Complex* devdatP,
 #else
         imgTemp.set(cos(-phase), sin(-phase));
 #endif
-        devtranP[blockIdx.x * npxl + itr] = devdatP[blockIdx.x * npxl + itr] * imgTemp;
+        datTemp.set(devdatPR[blockIdx.x * npxl + itr],
+                    devdatPI[blockIdx.x * npxl + itr]);
+        devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
     }
 }
 
@@ -2085,7 +2112,8 @@ __global__ void kernel_Translate(Complex* devdatP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_Translate(Complex* devdatP,
+__global__ void kernel_Translate(RFLOAT* devdatPR,
+                                 RFLOAT* devdatPI,
                                  Complex* devtranP,
                                  double* dev_offS,
                                  double* dev_tran,
@@ -2101,6 +2129,7 @@ __global__ void kernel_Translate(Complex* devdatP,
     int off = (blockIdx.x * mReco + insertIdx) * 2;
 
     Complex imgTemp(0.0, 0.0);
+    Complex datTemp(0.0, 0.0);
     RFLOAT phase, col, row;
 
     col = -(RFLOAT)(dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim;
@@ -2119,7 +2148,9 @@ __global__ void kernel_Translate(Complex* devdatP,
 #else
         imgTemp.set(cos(-phase), sin(-phase));
 #endif
-        devtranP[blockIdx.x * npxl + itr] = devdatP[blockIdx.x * npxl + itr] * imgTemp;
+        datTemp.set(devdatPR[blockIdx.x * npxl + itr],
+                    devdatPI[blockIdx.x * npxl + itr]);
+        devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
     }
 }
 
@@ -5327,19 +5358,17 @@ __global__ void kernel_MulMask(RFLOAT *dev_image,
 __global__ void kernel_CTF(Complex *devCtf,
                            CTFAttr *ctfData,
                            RFLOAT pixelSize,
-                           int imgIdx,
                            int nRow,
                            int nCol,
                            size_t imgSize)
 {
-    int index = threadIdx.x + blockDim.x * blockIdx.x;
-    size_t shift = index + imgIdx * imgSize;
+    size_t shift = blockIdx.x * imgSize;
     int i, j;
-    RFLOAT u;
+    RFLOAT lambda, w1, w2, K1, K2, u, angle, defocus, ki;
 
     Complex valueCtf(0.0, 0.0);
 
-    while (index < imgSize)
+    for (int index = threadIdx.x; index < imgSize; index += blockDim.x) 
     {
         i = index % (nCol / 2 + 1);
         j = index / (nCol / 2 + 1);
@@ -5347,42 +5376,67 @@ __global__ void kernel_CTF(Complex *devCtf,
         if (j >= nRow / 2) j = j - nRow;
 
 #ifdef SINGLE_PRECISION
-        RFLOAT lambda = 12.2643247 / sqrt(ctfData[imgIdx].voltage * (1 + ctfData[imgIdx].voltage * 0.978466e-6));
+        lambda = 12.2643247 
+               / sqrt(ctfData[blockIdx.x].voltage 
+                      * (1 + ctfData[blockIdx.x].voltage * 0.978466e-6));
 
-        RFLOAT w1 = sqrtf(1 - ctfData[imgIdx].amplitudeContrast * ctfData[imgIdx].amplitudeContrast);
-        RFLOAT w2 = ctfData[imgIdx].amplitudeContrast;
+        w1 = sqrtf(1 - ctfData[blockIdx.x].amplitudeContrast 
+                     * ctfData[blockIdx.x].amplitudeContrast);
+        w2 = ctfData[blockIdx.x].amplitudeContrast;
 
-        RFLOAT K1 = PI * lambda;
-        RFLOAT K2 = divPI2 * ctfData[imgIdx].Cs * lambda * lambda * lambda;
+        K1 = PI * lambda;
+        K2 = divPI2 * ctfData[blockIdx.x].Cs 
+           * lambda * lambda * lambda;
 
-        u = sqrtf((i / (pixelSize * nCol)) * (i / (pixelSize * nCol)) + (j / (pixelSize * nRow)) * (j / (pixelSize * nRow)));
+        u = sqrtf((i / (pixelSize * nCol)) 
+                  * (i / (pixelSize * nCol)) 
+                  + (j / (pixelSize * nRow)) 
+                  * (j / (pixelSize * nRow)));
 
-        RFLOAT angle = atan2f(j, i) -ctfData[imgIdx].defocusTheta;
-        RFLOAT defocus = -(ctfData[imgIdx].defocusU + ctfData[imgIdx].defocusV + (ctfData[imgIdx].defocusU - ctfData[imgIdx].defocusV) * cosf(2 * angle)) / 2;
-        RFLOAT ki = K1 * defocus * u * u + K2 * u * u * u * u - ctfData[imgIdx].phaseShift;
+        angle = atan2f(j, i) - ctfData[blockIdx.x].defocusTheta;
+        defocus = -(ctfData[blockIdx.x].defocusU 
+                    + ctfData[blockIdx.x].defocusV 
+                    + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
+                    * cosf(2 * angle)) 
+                / 2;
+        ki = K1 * defocus * u * u 
+           + K2 * u * u * u * u 
+           - ctfData[blockIdx.x].phaseShift;
 
         valueCtf.set(-w1 * sinf(ki) + w2 * cosf(ki), 0.0);
+        //if (blockIdx.x == 2 && index == 6398)
+        //    printf("i:%d, j:%d, w1:%lf, w2:%lf, ki:%lf, res:%lf\n", i, j, w1, w2, ki, valueCtf.real()); 
 #else
-        RFLOAT lambda = 12.2643247 / sqrt(ctfData[imgIdx].voltage * (1 + ctfData[imgIdx].voltage * 0.978466e-6));
+        lambda = 12.2643247 
+               / sqrt(ctfData[blockIdx.x].voltage 
+                      * (1 + ctfData[blockIdx.x].voltage * 0.978466e-6));
 
-        RFLOAT w1 = sqrt(1 - ctfData[imgIdx].amplitudeContrast * ctfData[imgIdx].amplitudeContrast);
-        RFLOAT w2 = ctfData[imgIdx].amplitudeContrast;
+        w1 = sqrt(1 - ctfData[blockIdx.x].amplitudeContrast 
+                    * ctfData[blockIdx.x].amplitudeContrast);
+        w2 = ctfData[blockIdx.x].amplitudeContrast;
 
-        RFLOAT K1 = PI * lambda;
-        RFLOAT K2 = divPI2 * ctfData[imgIdx].Cs * pow(lambda, 3);
+        K1 = PI * lambda;
+        K2 = divPI2 * ctfData[blockIdx.x].Cs
+           * lambda * lambda * lambda;
 
-        u = sqrt((i / (pixelSize * nCol)) * (i / (pixelSize * nCol)) + (j / (pixelSize * nRow)) * (j / (pixelSize * nRow)));
+        u = sqrt((i / (pixelSize * nCol)) 
+                 * (i / (pixelSize * nCol)) 
+                 + (j / (pixelSize * nRow)) 
+                 * (j / (pixelSize * nRow)));
 
-        RFLOAT angle = atan2(j, i) -ctfData[imgIdx].defocusTheta;
-        RFLOAT defocus = -(ctfData[imgIdx].defocusU + ctfData[imgIdx].defocusV + (ctfData[imgIdx].defocusU - ctfData[imgIdx].defocusV) * cos(2 * angle)) / 2;
-        RFLOAT ki = K1 * defocus * u * u + K2 * u * u * u * u - ctfData[imgIdx].phaseShift;
+        angle = atan2(j, i) - ctfData[blockIdx.x].defocusTheta;
+        defocus = -(ctfData[blockIdx.x].defocusU 
+                    + ctfData[blockIdx.x].defocusV 
+                    + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
+                    * cos(2 * angle)) 
+                / 2;
+        ki = K1 * defocus * u * u 
+           + K2 * u * u * u * u 
+           - ctfData[blockIdx.x].phaseShift;
 
         valueCtf.set(-w1 * sin(ki) + w2 * cos(ki), 0.0);
 #endif
-        devCtf[shift] = valueCtf;
-
-        index += blockDim.x * gridDim.x;
-        shift += blockDim.x * gridDim.x;
+        devCtf[shift + index] = valueCtf;
     }
 }
 

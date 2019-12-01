@@ -27,17 +27,17 @@
 /**
  * This macros returns the nearest integer number of a.
  */
-#define AROUND(a) ((int)rint(a))
+#define AROUND(a) ((long)rint(a))
 
 /**
  * This macros returns the lower nearest integer number of a.
  */
-#define FLOOR(a) ((int)floor(a))
+#define FLOOR(a) ((long)floor(a))
 
 /**
  * This macros returns the upper nearest integer number of a.
  */
-#define CEIL(a) ((int)ceil(a))
+#define CEIL(a) ((long)ceil(a))
 
 /**
  * This macro returns the maximum value among a and b.
