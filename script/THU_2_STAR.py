@@ -130,7 +130,15 @@ def main():
             print "Please input a proper thu file."
             exit()
         for line in fin:
-            s = line.split()
+            
+            if (line[0] == '#'):
+                continue
+            
+            sline = line.strip()
+            if not sline or (' ' not in sline):
+                continue
+
+            s = sline.split()
 
             # voltage
             s[0] = str(float(s[0]) / 1000) # from V to kV
