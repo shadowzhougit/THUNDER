@@ -638,12 +638,17 @@ bool Reader::readObject(Token& /*tokenStart*/) {
     } else {
       break;
     }
-
+    
     Token colon;
     if (!readToken(colon) || colon.type_ != tokenMemberSeparator) {
-      return addErrorAndRecover(
-          "Missing ':' after object member name", colon, tokenObjectEnd);
+      bool flag = addErrorAndRecover("Missing ':' after object member name", colon, tokenObjectEnd);
+      if (!flag)
+      {
+        JSON_FAIL_MESSAGE("Missing ':' after object member name.");
+      }
+      return flag;
     }
+
     Value& value = currentValue()[name];
     nodes_.push(&value);
     bool ok = readValue();
@@ -655,17 +660,27 @@ bool Reader::readObject(Token& /*tokenStart*/) {
     if (!readToken(comma) ||
         (comma.type_ != tokenObjectEnd && comma.type_ != tokenArraySeparator &&
          comma.type_ != tokenComment)) {
-      return addErrorAndRecover(
-          "Missing ',' or '}' in object declaration", comma, tokenObjectEnd);
+      bool flag = addErrorAndRecover("Missing ',' or '}' in object declaration", comma, tokenObjectEnd);
+      if (!flag)
+      {
+        JSON_FAIL_MESSAGE("Missing ',' or '}' in object declaration.");
+      }
+      return flag;
     }
+
     bool finalizeTokenOk = true;
     while (comma.type_ == tokenComment && finalizeTokenOk)
       finalizeTokenOk = readToken(comma);
     if (comma.type_ == tokenObjectEnd)
       return true;
   }
-  return addErrorAndRecover(
-      "Missing '}' or object member name", tokenName, tokenObjectEnd);
+
+  bool flag = addErrorAndRecover("Missing '}' or object member name", tokenName, tokenObjectEnd);
+  if (!flag)
+  {
+    JSON_FAIL_MESSAGE("Missing '}' or object member name.");
+  }
+  return flag;
 }
 
 bool Reader::readArray(Token& /*tokenStart*/) {

@@ -357,7 +357,12 @@ void initGlobalPara(char *logFileFullName, Json::Reader &jsonReader, Json::Value
     {
         readPara(thunderPara, jsonRoot);
     }
-
+    else
+    {
+        fprintf(stderr, "THE FORMAT OF JSON FILE IS WRONG\n");
+        abort();
+    }
+        
     jsonFile.close();
     char currWorkDir[FILE_NAME_LENGTH];
     memset(currWorkDir, '\0', sizeof(currWorkDir));
