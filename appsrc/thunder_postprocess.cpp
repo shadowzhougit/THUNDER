@@ -53,7 +53,7 @@ void usage (int status)
         fputs("--inputA       set the filename of input file A.\n", stdout);
         fputs("--inputB       set the filename of input file B.\n", stdout);
         fputs("--mask         set the filename of mask file.\n", stdout);
-        fputs("--pixelsize    set the pixelsize.\n", stdout);
+        fputs("--prefix       set the prefix of the output files.\n", stdout);
         fputs("-j             set the number of threads to carry out work.\n", stdout);
 
         fputs("\n--help         display this help\n", stdout);
@@ -67,7 +67,7 @@ static const struct option long_options[] =
     {"inputA", required_argument, NULL, 'a'},
     {"inputB", required_argument, NULL, 'b'},
     {"mask", required_argument, NULL, 'm'},
-    {"pixelsize", required_argument, NULL, 'p'},
+    {"prefix", required_argument, NULL, 'p'},
     {"help", no_argument, NULL, 'h'},
     {NULL, 0, NULL, 0}
 };
@@ -79,7 +79,7 @@ int main(int argc, char* argv[])
     char* inputA;
     char* inputB;
     char* mask;
-    double pixelsize;
+    char* prefix;
     int nThread;
 
     char option[5] = {'m', 'a', 'b', 'p', 'j'};
@@ -108,7 +108,7 @@ int main(int argc, char* argv[])
                 option[2] = '\0';
                 break;
             case('p'):
-                pixelsize = atof(optarg);
+                prefix = optarg;
                 option[3] = '\0';
                 break;
             case('j'):
@@ -134,7 +134,7 @@ int main(int argc, char* argv[])
     Postprocess pp(inputA,
                    inputB,
                    mask,
-                   pixelsize);
+                   prefix);
 
     pp.run(nThread);
 

@@ -314,7 +314,7 @@ void Optimiser::init()
         ALOG(INFO, "LOGGER_INIT") << "IDs of 2D Images Initialised";
         BLOG(INFO, "LOGGER_INIT") << "IDs of 2D Images Initialised";
 #endif
- 
+
         ALOG(INFO, "LOGGER_INIT") << "Assigning Memory Distribution for MemoryBazaar Objects";
         BLOG(INFO, "LOGGER_INIT") << "Assigning Memory Distribution for MemoryBazaar Objects";
 
@@ -2330,7 +2330,7 @@ void Optimiser::expectationG()
     MemoryBazaarDustman<RFLOAT, BaseType, 4> datPIDustman(&_datPI);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> sigRcpPDustman(&_sigRcpP);
-    
+
     if (_para.mode == MODE_3D && _para.k != 1)
     {
         for (int itr = 0; itr < _para.k; itr++)
@@ -2834,7 +2834,7 @@ void Optimiser::expectationG()
             }
 
             _sigRcpP.endLastVisit(l * _nPxl);
-            
+
             RFLOAT* datPR = &_datPR[l * _nPxl];
             RFLOAT* datPI = &_datPI[l * _nPxl];
             RFLOAT* sigRcpP = &_sigRcpP[l * _nPxl];
@@ -4182,17 +4182,20 @@ void Optimiser::run()
     MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Final Reference(s) Reconstructed";
 #endif
 
-    MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Final Class Information";
+    if (!_para.subtract)
+    {
+        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Final Class Information";
 
-    saveClassInfo(true);
+        saveClassInfo(true);
 
-    MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Final FSC(s)";
+        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Final FSC(s)";
 
-    saveFSC(true);
+        saveFSC(true);
 
-    MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Final .thu File";
+        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Final .thu File";
 
-    saveDatabase(true);
+        saveDatabase(true);
+    }
 
     if (_para.subtract)
     {
@@ -4344,7 +4347,7 @@ void Optimiser::run()
 
                 MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing References(s) at Nyquist After Normalising Noise";
 
-                reconstructRef(true, false, true, false, true);
+                reconstructRef(true, false, false, false, true);
 
                 MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Freeing Space in Reconstructor(s)";
 
@@ -4393,7 +4396,7 @@ void Optimiser::run()
 #endif
 
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Database of Masked Region Reference Subtracted Images";
-        saveDatabase(false, true);
+        saveDatabase(true, true);
 
 #ifdef VERBOSE_LEVEL_1
         MPI_Barrier(MPI_COMM_WORLD);
@@ -5130,7 +5133,7 @@ void Optimiser::initCTF()
         if (l >= nImg)
             break;
 
-        batch = (l + IMAGE_BATCH < nImg) 
+        batch = (l + IMAGE_BATCH < nImg)
               ? IMAGE_BATCH : (nImg - l);
 
         for (int i = 0; i < batch; i++)
@@ -6309,7 +6312,7 @@ void Optimiser::reMaskImgG()
             if (l >= nImg)
                 break;
 
-            batch = (l + IMAGE_BATCH < nImg) 
+            batch = (l + IMAGE_BATCH < nImg)
                   ? IMAGE_BATCH : (nImg - l);
 
             for (int i = 0; i < batch; i++)
@@ -6324,7 +6327,7 @@ void Optimiser::reMaskImgG()
                    EDGE_WIDTH_RL,
                    _para.size,
                    batch);
-            
+
             for (int i = 0; i < batch; i++)
             {
                 for (int n = 0; n < dimSizeFT; n++)
@@ -8502,9 +8505,10 @@ void Optimiser::saveDatabase(const bool finished, const bool subtract) const
 
     char filename[FILE_NAME_LENGTH];
 
-    if (subtract)
-        sprintf(filename, "%sMeta_Subtract.thu", _para.dstPrefix);
-    else if (finished)
+    //if (subtract)
+    //    sprintf(filename, "%sMeta_Subtract.thu", _para.dstPrefix);
+
+    if (finished)
         sprintf(filename, "%sMeta_Final.thu", _para.dstPrefix);
     else
         sprintf(filename, "%sMeta_Round_%03d.thu", _para.dstPrefix, _iter);
@@ -9469,7 +9473,7 @@ void scaleDataVSPrior(vec& sXA,
                 RFLOAT AA = REAL(pri.iGetFT(index)
                                * pri.iGetFT(index)
                                * TSGSL_pow_2(REAL(ctf.iGetFT(index))));
-                
+
                 #pragma omp atomic
                 sXA(v) += XA;
 

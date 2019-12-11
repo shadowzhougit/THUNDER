@@ -69,6 +69,8 @@ int ImageFile::nRow() const { return _metaData.nRow; }
 
 int ImageFile::nSlc() const { return _metaData.nSlc; }
 
+RFLOAT ImageFile::pixelSize() const { return _metaData.pixelsize; }
+
 int ImageFile::size() const
 {
     return _metaData.nCol * _metaData.nRow * _metaData.nSlc;
@@ -158,7 +160,7 @@ void ImageFile::writeVolume(const char dst[],
 
 void ImageFile::clear()
 {
-    if (_file != NULL) 
+    if (_file != NULL)
     {
         fclose(_file);
         _file = NULL;
@@ -219,12 +221,31 @@ void ImageFile::readMetaDataMRC()
     }
 
     _metaData.mode = _MRCHeader.mode;
-        
+
     _metaData.nCol = _MRCHeader.nx;
     _metaData.nRow = _MRCHeader.ny;
     _metaData.nSlc = _MRCHeader.nz;
 
     _metaData.symmetryDataSize = _MRCHeader.nsymbt;
+
+    if (_MRCHeader.nx != 0 && _MRCHeader.ny != 0 && _MRCHeader.nz != 0)
+    {
+        if ((_MRCHeader.cella[0] / _MRCHeader.nx == _MRCHeader.cella[1] / _MRCHeader.ny) &&
+            (_MRCHeader.cella[0] / _MRCHeader.nx == _MRCHeader.cella[2] / _MRCHeader.nz))
+        {
+            _metaData.pixelsize = _MRCHeader.cella[0] / _MRCHeader.nx;
+        }
+        else
+        {
+            REPORT_ERROR("ERROR IN PIXELSIZE OF MRC FILE.");
+            abort();
+        }
+    }
+    else
+    {
+        REPORT_ERROR("SIZE OF MRC FILE COULD NOT BE ZERO.");
+        abort();
+    }
 }
 
 void ImageFile::readSymmetryData()
@@ -279,7 +300,7 @@ void ImageFile::readImageBMP(Image& dst)
     bmp.readInHeader();
 
     dst.alloc(bmp.getWidth(), bmp.getHeight(), RL_SPACE);
-        
+
     rewind(_file);
     fseek(_file, bmp.getHeaderSize(), 0);
 
@@ -299,7 +320,7 @@ void ImageFile::readVolumeMRC(Volume& dst)
 	dst.alloc(nCol(), nRow(), nSlc(), RL_SPACE);
 
     SKIP_HEAD(0);
-	
+
     switch (mode())
     {
         case 0: VOLUME_READ_CAST<char>(_file,  dst ); break;

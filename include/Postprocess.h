@@ -58,17 +58,19 @@ class Postprocess
         vec _FSCRFMask;
 
         vec _FSC;
-        
+
         int _res;
 
-    public:        
+        const char* _prefix;
+
+    public:
 
         Postprocess();
 
         Postprocess(const char mapAFilename[],
                     const char mapBFilename[],
                     const char maskFilename[],
-                    const RFLOAT pixelSize);
+                    const char mapPrefix[]);
 
         void run(const unsigned int nThread);
 

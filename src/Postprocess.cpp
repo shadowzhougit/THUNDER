@@ -13,9 +13,9 @@ Postprocess::Postprocess() {}
 Postprocess::Postprocess(const char mapAFilename[],
                          const char mapBFilename[],
                          const char maskFilename[],
-                         const RFLOAT pixelSize)
+                         const char mapPrefix[])
 {
-    _pixelSize = pixelSize;
+    _prefix = mapPrefix;
 
     ImageFile imfA(mapAFilename, "rb");
     ImageFile imfB(mapBFilename, "rb");
@@ -30,6 +30,8 @@ Postprocess::Postprocess(const char mapAFilename[],
     imfA.readVolume(_mapA);
     imfB.readVolume(_mapB);
     imfM.readVolume(_mask);
+
+    _pixelSize = imfA.pixelSize();
 
     // REMOVE_NEG(_mapA);
     // REMOVE_NEG(_mapB);
@@ -53,6 +55,16 @@ void Postprocess::run(const unsigned int nThread)
 
     ImageFile imf;
 
+    char maskAFilename[FILE_NAME_LENGTH];
+    char maskBFilename[FILE_NAME_LENGTH];
+    char avgFilename[FILE_NAME_LENGTH];
+    char sharpFilename[FILE_NAME_LENGTH];
+
+    sprintf(maskAFilename, "%sReference_A_Masked.mrc", _prefix);
+    sprintf(maskBFilename, "%sReference_B_Masked.mrc", _prefix);
+    sprintf(avgFilename, "%sReference_Average.mrc", _prefix);
+    sprintf(sharpFilename, "%sReference_Sharp.mrc", _prefix);
+
     CLOG(INFO, "LOGGER_SYS") << "Masking Reference A and B";
 
     _mapAMasked.alloc(_size, _size, _size, RL_SPACE);
@@ -61,9 +73,9 @@ void Postprocess::run(const unsigned int nThread)
     maskAB(nThread);
 
     imf.readMetaData(_mapAMasked);
-    imf.writeVolume("Reference_A_Masked.mrc", _mapA);
+    imf.writeVolume(maskAFilename, _mapA);
     imf.readMetaData(_mapBMasked);
-    imf.writeVolume("Reference_B_Masked.mrc", _mapB);
+    imf.writeVolume(maskBFilename, _mapB);
 
     CLOG(INFO, "LOGGER_SYS") << "Performing Fourier Transform";
 
@@ -92,7 +104,7 @@ void Postprocess::run(const unsigned int nThread)
 
     randomPhaseAB(randomPhaseThres, nThread);
 
-    CLOG(INFO, "LOGGER_SYS") << "Determing FSCRFMask";
+    CLOG(INFO, "LOGGER_SYS") << "Determining FSCRFMask";
 
     fft.bw(_mapARFMask, nThread);
     fft.bw(_mapBRFMask, nThread);
@@ -130,13 +142,13 @@ void Postprocess::run(const unsigned int nThread)
                                              _pixelSize);
 
     CLOG(INFO, "LOGGER_SYS") << "Merging Two References";
-    
+
     mergeAB();
 
     fft.bw(_mapI, nThread);
 
     imf.readMetaData(_mapI);
-    imf.writeVolume("Reference_Average.mrc", _mapI, _pixelSize);
+    imf.writeVolume(avgFilename, _mapI, _pixelSize);
 
     fft.fw(_mapI, nThread);
 
@@ -147,7 +159,7 @@ void Postprocess::run(const unsigned int nThread)
     CLOG(INFO, "LOGGER_SYS") << "Estimating B-Factor";
 
     RFLOAT bFactor;
-    
+
     bFactorEst(bFactor,
                _mapI,
                _res,
@@ -158,7 +170,7 @@ void Postprocess::run(const unsigned int nThread)
     CLOG(INFO, "LOGGER_SYS") << "B-Factor : " << bFactor;
 
     CLOG(INFO, "LOGGER_SYS") << "Performing Sharpening";
-    
+
     sharpen(_mapI,
             _mapI,
             (RFLOAT)_res / _size,
@@ -179,7 +191,7 @@ void Postprocess::run(const unsigned int nThread)
     //REMOVE_NEG(_mapI);
 
     imf.readMetaData(_mapI);
-    imf.writeVolume("Reference_Sharp.mrc", _mapI, _pixelSize);
+    imf.writeVolume(sharpFilename, _mapI, _pixelSize);
 }
 
 void Postprocess::maskAB(const unsigned int nThread)
