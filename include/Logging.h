@@ -101,7 +101,7 @@ inline int IS_NAN(const double x)
         } \
     } while(0);
 
-#define SEGMENT_NAN_CHECK(x, size)
+#define SEGMENT_NAN_CHECK(x, size) SEGMENT_NAN_CHECK_RFLOAT(x, size)
 
 #define SEGMENT_NAN_CHECK_RFLOAT(x, size) \
     do \

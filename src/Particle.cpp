@@ -1064,7 +1064,7 @@ void Particle::calVari(const ParticleType pt)
 
 #endif
 
-            inferACG(_k1, _k2, _k3, _r);
+            //inferACG(_k1, _k2, _k3, _r);
 
             double k = inferACGStillCentral(_r);
 

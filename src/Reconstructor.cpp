@@ -1693,7 +1693,7 @@ void Reconstructor::reconstruct(Volume& dst,
         fft.bw(padDst, nThread);
 
 #ifndef NAN_NO_CHECK
-        SEGMENT_NAN_CHECK(padDst.dataRL(), padDst.dataRL());
+        SEGMENT_NAN_CHECK(padDst.dataRL(), padDst.sizeRL());
 #endif
 
         Image imgDst;
@@ -1752,7 +1752,7 @@ void Reconstructor::reconstruct(Volume& dst,
 #endif
 
 #ifndef NAN_NO_CHECK
-        SEGMENT_NAN_CHECK(padDst.dataFT(), padDst.sizeFT());
+        SEGMENT_NAN_CHECK_COMPLEX(padDst.dataFT(), padDst.sizeFT());
 #endif
 
         FFT fft;
