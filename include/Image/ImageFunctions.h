@@ -51,16 +51,16 @@ inline void IMG_EXTRACT_RL(Image& dst,
 inline void VOL_EXTRACT_RL(Volume& dst,
                            const Volume& src,
                            const RFLOAT ef,
-                           const unsigned int nThread) 
-{ 
-    dst.alloc(AROUND(ef * src.nColRL()), 
-              AROUND(ef * src.nRowRL()), 
-              AROUND(ef * src.nSlcRL()), 
-              RL_SPACE); 
+                           const unsigned int nThread)
+{
+    dst.alloc(AROUND(ef * src.nColRL()),
+              AROUND(ef * src.nRowRL()),
+              AROUND(ef * src.nSlcRL()),
+              RL_SPACE);
 
     #pragma omp parallel for num_threads(nThread)
-    VOLUME_FOR_EACH_PIXEL_RL(dst) 
-        dst.setRL(src.getRL(i, j, k), i, j, k); 
+    VOLUME_FOR_EACH_PIXEL_RL(dst)
+        dst.setRL(src.getRL(i, j, k), i, j, k);
 }
 
 inline void IMG_EXTRACT_FT(Image& dst,
@@ -76,7 +76,7 @@ inline void IMG_EXTRACT_FT(Image& dst,
     IMAGE_FOR_EACH_PIXEL_FT(dst)
         dst.setFTHalf(src.getFTHalf(i, j), i, j);
 }
- 
+
 /**
  * This function extracts the center block out of a volume in Fourier space.
  *
@@ -87,23 +87,59 @@ inline void IMG_EXTRACT_FT(Image& dst,
 inline void VOL_EXTRACT_FT(Volume& dst,
                            const Volume& src,
                            const RFLOAT ef,
-                           const unsigned int nThread) 
-{ 
-    dst.alloc(AROUND(ef * src.nColRL()), 
-              AROUND(ef * src.nRowRL()), 
-              AROUND(ef * src.nSlcRL()), 
-              FT_SPACE); 
+                           const unsigned int nThread)
+{
+    dst.alloc(AROUND(ef * src.nColRL()),
+              AROUND(ef * src.nRowRL()),
+              AROUND(ef * src.nSlcRL()),
+              FT_SPACE);
 
     #pragma omp parallel for num_threads(nThread)
     VOLUME_FOR_EACH_PIXEL_FT(dst)
-        dst.setFTHalf(src.getFTHalf(i, j, k), i, j, k); 
+        dst.setFTHalf(src.getFTHalf(i, j, k), i, j, k);
 }
 
-inline void IMG_REPLACE_RL(Image& dst, 
+inline void IMG_BOX_RL(Image& dst,
+                       const Image& src,
+                       const unsigned int nThread)
+{
+    #pragma omp parallel for num_threads(nThread)
+    IMAGE_FOR_EACH_PIXEL_RL(dst)
+        dst.setRL(src.getRL(i, j), i, j);
+}
+
+inline void VOL_BOX_RL(Volume& dst,
+                       const Volume& src,
+                       const unsigned int nThread)
+{
+    #pragma omp parallel for num_threads(nThread)
+    VOLUME_FOR_EACH_PIXEL_RL(dst)
+        dst.setRL(src.getRL(i, j, k), i, j, k);
+}
+
+inline void IMG_BOX_FT(Image& dst,
+                       const Image& src,
+                       const unsigned int nThread)
+{
+    #pragma omp parallel for num_threads(nThread)
+    IMAGE_FOR_EACH_PIXEL_FT(dst)
+        dst.setFT(src.getFT(i, j), i, j);
+}
+
+inline void VOL_BOX_FT(Volume& dst,
+                       const Volume& src,
+                       const unsigned int nThread)
+{
+    #pragma omp parallel for num_threads(nThread)
+    VOLUME_FOR_EACH_PIXEL_FT(dst)
+        dst.setFT(src.getFT(i, j, k), i, j, k);
+}
+
+inline void IMG_REPLACE_RL(Image& dst,
                            const Image& src,
                            const unsigned int nThread)
 {
-    #pragma omp parallel for num_threads(nThread)  
+    #pragma omp parallel for num_threads(nThread)
     IMAGE_FOR_EACH_PIXEL_RL(src)
         dst.setRL(src.getRL(i, j), i, j);
 }
@@ -117,18 +153,18 @@ inline void IMG_REPLACE_RL(Image& dst,
  */
 inline void VOL_REPLACE_RL(Volume& dst,
                            const Volume& src,
-                           const unsigned int nThread) 
-{ 
+                           const unsigned int nThread)
+{
     #pragma omp parallel for num_threads(nThread)
-    VOLUME_FOR_EACH_PIXEL_RL(src) 
-        dst.setRL(src.getRL(i, j, k), i, j, k); 
+    VOLUME_FOR_EACH_PIXEL_RL(src)
+        dst.setRL(src.getRL(i, j, k), i, j, k);
 }
 
 inline void IMG_REPLACE_FT(Image& dst,
                            const Image& src,
                            const unsigned int nThread)
 {
-    #pragma omp parallel for num_threads(nThread)  
+    #pragma omp parallel for num_threads(nThread)
     IMAGE_FOR_EACH_PIXEL_FT(src)
         dst.setFTHalf(src.getFTHalf(i, j), i, j);
 }
@@ -143,10 +179,10 @@ inline void IMG_REPLACE_FT(Image& dst,
 inline void VOL_REPLACE_FT(Volume& dst,
                            const Volume& src,
                            const unsigned int nThread)
-{ 
+{
     #pragma omp parallel for num_threads(nThread)
-    VOLUME_FOR_EACH_PIXEL_FT(src) 
-        dst.setFTHalf(src.getFTHalf(i, j, k), i, j, k); 
+    VOLUME_FOR_EACH_PIXEL_FT(src)
+        dst.setFTHalf(src.getFTHalf(i, j, k), i, j, k);
 }
 
 inline void IMG_PAD_RL(Image& dst,
@@ -176,19 +212,19 @@ inline void IMG_PAD_RL(Image& dst,
 inline void VOL_PAD_RL(Volume& dst,
                        const Volume& src,
                        const int pf,
-                       const unsigned int nThread) 
-{ 
-    dst.alloc(pf * src.nColRL(), 
-              pf * src.nRowRL(), 
-              pf * src.nSlcRL(), 
-              RL_SPACE); 
+                       const unsigned int nThread)
+{
+    dst.alloc(pf * src.nColRL(),
+              pf * src.nRowRL(),
+              pf * src.nSlcRL(),
+              RL_SPACE);
 
     #pragma omp parallel for num_threads(nThread)
-    SET_0_RL(dst); 
+    SET_0_RL(dst);
 
     #pragma omp parallel for num_threads(nThread)
-    VOLUME_FOR_EACH_PIXEL_RL(src) 
-        dst.setRL(src.getRL(i, j, k), i, j, k); 
+    VOLUME_FOR_EACH_PIXEL_RL(src)
+        dst.setRL(src.getRL(i, j, k), i, j, k);
 }
 
 inline void IMG_PAD_FT(Image& dst,
@@ -218,19 +254,19 @@ inline void IMG_PAD_FT(Image& dst,
 inline void VOL_PAD_FT(Volume& dst,
                        const Volume& src,
                        const int pf,
-                       const unsigned int nThread) 
-{ 
-    dst.alloc(pf * src.nColRL(), 
-              pf * src.nRowRL(), 
-              pf * src.nSlcRL(), 
-              FT_SPACE); 
+                       const unsigned int nThread)
+{
+    dst.alloc(pf * src.nColRL(),
+              pf * src.nRowRL(),
+              pf * src.nSlcRL(),
+              FT_SPACE);
 
     #pragma omp parallel for num_threads(nThread)
-    SET_0_FT(dst); 
+    SET_0_FT(dst);
 
     #pragma omp parallel for num_threads(nThread)
-    VOLUME_FOR_EACH_PIXEL_FT(src) 
-        dst.setFTHalf(src.getFTHalf(i, j, k), i, j, k); 
+    VOLUME_FOR_EACH_PIXEL_FT(src)
+        dst.setFTHalf(src.getFTHalf(i, j, k), i, j, k);
 }
 
 /**
@@ -240,10 +276,10 @@ inline void VOL_PAD_FT(Volume& dst,
  * @param src the source image
  * @param k   the index of the slice
  */
-inline void SLC_REPLACE_RL(Volume& dst, const Image& src, const int k) 
-{ 
-    IMAGE_FOR_EACH_PIXEL_RL(src) 
-        dst.setRL(src.getRL(i, j), i, j, k); 
+inline void SLC_REPLACE_RL(Volume& dst, const Image& src, const int k)
+{
+    IMAGE_FOR_EACH_PIXEL_RL(src)
+        dst.setRL(src.getRL(i, j), i, j, k);
 }
 
 /**
@@ -254,10 +290,10 @@ inline void SLC_REPLACE_RL(Volume& dst, const Image& src, const int k)
  * @param src the source image
  * @param k   the index of the slice
  */
-inline void SLC_REPLACE_FT(Volume& dst, const Image& src, const int k) 
-{ 
-    IMAGE_FOR_EACH_PIXEL_FT(src) 
-        dst.setFTHalf(src.getFTHalf(i, j), i, j, k); 
+inline void SLC_REPLACE_FT(Volume& dst, const Image& src, const int k)
+{
+    IMAGE_FOR_EACH_PIXEL_FT(src)
+        dst.setFTHalf(src.getFTHalf(i, j), i, j, k);
 }
 
 /**
@@ -268,10 +304,10 @@ inline void SLC_REPLACE_FT(Volume& dst, const Image& src, const int k)
  * @param src the source volume
  * @param k   the index of the slice
  */
-inline void SLC_EXTRACT_RL(Image& dst, const Volume& src, const int k) 
-{ 
-    IMAGE_FOR_EACH_PIXEL_RL(dst) 
-        dst.setRL(src.getRL(i, j, k), i, j); 
+inline void SLC_EXTRACT_RL(Image& dst, const Volume& src, const int k)
+{
+    IMAGE_FOR_EACH_PIXEL_RL(dst)
+        dst.setRL(src.getRL(i, j, k), i, j);
 }
 
 /**
@@ -282,10 +318,10 @@ inline void SLC_EXTRACT_RL(Image& dst, const Volume& src, const int k)
  * @param src the source volume
  * @param k   the index of the slice
  */
-inline void SLC_EXTRACT_FT(Image& dst, const Volume& src, const int k) 
-{ 
-    IMAGE_FOR_EACH_PIXEL_FT(dst) 
-        dst.setFTHalf(src.getFTHalf(i, j, k), i, j); 
+inline void SLC_EXTRACT_FT(Image& dst, const Volume& src, const int k)
+{
+    IMAGE_FOR_EACH_PIXEL_FT(dst)
+        dst.setFTHalf(src.getFTHalf(i, j, k), i, j);
 }
 
 vec2 centroid(const Image& img,
@@ -320,8 +356,8 @@ void mul(Image& dst,
 
 /**
  * This function generates a "translation image" with a given vector indicating
- * the number of columns and the number of rows using multiple threads. An 
- * image can be translated by this vector, just by multiplying this "translation 
+ * the number of columns and the number of rows using multiple threads. An
+ * image can be translated by this vector, just by multiplying this "translation
  * image" in Fourier space.
  *
  * @param dst       the translation image
@@ -441,7 +477,7 @@ void translate(Volume& dst,
                const unsigned int nThread);
 
 /**
- * This function translations an image in a certain frequency threshold with a 
+ * This function translations an image in a certain frequency threshold with a
  * given vector indicating by the number of columns and the number of rows.
  *
  * @param dst       the destination image (Fourier space)
@@ -457,7 +493,7 @@ void translate(Volume& dst,
 //               const RFLOAT nTransRow);
 
 /**
- * This function translations an image in a certain frequency threshold with a 
+ * This function translations an image in a certain frequency threshold with a
  * given vector indicating by the number of columns and the number of rows using
  * multiple threads.
  *

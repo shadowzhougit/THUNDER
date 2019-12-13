@@ -49,13 +49,13 @@ using namespace std;
 //        if (dir.size() == 0)
 //        {
 //            continue;
-//        } 
+//        }
 
 //        if ((mdRet = mkdir(dir.c_str(), mode)) && errno != EEXIST)
 //        {
 //            return mdRet;
 //        }
-        
+
 //    }
 
 //    return mdRet;
@@ -74,7 +74,7 @@ void mkDir(string s, mode_t mode)
         if (dir.size() == 0)
         {
             continue;
-        } 
+        }
 
         if ((mdRet = mkdir(dir.c_str(), mode)) && errno != EEXIST)
         {
@@ -250,6 +250,9 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     copy_string(dst.mask, JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_MASK).asString());
     dst.subtract = JSONCPP_READ_ERROR_HANDLER(src, "Subtract", KEY_SUBTRACT).asBool();
     copy_string(dst.regionCentre, JSONCPP_READ_ERROR_HANDLER(src, "Subtract", KEY_REGION_CENTRE).asString());
+    dst.symmetrySubtract = JSONCPP_READ_ERROR_HANDLER(src, "Subtract", KEY_SYMMETRY_SUBTRACT).asBool();
+    dst.reboxSize = JSONCPP_READ_ERROR_HANDLER(src, "Subtract", KEY_REBOX_SIZE).asInt();
+
     copy_string(dst.cacheDirectory, JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_CACHE_DIRECTORY).asString());
     dst.iterMax = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_ITER_MAX).asInt();
     dst.goldenStandard = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_GOLDEN_STANDARD).asBool();
@@ -362,7 +365,7 @@ void initGlobalPara(char *logFileFullName, Json::Reader &jsonReader, Json::Value
         fprintf(stderr, "THE FORMAT OF JSON FILE IS WRONG\n");
         abort();
     }
-        
+
     jsonFile.close();
     char currWorkDir[FILE_NAME_LENGTH];
     memset(currWorkDir, '\0', sizeof(currWorkDir));

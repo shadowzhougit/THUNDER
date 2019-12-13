@@ -4387,7 +4387,15 @@ void Optimiser::run()
 
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Masked Region Reference Subtracted Images";
 
-        saveSubtract();
+        if (_para.symmetrySubtract)
+        {
+            saveSubtract(true, _para.reboxSize);
+        }
+        else
+        {
+            saveSubtract(false, _para.reboxSize);
+        }
+
 
 #ifdef VERBOSE_LEVEL_1
         MPI_Barrier(MPI_COMM_WORLD);
@@ -4396,7 +4404,7 @@ void Optimiser::run()
 #endif
 
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Database of Masked Region Reference Subtracted Images";
-        saveDatabase(true, true);
+        saveDatabase(true, true, _para.symmetrySubtract);
 
 #ifdef VERBOSE_LEVEL_1
         MPI_Barrier(MPI_COMM_WORLD);
@@ -8499,7 +8507,9 @@ void Optimiser::writeDescInfo(FILE *file) const
 
 }
 
-void Optimiser::saveDatabase(const bool finished, const bool subtract) const
+void Optimiser::saveDatabase(const bool finished,
+                             const bool subtract,
+                             const bool symmetrySubtract) const
 {
     IF_MASTER return;
 
@@ -8547,7 +8557,7 @@ void Optimiser::saveDatabase(const bool finished, const bool subtract) const
 
         if (subtract)
         {
-            for (int i = -1; i < _sym.nSymmetryElement(); i++)
+            for (int i = -1; i < (symmetrySubtract ? _sym.nSymmetryElement() : 0); i++)
             {
                 if (i == -1)
                 {
@@ -8662,15 +8672,25 @@ void Optimiser::saveDatabase(const bool finished, const bool subtract) const
 
     fclose(file);
 
-    MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving .thu File To Path: " << filename;
+    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving .thu File To Path: " << filename;
+    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving .thu File To Path: " << filename;
 
     if (_commRank != _commSize - 1)
         MPI_Send(&flag, 1, MPI_C_BOOL, _commRank + 1, 0, MPI_COMM_WORLD);
 }
 
-void Optimiser::saveSubtract()
+void Optimiser::saveSubtract(const bool symmetrySubtract,
+                             const unsigned int reboxSize)
 {
     IF_MASTER return;
+
+    if (reboxSize > _para.size)
+    {
+        ALOG(FATAL, "LOGGER_SYS") << "Round " << _iter << ", " << "RE-BOXING SIZE CAN NOT BE LARGER THAN THE ORIGINAL SIZE";
+        BLOG(FATAL, "LOGGER_SYS") << "Round " << _iter << ", " << "RE-BOXING SIZE CAN NOT BE LARGER THAN THE ORIGINAL SIZE";
+
+        abort();
+    }
 
     ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Masked Region Reference Subtracted Images";
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Masked Region Reference Subtracted Images";
@@ -8681,10 +8701,12 @@ void Optimiser::saveSubtract()
 
     ImageFile imf;
 
-    imf.openStack(filename, _para.size, _ID.size() * (1 + _sym.nSymmetryElement()), _para.pixelSize);
+    imf.openStack(filename, reboxSize, _ID.size() * (symmetrySubtract ? (1 + _sym.nSymmetryElement()) : 1), _para.pixelSize);
 
     Image result(_para.size, _para.size, FT_SPACE);
     Image diff(_para.size, _para.size, FT_SPACE);
+
+    Image box(reboxSize, reboxSize, RL_SPACE);
 
     size_t cls;
     dmat33 rotB; // rot for base left closet
@@ -8720,7 +8742,7 @@ void Optimiser::saveSubtract()
 
 #endif
 
-        for (int i = -1; i < _sym.nSymmetryElement(); i++)
+        for (int i = -1; i < (symmetrySubtract ? _sym.nSymmetryElement() : 0); i++)
         {
             #pragma omp parallel for
             SET_0_FT(result);
@@ -8772,7 +8794,9 @@ void Optimiser::saveSubtract()
 
             _fftImg.bwExecutePlan(diff, _para.nThreadsPerProcess);
 
-            imf.writeStack(diff, l + _ID.size() * (i + 1));
+            IMG_BOX_RL(box, diff, _para.nThreadsPerProcess);
+
+            imf.writeStack(box, l + _ID.size() * (i + 1));
 
             _fftImg.fwExecutePlan(diff);
         }
@@ -8787,7 +8811,8 @@ void Optimiser::saveSubtract()
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Masked Region Reference Subtracted Images Saved";
 #endif
 
-    MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Masked Region Reference Subtracted Image File To Path: " << filename;
+    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Masked Region Reference Subtracted Image File To Path: " << filename;
+    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Masked Region Reference Subtracted Image File To Path: " << filename;
 }
 
 void Optimiser::saveBestProjections()
@@ -8835,7 +8860,8 @@ void Optimiser::saveBestProjections()
 
             fft.bw(result, _para.nThreadsPerProcess);
             result.saveRLToBMP(filename);
-            MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Result Round BMP File To Path: " << filename;
+            ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Result Round BMP File To Path: " << filename;
+            BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Result Round BMP File To Path: " << filename;
             fft.fw(result, _para.nThreadsPerProcess);
 
 #ifdef OPTIMISER_CTF_ON_THE_FLY
@@ -8850,7 +8876,8 @@ void Optimiser::saveBestProjections()
             sprintf(filename, "%sDiff_%04d_Round_%03d.bmp", _para.dstPrefix, _ID[l], _iter);
             fft.bw(diff, _para.nThreadsPerProcess);
             diff.saveRLToBMP(filename);
-            MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Diff Round BMP File To Path: " << filename;
+            ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Diff Round BMP File To Path: " << filename;
+            BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Saving Diff Round BMP File To Path: " << filename;
             fft.fw(diff, _para.nThreadsPerProcess);
         }
     }

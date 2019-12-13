@@ -65,7 +65,7 @@
 
 #define N_PHASE_WITH_NO_VARI_DECREASE 1
 
-#define N_SAVE_IMG 20 
+#define N_SAVE_IMG 20
 
 #define TRANS_Q 0.05
 
@@ -93,7 +93,7 @@ struct OptimiserPara
 
 #define KEY_MAXIMUM_MEMORY_USAGE_PER_PROCESS_IN_GB "Maximum Memory Usage Per Process (GB)"
 
-    /** 
+    /**
      * maximum memory usage per process in GB
      */
     RFLOAT maximumMemoryUsagePerProcessGB;
@@ -252,6 +252,22 @@ struct OptimiserPara
      */
     char mask[FILE_NAME_LENGTH];
 
+#define KEY_SUBTRACT "Subtract Masked Region Reference From Images"
+
+    bool subtract;
+
+#define KEY_REGION_CENTRE "Region Need to Be Centred"
+
+    char regionCentre[FILE_NAME_LENGTH];
+
+#define KEY_SYMMETRY_SUBTRACT "Symmetry Subtract"
+
+    bool symmetrySubtract;
+
+#define KEY_REBOX_SIZE "Rebox Size"
+
+    int reboxSize;
+
 #define KEY_CACHE_DIRECTORY "Path of Cache Files"
 
     char cacheDirectory[FILE_NAME_LENGTH];
@@ -266,7 +282,7 @@ struct OptimiserPara
 #define KEY_GOLDEN_STANDARD "Using Golden Standard FSC"
 
     bool goldenStandard;
-    
+
 #define KEY_PF "Padding Factor"
 
     /**
@@ -275,7 +291,7 @@ struct OptimiserPara
     int pf;
 
 #define KEY_A "MKB Kernel Radius"
-    
+
     /**
      * MKB kernel radius
      */
@@ -425,14 +441,6 @@ struct OptimiserPara
 
     bool saveTHUEachIter;
 
-#define KEY_SUBTRACT "Subtract Masked Region Reference From Images"
-
-    bool subtract;
-
-#define KEY_REGION_CENTRE "Region Need to Be Centred"
-
-    char regionCentre[FILE_NAME_LENGTH];
-
     char outputDirFullPath[FILE_NAME_LENGTH];
 
     OptimiserPara()
@@ -564,7 +572,7 @@ class Optimiser : public Parallel
         int _searchType;
 
         /**
-         * model containting references, projectors, reconstruuctors, information 
+         * model containting references, projectors, reconstruuctors, information
          * about FSC, SNR and determining the cutoff frequency and search type
          */
         Model _model;
@@ -578,7 +586,7 @@ class Optimiser : public Parallel
         /**
          * the symmetry information of this reconstruction
          */
-        Symmetry _sym; 
+        Symmetry _sym;
 
         /**
          * a unique ID for each 2D image
@@ -713,7 +721,7 @@ class Optimiser : public Parallel
         int* _iPxl;
 
         int* _iCol;
-        
+
         int* _iRow;
 
         int* _iSig;
@@ -765,7 +773,7 @@ class Optimiser : public Parallel
         vec3 _regionCentre;
 
     public:
-        
+
         Optimiser()
         {
             _stdN = 0;
@@ -832,7 +840,7 @@ class Optimiser : public Parallel
          * the size of the image
          */
         int size() const;
-        
+
         /**
          * maximum frequency (pixel)
          */
@@ -981,7 +989,7 @@ class Optimiser : public Parallel
          */
 
         void allReduceSigma(const bool mask);
-            
+
         /***
         void allReduceSigma(const bool mask,
                             const bool group);
@@ -995,7 +1003,7 @@ class Optimiser : public Parallel
                             const bool fscSave,
                             const bool avgSave,
                             const bool finished = false);
-        
+
         /***
          * @param mask           whether mask on the reference is allowed or
          *                       not
@@ -1016,9 +1024,11 @@ class Optimiser : public Parallel
         void freePreCal(const bool ctf);
 
         void saveDatabase(const bool finished = false,
-                          const bool subtract = false) const;
+                          const bool subtract = false,
+                          const bool symmetrySubtract = false) const;
 
-        void saveSubtract();
+        void saveSubtract(const bool symmetrySubtract,
+                          const unsigned int reboxSize);
 
         /**
          * for debug, save the best projections

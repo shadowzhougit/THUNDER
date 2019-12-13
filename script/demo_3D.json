@@ -22,7 +22,8 @@
         "Calculate FSC Using Core Region" : true,
         "Calculate FSC Using Masked Region" : false,
         "Particle Grading" : false,
-        "Auto-Recentre Reference" : false
+        "Auto-Recentre Reference" : false,
+        "Maximum Memory Usage Per Process (GB)" : 250
     },
 
     "Reference Mask" :
@@ -35,7 +36,9 @@
     "Subtract" :
     {
         "Subtract Masked Region Reference From Images" : false,
-        "Region Need to Be Centred" : ""
+        "Region Need to Be Centred" : "centermask.mrc",
+        "Symmetry Subtract" : false,
+        "Rebox Size" : 160
     },
 
     "Advanced" :
@@ -62,7 +65,8 @@
         "Grouping when Calculating Sigma" : true,
         "Grouping when Correcting Intensity Scale" : false,
         "Mask Images with Zero Noise" : true,
-        "CTF Refine Standard Deviation" : 0.01
+        "CTF Refine Standard Deviation" : 0.01,
+        "Path of Cache Files": "./cache/"
     },
 
     "Professional" :
