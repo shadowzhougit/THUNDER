@@ -8248,6 +8248,8 @@ void Optimiser::allocPreCal(const bool mask,
     // RFLOAT ratio = 1;
 
     std::cout << "Round " << _iter << ", ratio = " << ratio << std::endl;
+    std::cout << "Round " << _nPxl << ", _nPxl = " << _nPxl << std::endl;
+    std::cout << "Round " << _ID.size() << ", _ID.size() = " << _ID.size() << std::endl;
 
     // divide 4, as there are 4 containers in each stall
 
@@ -8284,13 +8286,8 @@ void Optimiser::allocPreCal(const bool mask,
 
         size_t rl = si(l);
 
-        for (int i = 0; i < _nPxl; i++)
+        for (size_t i = 0; i < _nPxl; i++)
         {
-            // TODO remove
-            // _datP[pixelMajor
-            //    ? (i * _ID.size() + rl)
-            //    : (_nPxl * rl + i)] = mask ? _img[rl].iGetFT(_iPxl[i]) : _imgOri[rl].iGetFT(_iPxl[i]);
-
             Complex data = mask ? _img[rl].iGetFT(_iPxl[i]) : _imgOri[rl].iGetFT(_iPxl[i]);
 
             _datPR[pixelMajor
@@ -8300,12 +8297,6 @@ void Optimiser::allocPreCal(const bool mask,
             _datPI[pixelMajor
                  ? (i * _ID.size() + rl)
                  : (_nPxl * rl + i)] = data.dat[1];
-
-            /***
-            _sigP[pixelMajor
-                ? (i * _ID.size() + rl)
-                : (_nPxl * rl + i)] = _sig(_groupID[rl] - 1, _iSig[i]);
-            ***/
 
             _sigRcpP[pixelMajor
                    ? (i * _ID.size() + rl)
@@ -8348,14 +8339,14 @@ void Optimiser::allocPreCal(const bool mask,
                 _nPxl,
                 1);
 
-            for (int i = 0; i < _nPxl; i++)
+            for (size_t i = 0; i < _nPxl; i++)
             {
                 _ctfP[pixelMajor
                     ? (i * _ID.size() + rl)
                     : (_nPxl * rl + i)] = ctf[i];
             }
 #else
-            for (int i = 0; i < _nPxl; i++)
+            for (size_t i = 0; i < _nPxl; i++)
             {
                 _ctfP[pixelMajor
                     ? (i * _ID.size() + rl)
@@ -8382,7 +8373,7 @@ void Optimiser::allocPreCal(const bool mask,
         _K2 = (RFLOAT*)TSFFTW_malloc(_ID.size() * sizeof(RFLOAT));
         //_K2 = new RFLOAT[_ID.size()];
 
-        for (int i = 0; i < _nPxl; i++)
+        for (size_t i = 0; i < _nPxl; i++)
             _frequency[i] = NORM(_iCol[i],
                                  _iRow[i])
                           / _para.size
@@ -8394,7 +8385,7 @@ void Optimiser::allocPreCal(const bool mask,
 
             size_t rl = si(l);
 
-            for (int i = 0; i < _nPxl; i++)
+            for (size_t i = 0; i < _nPxl; i++)
             {
                 RFLOAT angle = atan2(_iRow[i],
                                      _iCol[i])

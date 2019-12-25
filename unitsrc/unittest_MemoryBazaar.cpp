@@ -42,6 +42,10 @@ class MemoryBazaarTestP_Image_Publication_MemoryBazaar : public :: testing:: Tes
 {
 };
 
+class MemoryBazaarTestP_Debug_MemoryBazaar : public :: testing:: TestWithParam<int>
+{
+};
+
 class MemoryBazaarTestP_Image_Publication_Vector : public :: testing:: TestWithParam<int>
 {
 };
@@ -216,6 +220,27 @@ TEST_P(MemoryBazaarTestP_Image_Publication_MemoryBazaar, MemoryBazaarTestWithVar
     mb.cleanUp();
 }
 
+TEST_P(MemoryBazaarTestP_Debug_MemoryBazaar, MemoryBazaarTestWithVariable)
+{
+    size_t _IDSize = 56257;
+    size_t _nPxl = 38977;
+    size_t _nStall = 14064;
+
+    MemoryBazaar<RFLOAT, BaseType, 4> mb(24, _IDSize * _nPxl, _nStall, sizeof(RFLOAT), _nPxl);
+
+    MemoryBazaarDustman<RFLOAT, BaseType> mbd(&mb);
+
+    #pragma omp parallel for num_threads(24) firstprivate(mbd)
+    for (size_t i = 0; i < _IDSize * _nPxl; i++)
+    {
+        mb.endLastVisit();
+
+        mb[i] = 1;
+    }
+
+    mb.cleanUp();
+}
+
 TEST_P(MemoryBazaarTestP_Image_Publication_Vector, MemoryBazaarTestWithVariable)
 {
     size_t nItem = pow(2, GetParam());
@@ -271,6 +296,7 @@ class MemoryBazaarTestT212 : public :: testing:: Test
 };
 
 
+/***
 TEST_F(MemoryBazaarTestT212, Test01)
 {
     std::cout << "nd = " << _IDSize << std::endl;
@@ -288,20 +314,23 @@ TEST_F(MemoryBazaarTestT212, Test01)
         RFLOAT* ptr_datPI = &_datPI[_nPxl * id];
     }
 }
+***/
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_1, MemoryBazaarTestPFloat, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000, 100000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_1, MemoryBazaarTestPFloat, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000, 100000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_2, MemoryBazaarTestPDouble, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000, 100000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_2, MemoryBazaarTestPDouble, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000, 100000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_3, MemoryBazaarTestPInt, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000, 100000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_3, MemoryBazaarTestPInt, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000, 100000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_4, MemoryBazaarTestPImage, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_4, MemoryBazaarTestPImage, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_5, MemoryBazaarTestPImageCopy, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_5, MemoryBazaarTestPImageCopy, ::testing::Combine(::testing::Values(1, 10, 12, 15, 100, 1000, 10000), ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256)));
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_Publication_MemoryBazzar, MemoryBazaarTestP_Image_Publication_MemoryBazaar, ::testing::Combine(::testing::Range(10, 20), ::testing::Values(1, 4, 16, 64, 256)));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_Publication_MemoryBazzar, MemoryBazaarTestP_Image_Publication_MemoryBazaar, ::testing::Combine(::testing::Range(10, 20), ::testing::Values(1, 4, 16, 64, 256)));
 
-INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_Publication_Vector, MemoryBazaarTestP_Image_Publication_Vector, ::testing::Range(10, 20));
+// INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_Publication_Vector, MemoryBazaarTestP_Image_Publication_Vector, ::testing::Range(10, 20));
+
+INSTANTIATE_TEST_CASE_P(MemoryBazaarTestWithVariableComibiation_Debug_MemoryBazaar, MemoryBazaarTestP_Debug_MemoryBazaar, ::testing::Range(10, 11));
 
 int main(int argc, char* argv[])
 {

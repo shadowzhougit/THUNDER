@@ -128,7 +128,7 @@ struct ThreadLastRecall
     ThreadLastRecall()
     {
         iLastVisitedPack = -1;
-        iFirstItemLastVisitedPack = INT_MAX;
+        iFirstItemLastVisitedPack = LONG_MAX;
         lastVisitedContainer = NULL;
     };
 };
@@ -232,7 +232,7 @@ class MemoryBazaar
 
             for (size_t i = 0; i < _maxThreads; i++)
             {
-                _offsetToVisitNext[i] = INT_MAX;
+                _offsetToVisitNext[i] = LONG_MAX;
             }
 
             _bazaar = new Container<T>[_nStall * NUM_CONTAINER_PER_STALL];
@@ -349,13 +349,15 @@ class MemoryBazaar
 
             if ((offset >= 0) && (offset < _packSize))
             {
+                /* the item to be visted next belongs to the same pack last visited */
                 _offsetToVisitNext[threadID] = offset;
 
                 return true;
             }
             else
             {
-                _offsetToVisitNext[threadID] = INT_MAX;
+                /** the item to be visited next does NOT belongs to the same pack last visited */
+                _offsetToVisitNext[threadID] = LONG_MAX;
 
                 return false;
             }
@@ -370,10 +372,10 @@ class MemoryBazaar
             int threadID = omp_get_ancestor_thread_num(1);
             if (threadID == -1) threadID = 0;
 
-            if (_offsetToVisitNext[threadID] != INT_MAX)
+            if (_offsetToVisitNext[threadID] != LONG_MAX)
             {
                 long offset = _offsetToVisitNext[threadID];
-                _offsetToVisitNext[threadID] = INT_MAX;
+                _offsetToVisitNext[threadID] = LONG_MAX;
 
                 // has been registed
                 return _threadLastRecall[threadID].lastVisitedContainer->item[offset];
@@ -381,7 +383,7 @@ class MemoryBazaar
             else if (isSamePackRegisterIItemToVisitNext(iItem, threadID))
             {
                 long offset = _offsetToVisitNext[threadID];
-                _offsetToVisitNext[threadID] = INT_MAX;
+                _offsetToVisitNext[threadID] = LONG_MAX;
 
                 // not been registed, but the same pack
                 return _threadLastRecall[threadID].lastVisitedContainer->item[offset];
@@ -524,7 +526,7 @@ class MemoryBazaar
             if (_threadLastRecall != NULL)
             {
                 _threadLastRecall[threadID].iLastVisitedPack = -1;
-                _threadLastRecall[threadID].iFirstItemLastVisitedPack = INT_MAX;
+                _threadLastRecall[threadID].iFirstItemLastVisitedPack = LONG_MAX;
 
                 if (_threadLastRecall[threadID].lastVisitedContainer != NULL)
                 {
