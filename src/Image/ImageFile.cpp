@@ -230,15 +230,14 @@ void ImageFile::readMetaDataMRC()
 
     if (_MRCHeader.nx != 0 && _MRCHeader.ny != 0 && _MRCHeader.nz != 0)
     {
-        if ((_MRCHeader.cella[0] / _MRCHeader.nx == _MRCHeader.cella[1] / _MRCHeader.ny) &&
-            (_MRCHeader.cella[0] / _MRCHeader.nx == _MRCHeader.cella[2] / _MRCHeader.nz))
+        if (_MRCHeader.cella[0] / _MRCHeader.nx == _MRCHeader.cella[1] / _MRCHeader.ny)
         {
             _metaData.pixelsize = _MRCHeader.cella[0] / _MRCHeader.nx;
         }
         else
         {
-            REPORT_ERROR("ERROR IN PIXELSIZE OF MRC FILE.");
-            abort();
+            CLOG(WARNING, "LOGGER_SYS") << "PIXELSIZE OF X AND Y NOT EQUAL.";
+            _metaData.pixelsize = _MRCHeader.cella[0] / _MRCHeader.nx;
         }
     }
     else

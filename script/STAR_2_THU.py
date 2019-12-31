@@ -157,61 +157,61 @@ def main():
                     theta = 0
                     psi = 0
 
-                    quat0, quat1, quat2, quat3 = euler_to_quaternion([phi, theta, psi])
+                quat0, quat1, quat2, quat3 = euler_to_quaternion([phi, theta, psi])
 
-                    fout.write('{volt:18.6f} \
-                                {dU:18.6f} \
-                                {dV:18.6f} \
-                                {dT:18.6f} \
-                                {c:18.6f} \
-                                {aC:18.6f} \
-                                {phaseShift:18.6f} \
-                                {iN} \
-                                {mN} \
-                                {coordX:18.6f} \
-                                {coordY:18.6f} \
-                                {gI} \
-                                {classI} \
-                                {quat0:18.6f} \
-                                {quat1:18.6f} \
-                                {quat2:18.6f} \
-                                {quat3:18.6f} \
-                                {stdRot0:18.6f} \
-                                {stdRot1:18.6f} \
-                                {stdRot2:18.6f} \
-                                {transX:18.6f} \
-                                {transY:18.6f} \
-                                {stdTransX:18.6f} \
-                                {stdTransY:18.6f} \
-                                {df:18.6f} \
-                                {stdDf:18.6f} \
-                                {score:18.6f} \n'.format(volt = volt,
-                                                  dU = dU,
-                                                  dV = dV,
-                                                  dT = dT,
-                                                  c = c,
-                                                  aC = aC,
-                                                  phaseShift = ps,
-                                                  iN = iN,
-                                                  mN = mN,
-                                                  coordX = coordX,
-                                                  coordY = coordY,
-                                                  gI = gI,
-                                                  classI = 0,
-                                                  quat0 = quat0,
-                                                  quat1 = quat1,
-                                                  quat2 = quat2,
-                                                  quat3 = quat3,
-                                                  stdRot0 = 0,
-                                                  stdRot1 = 0,
-                                                  stdRot2 = 0,
-                                                  transX = 0,
-                                                  transY = 0,
-                                                  stdTransX = 0,
-                                                  stdTransY = 0,
-                                                  df = 1,
-                                                  stdDf = 0,
-                                                  score = 0))
+                fout.write('{volt:18.6f} \
+                            {dU:18.6f} \
+                            {dV:18.6f} \
+                            {dT:18.6f} \
+                            {c:18.6f} \
+                            {aC:18.6f} \
+                            {phaseShift:18.6f} \
+                            {iN} \
+                            {mN} \
+                            {coordX:18.6f} \
+                            {coordY:18.6f} \
+                            {gI} \
+                            {classI} \
+                            {quat0:18.6f} \
+                            {quat1:18.6f} \
+                            {quat2:18.6f} \
+                            {quat3:18.6f} \
+                            {stdRot0:18.6f} \
+                            {stdRot1:18.6f} \
+                            {stdRot2:18.6f} \
+                            {transX:18.6f} \
+                            {transY:18.6f} \
+                            {stdTransX:18.6f} \
+                            {stdTransY:18.6f} \
+                            {df:18.6f} \
+                            {stdDf:18.6f} \
+                            {score:18.6f} \n'.format(volt = volt,
+                                              dU = dU,
+                                              dV = dV,
+                                              dT = dT,
+                                              c = c,
+                                              aC = aC,
+                                              phaseShift = ps,
+                                              iN = iN,
+                                              mN = mN,
+                                              coordX = coordX,
+                                              coordY = coordY,
+                                              gI = gI,
+                                              classI = 0,
+                                              quat0 = quat0,
+                                              quat1 = quat1,
+                                              quat2 = quat2,
+                                              quat3 = quat3,
+                                              stdRot0 = 0,
+                                              stdRot1 = 0,
+                                              stdRot2 = 0,
+                                              transX = 0,
+                                              transY = 0,
+                                              stdTransX = 0,
+                                              stdTransY = 0,
+                                              df = 1,
+                                              stdDf = 0,
+                                              score = 0))
 
         if flag == 2:
 
