@@ -70,7 +70,8 @@ class Postprocess
         Postprocess(const char mapAFilename[],
                     const char mapBFilename[],
                     const char maskFilename[],
-                    const char mapPrefix[]);
+                    const char mapPrefix[],
+                    const RFLOAT pixelSize);
 
         void run(const unsigned int nThread);
 

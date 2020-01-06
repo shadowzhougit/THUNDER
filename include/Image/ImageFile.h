@@ -53,7 +53,7 @@ struct ImageMetaData
         nSlc = 0;
         mode = 2;
         symmetryDataSize = 0;
-        pixelsize = 0;
+        pixelsize = 1;
     }
 };
 
@@ -186,7 +186,7 @@ class ImageFile
          */
         int nSlc() const;
 
-        RFLOAT pixelSize() const;
+        RFLOAT pixelSize();
 
         /**
          * @brief Get the size of the image.

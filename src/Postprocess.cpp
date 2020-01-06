@@ -13,7 +13,8 @@ Postprocess::Postprocess() {}
 Postprocess::Postprocess(const char mapAFilename[],
                          const char mapBFilename[],
                          const char maskFilename[],
-                         const char mapPrefix[])
+                         const char mapPrefix[],
+                         const RFLOAT pixelSize)
 {
     _prefix = mapPrefix;
 
@@ -31,7 +32,7 @@ Postprocess::Postprocess(const char mapAFilename[],
     imfB.readVolume(_mapB);
     imfM.readVolume(_mask);
 
-    _pixelSize = imfA.pixelSize();
+    _pixelSize = pixelSize;
 
     // REMOVE_NEG(_mapA);
     // REMOVE_NEG(_mapB);

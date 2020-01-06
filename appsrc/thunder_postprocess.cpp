@@ -54,6 +54,7 @@ void usage (int status)
         fputs("--inputB       set the filename of input file B.\n", stdout);
         fputs("--mask         set the filename of mask file.\n", stdout);
         fputs("--prefix       set the prefix of the output files.\n", stdout);
+        fputs("--pixelsize    set the pixelsize.\n", stdout);
         fputs("-j             set the number of threads to carry out work.\n", stdout);
 
         fputs("\n--help         display this help\n", stdout);
@@ -68,6 +69,7 @@ static const struct option long_options[] =
     {"inputB", required_argument, NULL, 'b'},
     {"mask", required_argument, NULL, 'm'},
     {"prefix", required_argument, NULL, 'p'},
+    {"pixelsize", required_argument, NULL, 'x'},
     {"help", no_argument, NULL, 'h'},
     {NULL, 0, NULL, 0}
 };
@@ -80,9 +82,10 @@ int main(int argc, char* argv[])
     char* inputB;
     char* mask;
     char* prefix;
+    double pixelsize;
     int nThread;
 
-    char option[5] = {'m', 'a', 'b', 'p', 'j'};
+    char option[6] = {'m', 'a', 'b', 'p', 'j', 'x'};
 
     int option_index = 0;
 
@@ -111,9 +114,13 @@ int main(int argc, char* argv[])
                 prefix = optarg;
                 option[3] = '\0';
                 break;
+            case('x'):
+                pixelsize = atof(optarg);
+                option[4] = '\0';
+                break;
             case('j'):
                 nThread = atoi(optarg);
-                option[4] = '\0';
+                option[5] = '\0';
                 break;
             case('h'):
                 usage(EXIT_SUCCESS);
@@ -134,7 +141,8 @@ int main(int argc, char* argv[])
     Postprocess pp(inputA,
                    inputB,
                    mask,
-                   prefix);
+                   prefix,
+                   pixelsize);
 
     pp.run(nThread);
 

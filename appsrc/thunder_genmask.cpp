@@ -54,7 +54,6 @@ void usage (int status)
 
         fputs("-i  --input    set the filename of input file.\n", stdout);
         fputs("-o  --output   set the filename of output file.\n", stdout);
-        fputs("--pixelsize    set the pixelsize.\n", stdout);
         fputs("--threshold    set the threshold value.\n", stdout);
         fputs("--ext          set the extension for the pixels whose value larger than the threshold, in pixel.\n", stdout);
         fputs("--edgewidth    set the edge width of the mask.\n", stdout);
@@ -73,7 +72,6 @@ static const struct option long_options[] =
     {"threshold", required_argument, NULL, 't'},
     {"ext", required_argument, NULL, 'x'},
     {"edgewidth", required_argument, NULL, 'e'},
-    {"pixelsize", required_argument, NULL, 'p'},
     {"help", no_argument, NULL, 'h'},
     {NULL, 0, NULL, 0}
 };
@@ -87,7 +85,7 @@ int main(int argc, char* argv[])
     double threshold, ext, edgewidth, pixelsize;
     int nThread;
 
-    char option[7] = {'o', 'i', 't', 'x', 'e', 'p', 'j'};
+    char option[6] = {'o', 'i', 't', 'x', 'e', 'j'};
 
     int option_index = 0;
 
@@ -120,13 +118,9 @@ int main(int argc, char* argv[])
                 edgewidth = atof(optarg);
                 option[4] = '\0';
                 break;
-            case('p'):
-                pixelsize = atof(optarg);
-                option[5] = '\0';
-                break;
             case('j'):
                 nThread = atoi(optarg);
-                option[6] = '\0';
+                option[5] = '\0';
                 break;
             case('h'):
                 usage(EXIT_SUCCESS);
@@ -145,6 +139,10 @@ int main(int argc, char* argv[])
 
     ImageFile imf(input, "rb");
     imf.readMetaData();
+
+    pixelsize = imf.pixelSize();
+
+    CLOG(INFO, "LOGGER_SYS") << "Pixelsize of the input MRC file is " << pixelsize;
 
     Volume ref;
     imf.readVolume(ref);
