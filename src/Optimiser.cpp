@@ -276,6 +276,7 @@ void Optimiser::init()
 
     MLOG(INFO, "LOGGER_INIT") << "Total Number of Images: " << _nPar;
 
+    /***
     int nClass = FLOOR(_nPar * CLASS_BALANCE_FACTOR / MIN_N_IMAGES_PER_CLASS);
 
     if (nClass < _para.k)
@@ -286,6 +287,7 @@ void Optimiser::init()
                                    << " Classes is Recommended for Classification";
         abort();
     }
+    ***/
 
     if ((_para.maskFSC) ||
         (_para.performMask && !_para.autoMask))
@@ -4705,12 +4707,33 @@ void Optimiser::initImg()
         }
         else
         {
+            if (imgName.find('$') == string::npos)
+            {
+                int nSlc = atoi(imgName.substr(0, imgName.find('@')).c_str()) - 1;
+                string filename = string(_para.parPrefix) + imgName.substr(imgName.find('@') + 1);
+
+                ImageFile imf(filename.c_str(), "rb");
+                imf.readMetaData();
+                imf.readImage(_img[l], nSlc);
+            }
+            else
+            {
+                int nSlc = atoi(imgName.substr(imgName.find('$') + 1, imgName.find('@')).c_str()) - 1;
+                string filename = string(_para.parPrefix) + imgName.substr(imgName.find('@') + 1);
+
+                ImageFile imf(filename.c_str(), "rb");
+                imf.readMetaData();
+                imf.readImage(_img[l], nSlc);
+            }
+
+            /***
             int nSlc = atoi(imgName.substr(0, imgName.find('@')).c_str()) - 1;
             string filename = string(_para.parPrefix) + imgName.substr(imgName.find('@') + 1);
 
             ImageFile imf(filename.c_str(), "rb");
             imf.readMetaData();
             imf.readImage(_img[l], nSlc);
+            ***/
         }
 
         if ((_img[l].nColRL() != _para.size) ||
@@ -6976,8 +6999,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
             int vdim = _model.reco(0).getModelDim();
             int modelSize = _model.reco(0).getModelSize();
+            int tauSize = _model.reco(0).getTauSize();
             Complex* modelF = new Complex[_para.k * modelSize];
             RFLOAT* modelT = new RFLOAT[_para.k * modelSize];
+            RFLOAT* tau = new RFLOAT[_para.k * tauSize];
             double* O2D = new double[_para.k * 2];
             int* counter = new int[_para.k];
 
@@ -6986,6 +7011,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
             {
                 _model.reco(t).getF(modelF + t * modelSize);
                 _model.reco(t).getT(modelT + t * modelSize);
+                _model.reco(t).getTau(tau + t * tauSize);
                 O2D[t * 2] = _model.reco(t).ox();
                 O2D[t * 2 + 1] = _model.reco(t).oy();
                 counter[t] = _model.reco(t).counter();
@@ -6993,16 +7019,17 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
 
             InsertI2D(modelF, modelT, O2D, counter, _hemi, _slav,
-                      _datPR, _datPI, _ctfP, _sigP, w, offS, nc, nr, nt, nd,
-                      ctfaData, _iColPad, _iRowPad, _para.pixelSize,
-                      cSearch, _para.k, _para.pf, _nPxl,
-                      _para.mReco, _para.size, vdim, _ID.size());
+                      _datPR, _datPI, _ctfP, _sigP, tau, w, offS, 
+                      nc, nr, nt, nd, ctfaData, _iColPad, _iRowPad, 
+                      _iSig, _para.pixelSize, cSearch, tauSize, _para.k, 
+                      _para.pf, _nPxl, _para.mReco, _para.size, vdim, _ID.size());
 
             #pragma omp parallel for
             for (int t = 0; t < _para.k; t++)
             {
                 _model.reco(t).resetF(modelF + t * modelSize);
                 _model.reco(t).resetT(modelT + t * modelSize);
+                _model.reco(t).resetTau(tau + t * tauSize);
                 _model.reco(t).setOx(O2D[t * 2]);
                 _model.reco(t).setOy(O2D[t * 2 + 1]);
                 _model.reco(t).setCounter(counter[t]);
@@ -7010,6 +7037,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
             delete[]modelF;
             delete[]modelT;
+            delete[]tau;
             delete[]O2D;
             delete[]counter;
             delete[]w;
@@ -7449,6 +7477,14 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #endif
 
 #ifdef GPU_RECONSTRUCT
+        for (int t = 0; t < _para.k; t++)
+        {
+            _model.reco(t).allReduceCounter();
+            _model.reco(t).prepareTau();
+        }
+#endif
+
+#ifdef GPU_RECONSTRUCT
         #pragma omp parallel for num_threads(deviceNum)
 #endif
         for (int t = 0; t < _para.k; t++)
@@ -7460,9 +7496,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #ifdef GPU_VERSION
             _model.reco(t).prepareTFG(gpus[omp_get_thread_num()]);
 #else
+            _model.reco(t).allReduceCounter();
             _model.reco(t).prepareTF(_para.nThreadsPerProcess);
 #endif
         }
+
 
         if (_para.refAutoRecentre)
         {

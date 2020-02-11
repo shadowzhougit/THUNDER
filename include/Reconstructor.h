@@ -74,6 +74,8 @@
 
 #define FSC_BASE_H (1 - 1e-3)
 
+#define TAU_FACTOR 1e-3
+
 /**
  * @brief The 2D and 3D model reconstruction class. 
  * It provides all APIs that are used for reconstructing a 2D/3D Fourier transform of a 2D/3D model in 2D/3D Fourier space from the pixel data of 2D Fourier transform of real images and the associated 5D coordinates which are learned from sampling in the former round. 
@@ -216,6 +218,8 @@ class Reconstructor : public Parallel
          * Since there are serveral different 5D coordinates that have the similar possibility for a single image, multiple 5D coordinates and weights of a single image can be inserted. Every inserting operation will also insert the weights into this vector.
          */
         vector<RFLOAT> _w;
+
+        vec _tau;
         
         /**
          * @brief the max radius within the distance of which other point can be affected when one point is doing interpolation
@@ -241,11 +245,6 @@ class Reconstructor : public Parallel
          * @brief the average power spectrum of noise, @f$\sigma^{2}@f$
          */
         vec _sig;
-
-        /**
-         * @brief the power spectrum of a certain reference, @f$\tau^{2}@f$
-         */
-        vec _tau;
 
         /**
          * @brief the x-axis component of offset, defaulted by 0
@@ -688,6 +687,13 @@ class Reconstructor : public Parallel
         int getModelSize();
 
         /**
+         * @brief Get the size of _tau.
+         *
+         * @return the size of _tau
+         */
+        int getTauSize(); 
+
+        /**
          * @brief Get the values of _F2D.
          */
         void getF(Complex* modelF    /**< [out] the values of _F2D */);
@@ -696,6 +702,11 @@ class Reconstructor : public Parallel
          * @brief Get the real part values of _T2D.
          */
         void getT(RFLOAT* modelT     /**< [out] the real part of _T2D */);
+
+        /**
+         * @brief Get the real part values of Tau.
+         */
+        void getTau(RFLOAT* tau     /* *< [out] the real part of _tau */);
 
         /**
          * @brief Reset the values of _F2D by modelF.
@@ -708,6 +719,16 @@ class Reconstructor : public Parallel
         void resetT(RFLOAT* modelT   /**< [in] reset values */);
 
         /**
+         * @brief Reset the values of _tau.
+         */
+        void resetTau(RFLOAT* tau   /* *< [in] reset values */);
+      
+        /**
+         * @brief AllReduce _tau.
+         */
+        void prepareTau(); 
+
+        /**
          * @brief Prepare parameters for symmetrizing _T and _F by GPU.
          */
         void prepareTFG(int gpuIdx   /**< [in] gpu index */);
@@ -717,6 +738,9 @@ class Reconstructor : public Parallel
          * @brief Prepare parameters for symmetrizing _T and _F by CPU.
          */
         void prepareTF(const unsigned int nThread      /**< [in] the number of threads */);
+
+        void normalise(const size_t nPar,
+                       const unsigned int nThread);
 
         /**
          * @brief Estimate X-offset, Y-offset and Z-offset of reference by averaging offsets summation, which is calculated by former allreduction operation.
@@ -751,6 +775,8 @@ class Reconstructor : public Parallel
 
         Volume& getT3D(); 
 
+        void allReduceCounter();
+
     private:
 
         /**
@@ -767,6 +793,8 @@ class Reconstructor : public Parallel
          * @brief The allreduce operation gets the summation of X-offset, Y-offset, Z-offset of reference and the counter.
          */
         void allReduceO();
+
+        void allReduceTau();
 
         /**
          * @brief Calculate the distance to total balanced. The distance is the summation of diffrernces between real weights and ideal total balance weights, calculated by @f$\sum_{i^2+j^2+k^2<\left({maxradius}*{pf}\right)^2}\left(\left|C\left(i,j,k\right)\right|-1\right)@f$ .

@@ -927,19 +927,6 @@ void Model::refreshSig(const vec& sig)
     _sig = sig;
 }
 
-/***
-void Model::resetTau()
-{
-    _tau = mat::Constant(_tau.rows(), _tau.rows(), TS_MAX_RFLOAT_VALUE);
-}
-
-void Model::resetTau(const vec tau)
-{
-    FOR_EACH_CLASS
-        _tau.col(l) = tau;
-}
-***/
-
 vec Model::tau(const int i) const
 {
     return _tau.col(i);
@@ -1128,21 +1115,6 @@ void Model::resetReco(const RFLOAT thres)
     ILOG(INFO, "LOGGER_SYS") << "Reconstructor(s) Reset";
 #endif
 }
-
-/***
-void Model::refreshRecoSigTau(const int rSig,
-                                const int rTau)
-{
-    FOR_EACH_CLASS
-    {
-        _reco[l]->setSig(_sig.head(rSig));
-
-        //_reco[l]->setTau(_tau.col(l).head(rTau * _pf - 1));
-        // the last value of _tau can be inaccurate
-        _reco[l]->setTau(_tau.col(l).head((rTau - 1) * _pf));
-    }
-}
-***/
 
 void Model::updateR(const RFLOAT thres)
 {

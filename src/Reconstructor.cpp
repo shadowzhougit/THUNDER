@@ -86,7 +86,8 @@ void Reconstructor::init(const int mode,
                    1,
                    1e5);
 
-    _maxRadius = (_size / 2 - CEIL(a));
+    setMaxRadius(_size/ 2 - CEIL(a));
+    // _maxRadius = (_size / 2 - CEIL(a));
 }
 
 void Reconstructor::allocSpace(const unsigned int nThread)
@@ -362,6 +363,8 @@ int Reconstructor::maxRadius() const
 void Reconstructor::setMaxRadius(const int maxRadius)
 {
     _maxRadius = maxRadius;
+
+    _tau = vec::Zero(_maxRadius + 2);
 }
 
 void Reconstructor::preCal(int& nPxl,
@@ -446,6 +449,9 @@ void Reconstructor::insert(const Image& src,
     {
         if (QUAD(i, j) < gsl_pow_2(_maxRadius))
         {
+            #pragma omp atomic
+            _tau(AROUND(NORM(i, j))) += w;
+
             dvec2 newCor((double)(i * _pf), (double)(j * _pf));
             dvec2 oldCor = rot * newCor;
 
@@ -515,6 +521,9 @@ void Reconstructor::insert(const Image& src,
         {
             if (QUAD(i, j) < gsl_pow_2(_maxRadius))
             {
+                #pragma omp atomic
+                _tau(AROUND(NORM(i, j))) += w;
+
                 const double* ptr = rot.data();
                 double oldCor[3];
                 oldCor[0] = (ptr[0] * i + ptr[3] * j) * _pf;
@@ -584,6 +593,9 @@ void Reconstructor::insertP(const Image& src,
 
         for (int i = 0; i < _nPxl; i++)
         {
+            #pragma omp atomic
+            _tau(_iSig[i]) += (sig == NULL ? 1 : (*sig)(_iSig[i])) * w;
+
             dvec2 newCor((double)(_iCol[i]), (double)(_iRow[i]));
             dvec2 oldCor = rot * newCor;
 
@@ -649,6 +661,9 @@ void Reconstructor::insertP(const Image& src,
 
     for (int i = 0; i < _nPxl; i++)
     {
+        #pragma omp atomic
+        _tau(_iSig[i]) += (sig == NULL ? 1 : (*sig)(_iSig[i])) * w;
+
         const double* ptr = rot.data();
         double oldCor[3];
         int iCol = _iCol[i];
@@ -752,6 +767,9 @@ void Reconstructor::insertP(const Complex* src,
 
         for (int i = 0; i < _nPxl; i++)
         {
+            #pragma omp atomic
+            _tau(_iSig[i]) += (sig == NULL ? 1 : (*sig)(_iSig[i])) * w;
+
             dvec2 newCor((double)(_iCol[i]), (double)(_iRow[i]));
             dvec2 oldCor = rot * newCor;
 
@@ -846,6 +864,9 @@ void Reconstructor::insertP(const Complex* src,
 
     for (int i = 0; i < _nPxl; i++)
     {
+        #pragma omp atomic
+        _tau(_iSig[i]) += (sig == NULL ? 1 : (*sig)(_iSig[i])) * w;
+
         const double* ptr = rot.data();
         double oldCor[3];
         int iCol = _iCol[i];
@@ -922,6 +943,7 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
                             int idim,
                             int imgNum)
 {   
+    RFLOAT* tau = new RFLOAT[_tau.size()];
     double* O3D = new double[3];
     int* counter = new int[1];
     O3D[0] = _ox;
@@ -929,6 +951,9 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
     O3D[2] = _oz;
     counter[0] = _counter;
     int dimSize = _T3D.sizeFT();
+
+    for (int i = 0; i < _tau.size(); i++)
+        tau[i] = _tau(i);
     
     InsertFT(_F3D,
              _T3D,
@@ -940,6 +965,7 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
              datPI,
              ctfP,
              sigP,
+             tau,
              ctfaData,
              offS,
              w,
@@ -949,20 +975,26 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
              nc,
              _iCol,
              _iRow,
+             _iSig,
              pixelSize,
              cSearch,
+             _tau.size(),
              opf,
              _nPxl,
              mReco,
              idim,
              dimSize,
              imgNum);
-    
+
+    for (int i = 0; i < _tau.size(); i++)
+        _tau(i) = tau[i];
+
     _ox = O3D[0];
     _oy = O3D[1];
     _oz = O3D[2];
     _counter = counter[0];
     
+    delete[] tau;
     delete[] O3D;
     delete[] counter;
 }
@@ -984,6 +1016,7 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
                             int idim,
                             int imgNum)
 {   
+    RFLOAT* tau = new RFLOAT[_tau.size()];
     double* O3D = new double[3];
     int* counter = new int[1];
     O3D[0] = _ox;
@@ -991,6 +1024,9 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
     O3D[2] = _oz;
     counter[0] = _counter;
     int dimSize = _T3D.sizeFT();
+    
+    for (int i = 0; i < _tau.size(); i++)
+        tau[i] = _tau(i);
     
     InsertFT(_F3D,
              _T3D,
@@ -1002,6 +1038,7 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
              datPI,
              ctfP,
              sigP,
+             tau,
              ctfaData,
              offS,
              w,
@@ -1010,8 +1047,10 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
              nd,
              _iCol,
              _iRow,
+             _iSig,
              pixelSize,
              cSearch,
+             _tau.size(),
              opf,
              _nPxl,
              mReco,
@@ -1019,11 +1058,15 @@ void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
              dimSize,
              imgNum);
     
+    for (int i = 0; i < _tau.size(); i++)
+        _tau(i) = tau[i];
+
     _ox = O3D[0];
     _oy = O3D[1];
     _oz = O3D[2];
     _counter = counter[0];
     
+    delete[] tau;
     delete[] O3D;
     delete[] counter;
 }
@@ -1038,16 +1081,27 @@ int Reconstructor::getModelSize()
     return _F2D.sizeFT();
 }
 
+int Reconstructor::getTauSize()
+{
+     return _tau.size();
+}
+
 void Reconstructor::getF(Complex* modelF)
 {
-    for(size_t i = 0; i < _F2D.sizeFT(); i++)
+    for (size_t i = 0; i < _F2D.sizeFT(); i++)
         modelF[i] = _F2D[i];
 }
 
 void Reconstructor::getT(RFLOAT* modelT)
 {
-    for(size_t i = 0; i < _T2D.sizeFT(); i++)
+    for (size_t i = 0; i < _T2D.sizeFT(); i++)
         modelT[i] = REAL(_T2D[i]);
+}
+
+void Reconstructor::getTau(RFLOAT* tau)
+{
+    for (size_t i = 0; i < _tau.size(); i++)
+        tau[i] = _tau(i);
 }
 
 void Reconstructor::resetF(Complex* modelF)
@@ -1062,17 +1116,68 @@ void Reconstructor::resetT(RFLOAT* modelT)
         _T2D[i] = COMPLEX(modelT[i], 0);
 }
 
+void Reconstructor::resetTau(RFLOAT* tau)
+{
+    for (size_t i = 0; i < _tau.size(); i++)
+        _tau(i) = tau[i];
+}
+        
+void Reconstructor::prepareTau()
+{
+    IF_MASTER return;
+
+    ALOG(INFO, "LOGGER_RECO") << "Allreducing tau";
+    BLOG(INFO, "LOGGER_RECO") << "Allreducing tau";
+
+    allReduceTau();
+
+}
+
 void Reconstructor::prepareTFG(int gpuIdx)
 {
     IF_MASTER return;
 
+    ALOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
+    BLOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
+
+    if (_mode == MODE_2D)
+    {
+        for (size_t i = 1; i < _maxRadius + 2; i++)
+        {
+            _tau(i) /= M_PI * i;
+        }
+
+        IMAGE_FOR_EACH_PIXEL_FT(_T2D)
+        {
+            if (QUAD(i, j) < TSGSL_pow_2(_maxRadius * _pf))
+            {
+                _T2D.setFTHalf(COMPLEX(REAL(_T2D.getFTHalf(i, j)) + _tau[AROUND(NORM(i, j) / _pf)] * TAU_FACTOR, 0), i, j);
+            }
+        }
+    }
+    else if (_mode == MODE_3D)
+    {
+        for (size_t i = 1; i < _maxRadius + 2; i++)
+        {
+            _tau(i) /= 2 * M_PI * i * i;
+        }
+        
+        VOLUME_FOR_EACH_PIXEL_FT(_T3D)
+        {
+            if (QUAD_3(i, j, k) < TSGSL_pow_2(_maxRadius * _pf))
+            {
+                _T3D.setFTHalf(COMPLEX(REAL(_T3D.getFTHalf(i, j, k)) + _tau[AROUND(NORM_3(i, j, k) / _pf)] * TAU_FACTOR, 0), i, j, k);
+            }
+        }
+    }
+
     // only in 3D mode, symmetry should be considered
     IF_MODE_3D
     {
+#ifdef RECONSTRUCTOR_SYMMETRIZE_DURING_RECONSTRUCT
 	    int nSymmetryElement = _sym->nSymmetryElement();
         double *symMat = new double[nSymmetryElement * 9];
 
-#ifdef RECONSTRUCTOR_SYMMETRIZE_DURING_RECONSTRUCT
         ALOG(INFO, "LOGGER_RECO") << "Prepare param for Symmetrizing TF";
         BLOG(INFO, "LOGGER_RECO") << "Prepare param for Symmetrizing TF";
         dmat33 L, R;   
@@ -1082,7 +1187,7 @@ void Reconstructor::prepareTFG(int gpuIdx)
             _sym->get(L, R, i);
             Map<dmat33>(symMat + i * 9, 3, 3) = R;
 	    }
-#endif
+        
         PrepareTF(gpuIdx,
                   _F3D,
                   _T3D,
@@ -1092,6 +1197,7 @@ void Reconstructor::prepareTFG(int gpuIdx)
                   _pf);
         
         delete[]symMat;
+#endif
     }
 }
 
@@ -1101,10 +1207,49 @@ void Reconstructor::prepareTF(const unsigned int nThread)
 {
     IF_MASTER return;
 
+    //ALOG(INFO, "LOGGER_RECO") << "Allreducing tau";
+    //BLOG(INFO, "LOGGER_RECO") << "Allreducing tau";
+
+    allReduceTau();
+
     ALOG(INFO, "LOGGER_RECO") << "Allreducing T";
     BLOG(INFO, "LOGGER_RECO") << "Allreducing T";
 
     allReduceT(nThread);
+
+    ALOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
+    BLOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
+
+    if (_mode == MODE_2D)
+    {
+        for (size_t i = 1; i < _maxRadius + 2; i++)
+        {
+            _tau(i) /= M_PI * i;
+        }
+
+        IMAGE_FOR_EACH_PIXEL_FT(_T2D)
+        {
+            if (QUAD(i, j) < TSGSL_pow_2(_maxRadius * _pf))
+            {
+                _T2D.setFTHalf(COMPLEX(REAL(_T2D.getFTHalf(i, j)) + _tau[AROUND(NORM(i, j) / _pf)] * TAU_FACTOR, 0), i, j);
+            }
+        }
+    }
+    else if (_mode == MODE_3D)
+    {
+        for (size_t i = 1; i < _maxRadius + 2; i++)
+        {
+            _tau(i) /= 2 * M_PI * i * i;
+        }
+        
+        VOLUME_FOR_EACH_PIXEL_FT(_T3D)
+        {
+            if (QUAD_3(i, j, k) < TSGSL_pow_2(_maxRadius * _pf))
+            {
+                _T3D.setFTHalf(COMPLEX(REAL(_T3D.getFTHalf(i, j, k)) + _tau[AROUND(NORM_3(i, j, k) / _pf)] * TAU_FACTOR, 0), i, j, k);
+            }
+        }
+    }
 
     // only in 3D mode, symmetry should be considered
     IF_MODE_3D
@@ -1132,6 +1277,12 @@ void Reconstructor::prepareTF(const unsigned int nThread)
         symmetrizeF(nThread);
 #endif
     }
+}
+
+void Reconstructor::normalise(const size_t nPar,
+                              const unsigned int nThread)
+{
+    _tau.array() /= nPar;
 }
 
 void Reconstructor::reconstruct(Image& dst,
@@ -1397,6 +1548,9 @@ void Reconstructor::reconstruct(Volume& dst,
     }
 #endif
 
+    // TODO, debug
+    // _gridCorr = false;
+
     if (_gridCorr)
     {
         RFLOAT diffC = TS_MAX_RFLOAT_VALUE;
@@ -1493,10 +1647,15 @@ void Reconstructor::reconstruct(Volume& dst,
                             abort();
                         }
                         ***/
+                        
+                        /***
+
+                        _W2D.setFTHalf(COMPLEX(TSGSL_MIN_RFLOAT(REAL(_W2D.getFTHalf(i, j)) / TSGSL_MAX_RFLOAT(ABS(_C2D.getFTHalf(i, j)), 1e-6), 1.0 / NOISE_FACTOR), 0), i, j);
+                        ***/
 
                         _W2D.setFTHalf(_W2D.getFTHalf(i, j)
                                      / TSGSL_MAX_RFLOAT(ABS(_C2D.getFTHalf(i, j)),
-                                                        1e-6),
+                                                   1e-6),
                                        i,
                                        j);
 
@@ -1535,12 +1694,15 @@ void Reconstructor::reconstruct(Volume& dst,
                 #pragma omp parallel for schedule(dynamic) num_threads(nThread)
                 VOLUME_FOR_EACH_PIXEL_FT(_W3D)
                     if (QUAD_3(i, j, k) < gsl_pow_2(_maxRadius * _pf))
+                    {
+                        // _W3D.setFTHalf(COMPLEX(TSGSL_MIN_RFLOAT(REAL(_W3D.getFTHalf(i, j, k)) / TSGSL_MAX_RFLOAT(ABS(_C3D.getFTHalf(i, j, k)), 1e-6), 1.0 / NOISE_FACTOR), 0), i, j, k);
                         _W3D.setFTHalf(_W3D.getFTHalf(i, j, k)
                                      / TSGSL_MAX_RFLOAT(ABS(_C3D.getFTHalf(i, j, k)),
                                                    1e-6),
                                        i,
                                        j,
                                        k);
+                    }
 
 #ifndef NAN_NO_CHECK
                 SEGMENT_NAN_CHECK_COMPLEX(_W3D.dataFT(), _W3D.sizeFT());
@@ -2495,36 +2657,6 @@ void Reconstructor::allReduceT(const unsigned int nThread)
     }
 
     MPI_Barrier(_hemi);
-
-#ifdef RECONSTRUCTOR_NORMALISE_T_F
-    ALOG(INFO, "LOGGER_RECO") << "Normalising T and F";
-    BLOG(INFO, "LOGGER_RECO") << "Normalising T and F";
-
-    if (_mode == MODE_2D)
-    {
-        RFLOAT sf = 1.0 / REAL(_T2D[0]);
-
-        #pragma omp parallel for num_threads(nThread)
-        SCALE_FT(_T2D, sf);
-        #pragma omp parallel for num_threads(nThread)
-        SCALE_FT(_F2D, sf);
-    }
-    else if (_mode == MODE_3D)
-    {
-        RFLOAT sf = 1.0 / REAL(_T3D[0]);
-
-        #pragma omp parallel for num_threads(nThread)
-        SCALE_FT(_T3D, sf);
-        #pragma omp parallel for num_threads(nThread)
-        SCALE_FT(_F3D, sf);
-    }
-    else
-    {
-        REPORT_ERROR("INEXISTENT MODE");
-
-        abort();
-    }
-#endif
 }
 
 void Reconstructor::allReduceO()
@@ -2532,35 +2664,52 @@ void Reconstructor::allReduceO()
     ALOG(INFO, "LOGGER_RECO") << "Waiting for Synchronizing all Processes in Hemisphere A";
     BLOG(INFO, "LOGGER_RECO") << "Waiting for Synchronizing all Processes in Hemisphere B";
 
-    MPI_Barrier(_slav);
+    MPI_Barrier(_hemi);
 
     MPI_Allreduce(MPI_IN_PLACE,
                   &_ox,
                   1,
                   MPI_DOUBLE,
                   MPI_SUM,
-                  _slav);
+                  _hemi);
 
     MPI_Allreduce(MPI_IN_PLACE,
                   &_oy,
                   1,
                   MPI_DOUBLE,
                   MPI_SUM,
-                  _slav);
+                  _hemi);
 
     MPI_Allreduce(MPI_IN_PLACE,
                   &_oz,
                   1,
                   MPI_DOUBLE,
                   MPI_SUM,
-                  _slav);
+                  _hemi);
+}
+
+void Reconstructor::allReduceCounter()
+{
+    MPI_Barrier(_hemi);
 
     MPI_Allreduce(MPI_IN_PLACE,
                   &_counter,
                   1,
                   MPI_INT,
                   MPI_SUM,
-                  _slav);
+                  _hemi);
+}
+
+void Reconstructor::allReduceTau()
+{
+    MPI_Barrier(_hemi);
+
+    MPI_Allreduce(MPI_IN_PLACE,
+                  _tau.data(),
+                  _tau.size(),
+                  TS_MPI_DOUBLE,
+                  MPI_SUM,
+                  _hemi);
 }
 
 RFLOAT Reconstructor::checkC(const unsigned int nThread) const
@@ -2569,6 +2718,8 @@ RFLOAT Reconstructor::checkC(const unsigned int nThread) const
     RFLOAT diff = 0;
 
     int counter = 0;
+    
+    // TODO use REDUCTION
 
     if (_mode == MODE_2D)
     {

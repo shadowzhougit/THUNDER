@@ -303,23 +303,28 @@ double pdfVMSKappa(const dvec2& x,
     if (kappa < 5) // avoiding overflow
     {
         gsl_sf_result u;
+        int status;
 
-        int status = gsl_sf_bessel_I0_e(kappa, &u);
+        if (kappa < 1e-6)
+        {
+            status = gsl_sf_bessel_I0_e(1e-6, &u);
 
-        /***
+            return exp(1e-6 * x.dot(mu)) / (2 * M_PI * u.val);
+        }
+        else
+        {
+            status =  gsl_sf_bessel_I0_e(kappa, &u);
+
+            return exp(kappa * x.dot(mu)) / (2 * M_PI * u.val);
+        }
+
         if (status != 0)
         {
-            CLOG(FATAL, "LOGGER_SYS") << "gsl_sf_bessel_I0 ERROR, kappa = " << kappa << ", k = " << k;
-
-            // std::cout << "kappa = " << kappa << std::endl;
-
-            // REPORT_ERROR("gsl_sf_bessel_I0 ERROR");
+            REPORT_ERROR("gsl_sf_bessel_I0 ERROR");
 
             abort();
         }
-        ***/
 
-        return exp(kappa * x.dot(mu)) / (2 * M_PI * u.val);
 
         // return exp(kappa * x.dot(mu)) / (2 * M_PI * gsl_sf_bessel_I0(kappa));
     }
@@ -344,6 +349,11 @@ void sampleVMS(dmat2& dst,
                const double n)
 {
     double kappa = (1 - k) * (1 + 2 * k - gsl_pow_2(k)) / k / (2 - k);
+
+    if (kappa < 1e-6)
+    {
+        kappa = 1e-6;
+    }
 
     gsl_rng* engine = get_random_engine();
 
@@ -450,11 +460,7 @@ void inferVMS(dvec2& mu,
 
     mu /= mu.norm();
 
-    /***
-    R = gsl_MIN_double(R, 1 - 1e-3); // for the purpose of avoiding extreme value
-
-    kappa = R * (2 - gsl_pow_2(R)) / (1 - gsl_pow_2(R));
-    ***/
+    R = GSL_MIN_DBL(R, 1 - 1e-3); // for the purpose of avoiding extreme value
 
     k = 1 - R;
 }

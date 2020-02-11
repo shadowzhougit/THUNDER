@@ -3747,27 +3747,30 @@ void expectFreeIdx(int gpuIdx,
  * @param
  * @param
  */
-void InsertI2D(Complex *F2D,
-               RFLOAT *T2D,
-               double *O2D,
-               int *counter,
+void InsertI2D(Complex* F2D,
+               RFLOAT* T2D,
+               double* O2D,
+               int* counter,
                MPI_Comm& hemi,
                MPI_Comm& slav,
                MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
                MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
                MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
                MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-               RFLOAT *w,
-               double *offS,
-               int *nC,
-               double *nR,
-               double *nT,
-               double *nD,
-               CTFAttr *ctfaData,
-               const int *iCol,
-               const int *iRow,
+               RFLOAT* tau,
+               RFLOAT* w,
+               double* offS,
+               int* nC,
+               double* nR,
+               double* nT,
+               double* nD,
+               CTFAttr* ctfaData,
+               const int* iCol,
+               const int* iRow,
+               const int* iSig,
                RFLOAT pixelSize,
                bool cSearch,
+               int tauSize,
                int nk,
                int opf,
                int npxl,
@@ -3863,10 +3866,12 @@ void InsertI2D(Complex *F2D,
 
     Complex *__device__F[aviDevs];
     RFLOAT *__device__T[aviDevs];
+    RFLOAT *devTau[aviDevs];
     double *__device__O[aviDevs];
     int *__device__C[aviDevs];
     int *__device__iCol[aviDevs];
     int *__device__iRow[aviDevs];
+    int *__device__iSig[aviDevs];
 
 //#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
 //    cudaHostRegister(sigRcpP, imgShift * sizeof(RFLOAT), cudaHostRegisterDefault);
@@ -3878,6 +3883,9 @@ void InsertI2D(Complex *F2D,
 
     cudaHostRegister(T2D, nk * dimSize * sizeof(RFLOAT), cudaHostRegisterDefault);
     cudaCheckErrors("Register T2D data.");
+
+    cudaHostRegister(tau, nk * tauSize * sizeof(RFLOAT), cudaHostRegisterDefault);
+    cudaCheckErrors("Register Tau data.");
 
     cudaHostRegister(O2D, nk * 2 * sizeof(double), cudaHostRegisterDefault);
     cudaCheckErrors("Register O2D data.");
@@ -3940,6 +3948,9 @@ void InsertI2D(Complex *F2D,
         cudaMalloc((void**)&__device__T[n], nk * dimSize * sizeof(RFLOAT));
         cudaCheckErrors("Allocate __device__T data.");
 
+        cudaMalloc((void**)&devTau[n], nk * tauSize * sizeof(RFLOAT));
+        cudaCheckErrors("Allocate tau data.");
+
         cudaMalloc((void**)&__device__O[n], nk * 2 * sizeof(double));
         cudaCheckErrors("Allocate __device__T data.");
 
@@ -3950,6 +3961,9 @@ void InsertI2D(Complex *F2D,
         cudaCheckErrors("Allocate iCol data.");
 
         cudaMalloc((void**)&__device__iRow[n], npxl * sizeof(int));
+        cudaCheckErrors("Allocate iRow data.");
+
+        cudaMalloc((void**)&__device__iSig[n], npxl * sizeof(int));
         cudaCheckErrors("Allocate iRow data.");
 
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
@@ -4003,6 +4017,11 @@ void InsertI2D(Complex *F2D,
                    cudaMemcpyHostToDevice);
         cudaCheckErrors("for memcpy iRow.");
 
+        cudaMemcpy(__device__iSig[n],
+                   iSig,
+                   npxl * sizeof(int),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy iRow.");
     }
 
     cudaSetDevice(gpus[0]);
@@ -4020,6 +4039,13 @@ void InsertI2D(Complex *F2D,
                     cudaMemcpyHostToDevice,
                     stream[0]);
     cudaCheckErrors("for memcpy T2D.");
+
+    cudaMemcpyAsync(devTau[0],
+                    tau,
+                    nk * tauSize * sizeof(RFLOAT),
+                    cudaMemcpyHostToDevice,
+                    stream[0]);
+    cudaCheckErrors("for memcpy T3D.");
 
     cudaMemcpyAsync(__device__O[0],
                     O2D,
@@ -4051,6 +4077,12 @@ void InsertI2D(Complex *F2D,
                         nk * dimSize * sizeof(RFLOAT),
                         stream[0 + baseS]);
         cudaCheckErrors("for memset T2D.");
+
+        cudaMemsetAsync(devTau[n],
+                        0.0,
+                        nk * tauSize * sizeof(RFLOAT),
+                        stream[0 + baseS]);
+        cudaCheckErrors("for memset T3D.");
 
         cudaMemsetAsync(__device__O[n],
                         0.0,
@@ -4433,14 +4465,17 @@ void InsertI2D(Complex *F2D,
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     kernel_InsertT2D<<<nImgBatch,
                                        512,
-                                       0,
+                                       tauSize * sizeof(RFLOAT),
                                        stream[smidx + baseS]>>>(__device__T[n],
                                                                 devctfP[smidx + baseS],
                                                                 devsigRcpP[smidx + baseS],
+                                                                devTau[n],
                                                                 __device__batch__nR[smidx + baseS],
                                                                 __device__batch__nC[smidx + baseS],
                                                                 __device__iCol[n],
                                                                 __device__iRow[n],
+                                                                __device__iSig[n],
+                                                                tauSize,
                                                                 m,
                                                                 npxl,
                                                                 mReco,
@@ -4470,13 +4505,16 @@ void InsertI2D(Complex *F2D,
 #else
                     kernel_InsertT2D<<<nImgBatch,
                                        512,
-                                       0,
+                                       tauSize * sizeof(RFLOAT),
                                        stream[smidx + baseS]>>>(__device__T[n],
                                                                 devctfP[smidx + baseS],
+                                                                devTau[n],
                                                                 __device__batch__nR[smidx + baseS],
                                                                 __device__batch__nC[smidx + baseS],
                                                                 __device__iCol[n],
                                                                 __device__iRow[n],
+                                                                __device__iSig[n],
+                                                                tauSize,
                                                                 m,
                                                                 npxl,
                                                                 mReco,
@@ -4656,46 +4694,19 @@ void InsertI2D(Complex *F2D,
     }
 
     cudaSetDevice(gpus[0]);
-    RFLOAT* sf;
-    cudaMalloc((void**)&sf, nk * sizeof(RFLOAT));
-    cudaCheckErrors("Allocate sf data.");
+    cudaMemcpyAsync(T2D,
+                    __device__T[0],
+                    nk * dimSize * sizeof(RFLOAT),
+                    cudaMemcpyDeviceToHost,
+                    stream[0]);
+    cudaCheckErrors("copy T3D from device to host.");
 
-    kernel_SetSF2D<<<1, nk>>>(__device__T[0],
-                              sf,
-                              dimSize);
-
-    smidx = 0;
-    for(int i = 0; i < nk; i++)
-    {
-        kernel_NormalizeTF2D<<<vdim,
-                               vdim / 2 + 1,
-                               0,
-                               stream[smidx]>>>(__device__F[0] + i * dimSize,
-                                                __device__T[0] + i * dimSize,
-                                                sf,
-                                                i);
-
-        cudaMemcpyAsync(T2D + i * dimSize,
-                        __device__T[0] + i * dimSize,
-                        dimSize * sizeof(RFLOAT),
-                        cudaMemcpyDeviceToHost,
-                        stream[smidx]);
-        cudaCheckErrors("copy T3D from device to host.");
-
-        cudaMemcpyAsync(F2D + i * dimSize,
-                        __device__F[0] + i * dimSize,
-                        dimSize * sizeof(Complex),
-                        cudaMemcpyDeviceToHost,
-                        stream[smidx]);
-        cudaCheckErrors("copy F3D from device to host.");
-
-        smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
-    }
-
-    for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-        cudaStreamSynchronize(stream[i]);
-
-    cudaFree(sf);
+    cudaMemcpyAsync(F2D,
+                    __device__F[0],
+                    nk * dimSize * sizeof(Complex),
+                    cudaMemcpyDeviceToHost,
+                    stream[0]);
+    cudaCheckErrors("copy F3D from device to host.");
 
     MPI_Barrier(hemi);
     //MPI_Barrier(slav);
@@ -4721,10 +4732,28 @@ void InsertI2D(Complex *F2D,
         NCCLCHECK(ncclAllReduce((const void*)__device__C[i],
                                 (void*)__device__C[i],
                                 nk,
-                                ncclInt64,
+                                ncclInt,
                                 ncclSum,
                                 commO[i],
                                 stream[1 + i * NUM_STREAM_PER_DEVICE]));
+    }
+    NCCLCHECK(ncclGroupEnd());
+
+    NCCLCHECK(ncclGroupStart());
+    for (int i = 0; i < aviDevs; i++)
+    {
+        cudaSetDevice(gpus[i]);
+        NCCLCHECK(ncclAllReduce((const void*)devTau[i],
+                                (void*)devTau[i],
+                                nk * tauSize,
+#ifdef SINGLE_PRECISION
+                                ncclFloat,
+#else
+                                ncclDouble,
+#endif
+                                ncclSum,
+                                commO[i],
+                                stream[2 + i * NUM_STREAM_PER_DEVICE]));
     }
     NCCLCHECK(ncclGroupEnd());
 
@@ -4750,6 +4779,12 @@ void InsertI2D(Complex *F2D,
                cudaMemcpyDeviceToHost);
     cudaCheckErrors("copy O2D from device to host.");
 
+    cudaMemcpy(tau,
+               devTau[0],
+               nk * tauSize * sizeof(RFLOAT),
+               cudaMemcpyDeviceToHost);
+    cudaCheckErrors("copy tau from device to host.");
+
     MPI_Barrier(hemi);
     //MPI_Barrier(slav);
 
@@ -4758,6 +4793,7 @@ void InsertI2D(Complex *F2D,
 
     cudaHostUnregister(F2D);
     cudaHostUnregister(T2D);
+    cudaHostUnregister(tau);
     cudaHostUnregister(O2D);
     cudaHostUnregister(counter);
     cudaCheckErrors("Host Unregister.");
@@ -4770,10 +4806,12 @@ void InsertI2D(Complex *F2D,
 
         cudaFree(__device__F[n]);
         cudaFree(__device__T[n]);
+        cudaFree(devTau[n]);
         cudaFree(__device__O[n]);
         cudaFree(__device__C[n]);
         cudaFree(__device__iCol[n]);
         cudaFree(__device__iRow[n]);
+        cudaFree(__device__iSig[n]);
 
         cudaCheckErrors("Free device memory.");
 
@@ -4800,27 +4838,30 @@ void InsertI2D(Complex *F2D,
  * @param
  * @param
  */
-void InsertFT(Complex *F3D,
-              RFLOAT *T3D,
-              double *O3D,
-              int *counter,
+void InsertFT(Complex* F3D,
+              RFLOAT* T3D,
+              double* O3D,
+              int* counter,
               MPI_Comm& hemi,
               MPI_Comm& slav,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-              CTFAttr *ctfaData,
-              double *offS,
-              RFLOAT *w,
-              double *nR,
-              double *nT,
-              double *nD,
-              int *nC,
-              const int *iCol,
-              const int *iRow,
+              RFLOAT* tau,
+              CTFAttr* ctfaData,
+              double* offS,
+              RFLOAT* w,
+              double* nR,
+              double* nT,
+              double* nD,
+              int* nC,
+              const int* iCol,
+              const int* iRow,
+              const int* iSig,
               RFLOAT pixelSize,
               bool cSearch,
+              int tauSize,
               int opf,
               int npxl,
               int mReco,
@@ -4947,10 +4988,12 @@ void InsertFT(Complex *F3D,
 
     Complex* __device__F[aviDevs];
     RFLOAT* __device__T[aviDevs];
+    RFLOAT* devTau[aviDevs];
     double* __device__O[aviDevs];
     int* __device__C[aviDevs];
     int* __device__iCol[aviDevs];
     int* __device__iRow[aviDevs];
+    int* __device__iSig[aviDevs];
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
     RFLOAT *devsigRcpP[nStream];
@@ -4977,6 +5020,11 @@ void InsertFT(Complex *F3D,
     cudaCheckErrors("FAIL TO REGISTER PINNED MEMORY OF T3D");
 #endif
 
+    cudaHostRegister(tau,
+                     tauSize * sizeof(RFLOAT),
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register Tau data.");
+
     cudaHostRegister(O3D,
                      3 * sizeof(double),
                      cudaHostRegisterDefault);
@@ -4990,36 +5038,6 @@ void InsertFT(Complex *F3D,
 #ifdef GPU_ERROR_CHECK
     cudaCheckErrors("FAIL TO REGISTER PINNED MEMORY OF COUNTER");
 #endif
-
-//    cudaHostRegister(datPR,
-//                     imgShift * sizeof(RFLOAT),
-//                     cudaHostRegisterDefault);
-//#ifdef GPU_ERROR_CHECK
-//    cudaCheckErrors("FAIL TO REGISTER PINNED MEMORY OF DATP");
-//#endif
-//
-//    cudaHostRegister(datPI,
-//                     imgShift * sizeof(RFLOAT),
-//                     cudaHostRegisterDefault);
-//#ifdef GPU_ERROR_CHECK
-//    cudaCheckErrors("FAIL TO REGISTER PINNED MEMORY OF DATP");
-//#endif
-//
-//    cudaHostRegister(ctfP,
-//                     imgShift * sizeof(RFLOAT),
-//                     cudaHostRegisterDefault);
-//#ifdef GPU_ERROR_CHECK
-//    cudaCheckErrors("FAIL TO REGISTER PINNED MEMORY OF CTFP");
-//#endif
-//
-//#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-//    cudaHostRegister(sigRcpP,
-//                     imgShift * sizeof(RFLOAT),
-//                     cudaHostRegisterDefault);
-//#ifdef GPU_ERROR_CHECK
-//    cudaCheckErrors("FAIL TO REGISTER PINNED MEMORY OF SIGRCPP");
-//#endif
-//#endif
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
 
@@ -5106,6 +5124,8 @@ void InsertFT(Complex *F3D,
 #ifdef GPU_ERROR_CHECK
         cudaCheckErrors("FAIL TO ALLOCATE DATAT IN DEVICE");
 #endif
+        cudaMalloc((void**)&devTau[n], tauSize * sizeof(RFLOAT));
+        cudaCheckErrors("Allocate tau data.");
 
         cudaMalloc((void**)&__device__O[n], 3 * sizeof(double));
 #ifdef GPU_ERROR_CHECK
@@ -5126,6 +5146,9 @@ void InsertFT(Complex *F3D,
 #ifdef GPU_ERROR_CHECK
         cudaCheckErrors("FAIL TO ALLOCATE IROW IN DEVICE");
 #endif
+
+        cudaMalloc((void**)&__device__iSig[n], npxl * sizeof(int));
+        cudaCheckErrors("FAIL TO ALLOCATE IROW IN DEVICE");
 
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
         {
@@ -5185,6 +5208,13 @@ void InsertFT(Complex *F3D,
 #ifdef GPU_ERROR_CHECK
         cudaCheckErrors("FAIL TO COPY IROW FROM HOST TO DEVICE");
 #endif
+        cudaMemcpy(__device__iSig[n],
+                   iSig,
+                   npxl * sizeof(int),
+                   cudaMemcpyHostToDevice);
+#ifdef GPU_ERROR_CHECK
+        cudaCheckErrors("FAIL TO COPY IROW FROM HOST TO DEVICE");
+#endif
     }
 
     for (int n = 0; n < aviDevs; n++)
@@ -5200,62 +5230,27 @@ void InsertFT(Complex *F3D,
                             dimSize * sizeof(Complex),
                             cudaMemcpyHostToDevice,
                             stream[0]);
-        }
-        else
-        {
-            cudaMemsetAsync(__device__F[n],
-                            0.0,
-                            dimSize * sizeof(Complex),
-                            stream[baseS]);
-        }
-
-#ifdef GPU_ERROR_CHECK
-        cudaCheckErrors("FAIL TO COPY F FROM HOST TO DEVICE");
-#endif
-
-        if (n == 0)
-        {
+            
             cudaMemcpyAsync(__device__T[0],
                             T3D,
                             dimSize * sizeof(RFLOAT),
                             cudaMemcpyHostToDevice,
                             stream[0]);
-        }
-        else
-        {
-            cudaMemsetAsync(__device__T[n],
-                            0.0,
-                            dimSize * sizeof(RFLOAT),
-                            stream[baseS]);
-        }
 
-#ifdef GPU_ERROR_CHECK
-        cudaCheckErrors("FAIL TO COPY T FROM HOST TO DEVICE");
-#endif
-
-        if (n == 0)
-        {
+            cudaMemcpyAsync(devTau[0],
+                            tau,
+                            tauSize * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            stream[0]);
+            cudaCheckErrors("for memcpy T3D.");
+            
             cudaMemcpyAsync(__device__O[0],
                             O3D,
                             3 * sizeof(double),
                             cudaMemcpyHostToDevice,
                             stream[0]);
-        }
-        else
-        {
-            cudaMemsetAsync(__device__O[n],
-                            0.0,
-                            3 * sizeof(double),
-                            stream[baseS]);
-        }
-
-#ifdef GPU_ERROR_CHECK
-        cudaCheckErrors("FAIL TO COPY O FROM HOST TO DEVICE");
-#endif
-
-        if (n == 0)
-        {
-             cudaMemcpyAsync(__device__C[0],
+             
+            cudaMemcpyAsync(__device__C[0],
                              counter,
                              sizeof(int),
                              cudaMemcpyHostToDevice,
@@ -5263,7 +5258,27 @@ void InsertFT(Complex *F3D,
         }
         else
         {
-
+            cudaMemsetAsync(__device__F[n],
+                            0.0,
+                            dimSize * sizeof(Complex),
+                            stream[baseS]);
+            
+            cudaMemsetAsync(__device__T[n],
+                            0.0,
+                            dimSize * sizeof(RFLOAT),
+                            stream[baseS]);
+            
+            cudaMemsetAsync(devTau[n],
+                            0.0,
+                            tauSize * sizeof(RFLOAT),
+                            stream[baseS]);
+            cudaCheckErrors("for memset T3D.");
+            
+            cudaMemsetAsync(__device__O[n],
+                            0.0,
+                            3 * sizeof(double),
+                            stream[baseS]);
+            
             cudaMemsetAsync(__device__C[n],
                             0.0,
                             sizeof(int),
@@ -5271,7 +5286,7 @@ void InsertFT(Complex *F3D,
         }
 
 #ifdef GPU_ERROR_CHECK
-        cudaCheckErrors("FAIL TO COPY C FROM HOST TO DEVICE");
+        cudaCheckErrors("FAIL TO COPY F FROM HOST TO DEVICE");
 #endif
     }
 
@@ -5692,14 +5707,17 @@ void InsertFT(Complex *F3D,
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     kernel_InsertT<<<nImgBatch,
                                      512,
-                                     9 * sizeof(double),
+                                     tauSize * sizeof(RFLOAT) + 9 * sizeof(double),
                                      stream[smidx + baseS]>>>(__device__T[n],
                                                               devctfP[smidx + baseS],
                                                               devsigRcpP[smidx + baseS],
+                                                              devTau[n],
                                                               dev_mat_buf[smidx + baseS],
                                                               __device__batch__nC[smidx + baseS],
                                                               __device__iCol[n],
                                                               __device__iRow[n],
+                                                              __device__iSig[n],
+                                                              tauSize,
                                                               m,
                                                               npxl,
                                                               mReco,
@@ -5728,13 +5746,16 @@ void InsertFT(Complex *F3D,
 #else
                     kernel_InsertT<<<nImgBatch,
                                      512,
-                                     9 * sizeof(double),
+                                     tauSize * sizeof(RFLOAT) + 9 * sizeof(double),
                                      stream[smidx + baseS]>>>(__device__T[n],
                                                               devctfP[smidx + baseS],
+                                                              devTau[n],
                                                               dev_mat_buf[smidx + baseS],
                                                               __device__batch__nC[smidx + baseS],
                                                               __device__iCol[n],
                                                               __device__iRow[n],
+                                                              __device__iSig[n],
+                                                              tauSize,
                                                               m,
                                                               npxl,
                                                               mReco,
@@ -5933,6 +5954,12 @@ void InsertFT(Complex *F3D,
                cudaMemcpyDeviceToHost);
     cudaCheckErrors("copy T3D from device to host.");
 
+    cudaMemcpy(tau,
+               devTau[0],
+               tauSize * sizeof(RFLOAT),
+               cudaMemcpyDeviceToHost);
+    cudaCheckErrors("copy O2D from device to host.");
+
     MPI_Barrier(hemi);
     //MPI_Barrier(slav);
 
@@ -5957,10 +5984,28 @@ void InsertFT(Complex *F3D,
         NCCLCHECK(ncclAllReduce((const void*)__device__C[i],
                                 (void*)__device__C[i],
                                 1,
-                                ncclInt64,
+                                ncclInt,
                                 ncclSum,
                                 commO[i],
                                 stream[1 + i * NUM_STREAM_PER_DEVICE]));
+    }
+    NCCLCHECK(ncclGroupEnd());
+
+    NCCLCHECK(ncclGroupStart());
+    for (int i = 0; i < aviDevs; i++)
+    {
+        cudaSetDevice(gpus[i]);
+        NCCLCHECK(ncclAllReduce((const void*)devTau[i],
+                                (void*)devTau[i],
+                                tauSize,
+#ifdef SINGLE_PRECISION
+                                ncclFloat,
+#else
+                                ncclDouble,
+#endif
+                                ncclSum,
+                                commO[i],
+                                stream[2 + i * NUM_STREAM_PER_DEVICE]));
     }
     NCCLCHECK(ncclGroupEnd());
 
@@ -5986,128 +6031,21 @@ void InsertFT(Complex *F3D,
                cudaMemcpyDeviceToHost);
     cudaCheckErrors("copy O2D from device to host.");
 
+    cudaMemcpy(tau,
+               devTau[0],
+               tauSize * sizeof(RFLOAT),
+               cudaMemcpyDeviceToHost);
+    cudaCheckErrors("copy Tau from device to host.");
+
     MPI_Barrier(hemi);
     //MPI_Barrier(slav);
-
-    //MPI_Comm_rank(MPI_COMM_WORLD, &nranks);
-    //if (nranks == 2){
-        //cudaMemcpy(ctfP,
-        //           devctfP[0],
-        //           200 * npxl * sizeof(RFLOAT),
-        //           cudaMemcpyDeviceToHost);
-        ////cudaCheckErrors("memcpy ctf to device.");
-
-        //Complex* tranP = new Complex[200 * npxl];
-        //cudaMemcpy(tranP,
-        //           devtranP[0],
-        //           200 * npxl * sizeof(Complex),
-        //           cudaMemcpyDeviceToHost);
-        ////cudaCheckErrors("memcpy ctf to device.");
-        //
-        //double* matt = new double[200 * 9];
-        //cudaMemcpy(matt,
-        //           dev_mat_buf[0],
-        //           200 * 9 * sizeof(RFLOAT),
-        //           cudaMemcpyDeviceToHost);
-        ////cudaCheckErrors("memcpy ctf to device.");
-
-
-    //double* ctfc = new double[200 * npxl];
-    //Complex* tranc = new Complex[200 * npxl];
-    //double* matc = new double[200 * 9];
-
-    //FILE* pfile;
-    //pfile = fopen("ctfP.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open ctf error!\n");
-    //if (fread(ctfc, sizeof(double), 200 * npxl, pfile) != 200 * npxl)
-    //    printf("read ctf error!\n");
-    //fclose(pfile);
-    //printf("i:%d,ctfc:%.16lf,ctfg:%.16lf\n",0,ctfc[0],ctfP[0]);
-    //int t = 0;
-    //for (t = 0; t < 200 * npxl; t++){
-    //    if (fabs(ctfP[t] - ctfc[t]) >= 1e-13){
-    //        printf("i:%d,ctfc:%.16lf,ctfg:%.16lf\n",t,ctfc[t],ctfP[t]);
-    //        break;
-    //    }
-    //}
-    //if (t == 200 * npxl)
-    //    printf("successCTF:%d\n", 200 * npxl);
-    //
-    //pfile = fopen("tranP.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open tran error!\n");
-    //if (fread(tranc, sizeof(Complex), 200 * npxl, pfile) != 200 * npxl)
-    //    printf("read tran error!\n");
-    //fclose(pfile);
-    //printf("i:%d,tranc:%.16lf,trang:%.16lf\n",0,tranc[0].imag(),tranP[0].imag());
-    //for (t = 0; t < 200 * npxl; t++){
-    //    if (fabs(tranP[t].imag() - tranc[t].imag()) >= 1e-12){
-    //        printf("i:%d,tranc:%.16lf,trang:%.16lf\n",t,tranc[t].imag(),tranP[t].imag());
-    //        break;
-    //    }
-    //}
-    //if (t == 200 * npxl)
-    //    printf("successTran:%d\n", 200 * 9);
-
-    //pfile = fopen("mat.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open mat error!\n");
-    //if (fread(matc, sizeof(double), 200 * 9, pfile) != 200 * 9)
-    //    printf("read mat error!\n");
-    //fclose(pfile);
-    //printf("i:%d,matc:%.16lf,matg:%.16lf\n",0,matc[0],matt[0]);
-    //for (t = 0; t < 200 * 9; t++){
-    //    if (fabs(matt[t] - matc[t]) >= 1e-10){
-    //        printf("i:%d,matc:%.16lf,matg:%.16lf\n",t,matc[t],matt[t]);
-    //        break;
-    //    }
-    //}
-    //if (t == 200 * 9)
-    //    printf("successmat:%d\n", 200 * 9);
-
-    //Complex* f3d = new Complex[dimSize];
-    //Complex* t3d = new Complex[dimSize];
-
-    //FILE* pfile;
-    //pfile = fopen("f3db.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open f3d error!\n");
-    //if (fread(f3d, sizeof(Complex), dimSize, pfile) != dimSize)
-    //    printf("read f3d error!\n");
-    //fclose(pfile);
-    //printf("i:%d,f3d:%.16lf,F3D:%.16lf\n",0,f3d[0].real(),F3D[0].real());
-    //int t = 0;
-    //for (t = 0; t < dimSize; t++){
-    //    if (fabs(F3D[t].real() - f3d[t].real()) >= 1e-9){
-    //        printf("i:%d,f3d:%.16lf,F3D:%.16lf\n",t,f3d[t].real(),F3D[t].real());
-    //        break;
-    //    }
-    //}
-    //if (t == dimSize)
-    //    printf("successF:%d\n", dimSize);
-
-    //pfile = fopen("t3db.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open t3d error!\n");
-    //if (fread(t3d, sizeof(Complex), dimSize, pfile) != dimSize)
-    //    printf("read t3d error!\n");
-    //fclose(pfile);
-    //printf("i:%d,t3d:%.16lf,T3D:%.16lf\n",0,t3d[0].real(),T3D[0]);
-    //for (t = 0; t < dimSize; t++){
-    //    if (fabs(T3D[t] - t3d[t].real()) >= 1e-9){
-    //        printf("i:%d,t3d:%.16lf,T3D:%.16lf\n",t,t3d[t].real(),T3D[t]);
-    //        break;
-    //    }
-    //}
-    //if (t == dimSize)
-    //    printf("successT:%d\n", dimSize);
 
     LOG(INFO) << "rank" << rankO << ":Step3: Copy done, free Volume and Nccl object.";
     //printf("rank%d:Step4: Copy done, free Volume and Nccl object.\n", nranks);
 
     cudaHostUnregister(F3D);
     cudaHostUnregister(T3D);
+    cudaHostUnregister(tau);
     cudaHostUnregister(O3D);
     cudaHostUnregister(counter);
 
@@ -6119,10 +6057,12 @@ void InsertFT(Complex *F3D,
 
         cudaFree(__device__F[n]);
         cudaFree(__device__T[n]);
+        cudaFree(devTau[n]);
         cudaFree(__device__O[n]);
         cudaFree(__device__C[n]);
         cudaFree(__device__iCol[n]);
         cudaFree(__device__iRow[n]);
+        cudaFree(__device__iSig[n]);
 
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
             cudaStreamDestroy(stream[i + baseS]);
@@ -6154,6 +6094,7 @@ void InsertFT(Complex *F3D,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+              RFLOAT* tau,
               CTFAttr *ctfaData,
               double *offS,
               RFLOAT *w,
@@ -6162,8 +6103,10 @@ void InsertFT(Complex *F3D,
               double *nD,
               const int *iCol,
               const int *iRow,
+              const int *iSig,
               RFLOAT pixelSize,
               bool cSearch,
+              int tauSize,
               int opf,
               int npxl,
               int mReco,
@@ -6255,10 +6198,12 @@ void InsertFT(Complex *F3D,
 
     Complex *__device__F[aviDevs];
     RFLOAT *__device__T[aviDevs];
+    RFLOAT *devTau[aviDevs];
     double *__device__O[aviDevs];
     int *__device__C[aviDevs];
     int *__device__iCol[aviDevs];
     int *__device__iRow[aviDevs];
+    int *__device__iSig[aviDevs];
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
     RFLOAT *devsigRcpP[nStream];
@@ -6271,6 +6216,9 @@ void InsertFT(Complex *F3D,
 
     cudaHostRegister(T3D, dimSize * sizeof(RFLOAT), cudaHostRegisterDefault);
     cudaCheckErrors("Register T3D data.");
+
+    cudaHostRegister(tau, tauSize * sizeof(RFLOAT), cudaHostRegisterDefault);
+    cudaCheckErrors("Register Tau data.");
 
     cudaHostRegister(O3D, 3 * sizeof(double), cudaHostRegisterDefault);
     cudaCheckErrors("Register O3D data.");
@@ -6332,6 +6280,9 @@ void InsertFT(Complex *F3D,
         cudaMalloc((void**)&__device__T[n], dimSize * sizeof(RFLOAT));
         cudaCheckErrors("Allocate __device__T data.");
 
+        cudaMalloc((void**)&devTau[n], tauSize * sizeof(RFLOAT));
+        cudaCheckErrors("Allocate tau data.");
+        
         cudaMalloc((void**)&__device__O[n], 3 * sizeof(double));
         cudaCheckErrors("Allocate __device__T data.");
 
@@ -6342,6 +6293,9 @@ void InsertFT(Complex *F3D,
         cudaCheckErrors("Allocate iCol data.");
 
         cudaMalloc((void**)&__device__iRow[n], npxl * sizeof(int));
+        cudaCheckErrors("Allocate iRow data.");
+
+        cudaMalloc((void**)&__device__iSig[n], npxl * sizeof(int));
         cudaCheckErrors("Allocate iRow data.");
 
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
@@ -6395,6 +6349,11 @@ void InsertFT(Complex *F3D,
                    cudaMemcpyHostToDevice);
         cudaCheckErrors("for memcpy iRow.");
 
+        cudaMemcpy(__device__iSig[n],
+                   iSig,
+                   npxl * sizeof(int),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy iSig.");
     }
 
     cudaSetDevice(gpus[0]);
@@ -6413,6 +6372,13 @@ void InsertFT(Complex *F3D,
                     stream[0]);
     cudaCheckErrors("for memcpy T3D.");
 
+    cudaMemcpyAsync(devTau[0],
+                    tau,
+                    tauSize * sizeof(RFLOAT),
+                    cudaMemcpyHostToDevice,
+                    stream[0]);
+    cudaCheckErrors("for memcpy T3D.");
+            
     cudaMemcpyAsync(__device__O[0],
                     O3D,
                     3 * sizeof(double),
@@ -6444,6 +6410,12 @@ void InsertFT(Complex *F3D,
                         stream[0 + baseS]);
         cudaCheckErrors("for memset T3D.");
 
+        cudaMemsetAsync(devTau[n],
+                        0.0,
+                        tauSize * sizeof(RFLOAT),
+                        stream[baseS]);
+        cudaCheckErrors("for memset Tau.");
+            
         cudaMemsetAsync(__device__O[n],
                         0.0,
                         3 * sizeof(double),
@@ -6834,13 +6806,16 @@ void InsertFT(Complex *F3D,
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     kernel_InsertT<<<nImgBatch,
                                      512,
-                                     9 * sizeof(double),
+                                     tauSize * sizeof(RFLOAT) + 9 * sizeof(double),
                                      stream[smidx + baseS]>>>(__device__T[n],
                                                               devctfP[smidx + baseS],
                                                               devsigRcpP[smidx + baseS],
+                                                              devTau[n],
                                                               dev_mat_buf[smidx + baseS],
                                                               __device__iCol[n],
                                                               __device__iRow[n],
+                                                              __device__iSig[n],
+                                                              tauSize,
                                                               m,
                                                               npxl,
                                                               mReco,
@@ -6868,12 +6843,15 @@ void InsertFT(Complex *F3D,
 #else
                     kernel_InsertT<<<nImgBatch,
                                      512,
-                                     9 * sizeof(double),
+                                     tauSize * sizeof(RFLOAT) + 9 * sizeof(double),
                                      stream[smidx + baseS]>>>(__device__T[n],
                                                               devctfP[smidx + baseS],
+                                                              devTau[n],
                                                               dev_mat_buf[smidx + baseS],
                                                               __device__iCol[n],
                                                               __device__iRow[n],
+                                                              __device__iSig[n],
+                                                              tauSize,
                                                               m,
                                                               npxl,
                                                               mReco,
@@ -7100,10 +7078,28 @@ void InsertFT(Complex *F3D,
         NCCLCHECK(ncclAllReduce((const void*)__device__C[i],
                                 (void*)__device__C[i],
                                 1,
-                                ncclInt64,
+                                ncclInt,
                                 ncclSum,
                                 commO[i],
                                 stream[1 + i * NUM_STREAM_PER_DEVICE]));
+    }
+    NCCLCHECK(ncclGroupEnd());
+
+    NCCLCHECK(ncclGroupStart());
+    for (int i = 0; i < aviDevs; i++)
+    {
+        cudaSetDevice(gpus[i]);
+        NCCLCHECK(ncclAllReduce((const void*)devTau[i],
+                                (void*)devTau[i],
+                                tauSize,
+#ifdef SINGLE_PRECISION
+                                ncclFloat,
+#else
+                                ncclDouble,
+#endif
+                                ncclSum,
+                                commO[i],
+                                stream[2 + i * NUM_STREAM_PER_DEVICE]));
     }
     NCCLCHECK(ncclGroupEnd());
 
@@ -7129,128 +7125,20 @@ void InsertFT(Complex *F3D,
                cudaMemcpyDeviceToHost);
     cudaCheckErrors("copy O2D from device to host.");
 
+    cudaMemcpy(tau,
+               devTau[0],
+               tauSize * sizeof(RFLOAT),
+               cudaMemcpyDeviceToHost);
+    cudaCheckErrors("copy Tau from device to host.");
+
     MPI_Barrier(hemi);
-    //MPI_Barrier(slav);
-
-    //MPI_Comm_rank(MPI_COMM_WORLD, &nranks);
-    //if (nranks == 2){
-        //cudaMemcpy(ctfP,
-        //           devctfP[0],
-        //           200 * npxl * sizeof(RFLOAT),
-        //           cudaMemcpyDeviceToHost);
-        ////cudaCheckErrors("memcpy ctf to device.");
-
-        //Complex* tranP = new Complex[200 * npxl];
-        //cudaMemcpy(tranP,
-        //           devtranP[0],
-        //           200 * npxl * sizeof(Complex),
-        //           cudaMemcpyDeviceToHost);
-        ////cudaCheckErrors("memcpy ctf to device.");
-        //
-        //double* matt = new double[200 * 9];
-        //cudaMemcpy(matt,
-        //           dev_mat_buf[0],
-        //           200 * 9 * sizeof(RFLOAT),
-        //           cudaMemcpyDeviceToHost);
-        ////cudaCheckErrors("memcpy ctf to device.");
-
-
-    //double* ctfc = new double[200 * npxl];
-    //Complex* tranc = new Complex[200 * npxl];
-    //double* matc = new double[200 * 9];
-
-    //FILE* pfile;
-    //pfile = fopen("ctfP.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open ctf error!\n");
-    //if (fread(ctfc, sizeof(double), 200 * npxl, pfile) != 200 * npxl)
-    //    printf("read ctf error!\n");
-    //fclose(pfile);
-    //printf("i:%d,ctfc:%.16lf,ctfg:%.16lf\n",0,ctfc[0],ctfP[0]);
-    //int t = 0;
-    //for (t = 0; t < 200 * npxl; t++){
-    //    if (fabs(ctfP[t] - ctfc[t]) >= 1e-13){
-    //        printf("i:%d,ctfc:%.16lf,ctfg:%.16lf\n",t,ctfc[t],ctfP[t]);
-    //        break;
-    //    }
-    //}
-    //if (t == 200 * npxl)
-    //    printf("successCTF:%d\n", 200 * npxl);
-    //
-    //pfile = fopen("tranP.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open tran error!\n");
-    //if (fread(tranc, sizeof(Complex), 200 * npxl, pfile) != 200 * npxl)
-    //    printf("read tran error!\n");
-    //fclose(pfile);
-    //printf("i:%d,tranc:%.16lf,trang:%.16lf\n",0,tranc[0].imag(),tranP[0].imag());
-    //for (t = 0; t < 200 * npxl; t++){
-    //    if (fabs(tranP[t].imag() - tranc[t].imag()) >= 1e-12){
-    //        printf("i:%d,tranc:%.16lf,trang:%.16lf\n",t,tranc[t].imag(),tranP[t].imag());
-    //        break;
-    //    }
-    //}
-    //if (t == 200 * npxl)
-    //    printf("successTran:%d\n", 200 * 9);
-
-    //pfile = fopen("mat.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open mat error!\n");
-    //if (fread(matc, sizeof(double), 200 * 9, pfile) != 200 * 9)
-    //    printf("read mat error!\n");
-    //fclose(pfile);
-    //printf("i:%d,matc:%.16lf,matg:%.16lf\n",0,matc[0],matt[0]);
-    //for (t = 0; t < 200 * 9; t++){
-    //    if (fabs(matt[t] - matc[t]) >= 1e-10){
-    //        printf("i:%d,matc:%.16lf,matg:%.16lf\n",t,matc[t],matt[t]);
-    //        break;
-    //    }
-    //}
-    //if (t == 200 * 9)
-    //    printf("successmat:%d\n", 200 * 9);
-
-    //Complex* f3d = new Complex[dimSize];
-    //Complex* t3d = new Complex[dimSize];
-
-    //FILE* pfile;
-    //pfile = fopen("f3db.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open f3d error!\n");
-    //if (fread(f3d, sizeof(Complex), dimSize, pfile) != dimSize)
-    //    printf("read f3d error!\n");
-    //fclose(pfile);
-    //printf("i:%d,f3d:%.16lf,F3D:%.16lf\n",0,f3d[0].real(),F3D[0].real());
-    //int t = 0;
-    //for (t = 0; t < dimSize; t++){
-    //    if (fabs(F3D[t].real() - f3d[t].real()) >= 1e-9){
-    //        printf("i:%d,f3d:%.16lf,F3D:%.16lf\n",t,f3d[t].real(),F3D[t].real());
-    //        break;
-    //    }
-    //}
-    //if (t == dimSize)
-    //    printf("successF:%d\n", dimSize);
-
-    //pfile = fopen("t3db.dat", "rb");
-    //if (pfile == NULL)
-    //    printf("open t3d error!\n");
-    //if (fread(t3d, sizeof(Complex), dimSize, pfile) != dimSize)
-    //    printf("read t3d error!\n");
-    //fclose(pfile);
-    //printf("i:%d,t3d:%.16lf,T3D:%.16lf\n",0,t3d[0].real(),T3D[0]);
-    //for (t = 0; t < dimSize; t++){
-    //    if (fabs(T3D[t] - t3d[t].real()) >= 1e-9){
-    //        printf("i:%d,t3d:%.16lf,T3D:%.16lf\n",t,t3d[t].real(),T3D[t]);
-    //        break;
-    //    }
-    //}
-    //if (t == dimSize)
-    //    printf("successT:%d\n", dimSize);
 
     LOG(INFO) << "rank" << rankO << ":Step3: Copy done, free Volume and Nccl object.";
     //printf("rank%d:Step4: Copy done, free Volume and Nccl object.\n", nranks);
 
     cudaHostUnregister(F3D);
     cudaHostUnregister(T3D);
+    cudaHostUnregister(tau);
     cudaHostUnregister(O3D);
     cudaHostUnregister(counter);
 
@@ -7262,10 +7150,12 @@ void InsertFT(Complex *F3D,
 
         cudaFree(__device__F[n]);
         cudaFree(__device__T[n]);
+        cudaFree(devTau[n]);
         cudaFree(__device__O[n]);
         cudaFree(__device__C[n]);
         cudaFree(__device__iCol[n]);
         cudaFree(__device__iRow[n]);
+        cudaFree(__device__iSig[n]);
 
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
             cudaStreamDestroy(stream[i + baseS]);
@@ -8729,6 +8619,7 @@ void UpdateWC(int gpuIdx,
                                                           r,
                                                           dim,
                                                           dimSize);
+    cudaCheckErrors("Check avg error.");
 
     cudaMemcpy(diff,
                devDiff,
@@ -9018,7 +8909,6 @@ void CalculateW(int gpuIdx,
         diffCPrev = diffC;
 
 #ifdef RECONSTRUCTOR_CHECK_C_AVERAGE
->>>>>>> test
         kernel_CheckCAVG<<<dim,
                            threadInBlock,
                            threadInBlock * (sizeof(RFLOAT)
