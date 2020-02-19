@@ -9198,13 +9198,6 @@ void Optimiser::saveMapJoin(const bool finished)
                 fft.bw(ref, _para.nThreadsPerProcess);
 #endif
 
-                softMask(ref,
-                         ref,
-                         _para.maskRadius / _para.pixelSize,
-                         EDGE_WIDTH_RL,
-                         0,
-                         _para.nThreadsPerProcess);
-
                 imf.writeStack(ref, l);
                 if(finished)
                 {
