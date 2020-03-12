@@ -367,6 +367,35 @@ void Reconstructor::setMaxRadius(const int maxRadius)
     _tau = vec::Zero(_maxRadius + 2);
 }
 
+int Reconstructor::pf() const
+{
+    return _pf;
+}
+
+void Reconstructor::setPf(const int pf)
+{
+    _pf = pf;
+}
+
+int Reconstructor::N() const
+{
+    return _N;
+}
+
+void Reconstructor::setN(const int N)
+{
+    _N = N;
+}
+
+RFLOAT Reconstructor::getNF()
+{
+#ifdef RECONSTRUCTOR_KERNEL_PADDING
+        return MKB_RL(0, _a * _pf, _alpha);
+#else
+        return MKB_RL(0, _a, _alpha);
+#endif
+}
+
 void Reconstructor::preCal(int& nPxl,
                            const int* iCol,
                            const int* iRow,
@@ -924,161 +953,25 @@ void Reconstructor::insertP(const Complex* src,
 }
 
 #ifdef GPU_INSERT
-
-void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                            MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                            MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                            MemoryBazaar<RFLOAT, BaseType, 4>& sigP,
-                            RFLOAT* w,
-                            double* offS,
-                            double* nr,
-                            double* nt,
-                            double* nd,
-                            int* nc,
-                            CTFAttr* ctfaData, 
-                            RFLOAT pixelSize,
-                            bool cSearch,
-                            int opf,
-                            int mReco,
-                            int idim,
-                            int imgNum)
-{   
-    RFLOAT* tau = new RFLOAT[_tau.size()];
-    double* O3D = new double[3];
-    int* counter = new int[1];
-    O3D[0] = _ox;
-    O3D[1] = _oy;
-    O3D[2] = _oz;
-    counter[0] = _counter;
-    int dimSize = _T3D.sizeFT();
-
-    for (int i = 0; i < _tau.size(); i++)
-        tau[i] = _tau(i);
-    
-    InsertFT(_F3D,
-             _T3D,
-             O3D,
-             counter,
-             _hemi,
-             _slav,
-             datPR,
-             datPI,
-             ctfP,
-             sigP,
-             tau,
-             ctfaData,
-             offS,
-             w,
-             nr,
-             nt,
-             nd,
-             nc,
-             _iCol,
-             _iRow,
-             _iSig,
-             pixelSize,
-             cSearch,
-             _tau.size(),
-             opf,
-             _nPxl,
-             mReco,
-             idim,
-             dimSize,
-             imgNum);
-
-    for (int i = 0; i < _tau.size(); i++)
-        _tau(i) = tau[i];
-
-    _ox = O3D[0];
-    _oy = O3D[1];
-    _oz = O3D[2];
-    _counter = counter[0];
-    
-    delete[] tau;
-    delete[] O3D;
-    delete[] counter;
-}
-
-void Reconstructor::insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                            MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                            MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                            MemoryBazaar<RFLOAT, BaseType, 4>& sigP,
-                            RFLOAT* w,
-                            double* offS,
-                            double* nr,
-                            double* nt,
-                            double* nd,
-                            CTFAttr* ctfaData, 
-                            RFLOAT pixelSize,
-                            bool cSearch,
-                            int opf,
-                            int mReco,
-                            int idim,
-                            int imgNum)
-{   
-    RFLOAT* tau = new RFLOAT[_tau.size()];
-    double* O3D = new double[3];
-    int* counter = new int[1];
-    O3D[0] = _ox;
-    O3D[1] = _oy;
-    O3D[2] = _oz;
-    counter[0] = _counter;
-    int dimSize = _T3D.sizeFT();
-    
-    for (int i = 0; i < _tau.size(); i++)
-        tau[i] = _tau(i);
-    
-    InsertFT(_F3D,
-             _T3D,
-             O3D,
-             counter,
-             _hemi,
-             _slav,
-             datPR,
-             datPI,
-             ctfP,
-             sigP,
-             tau,
-             ctfaData,
-             offS,
-             w,
-             nr,
-             nt,
-             nd,
-             _iCol,
-             _iRow,
-             _iSig,
-             pixelSize,
-             cSearch,
-             _tau.size(),
-             opf,
-             _nPxl,
-             mReco,
-             idim,
-             dimSize,
-             imgNum);
-    
-    for (int i = 0; i < _tau.size(); i++)
-        _tau(i) = tau[i];
-
-    _ox = O3D[0];
-    _oy = O3D[1];
-    _oz = O3D[2];
-    _counter = counter[0];
-    
-    delete[] tau;
-    delete[] O3D;
-    delete[] counter;
-}
-
-int Reconstructor::getModelDim()
+int Reconstructor::getModelDim(bool mode)
 {
-    return _F2D.nRowFT();
+    if (mode)
+        return _F3D.nSlcFT();
+    else
+        return _F2D.nRowFT();
 }
 
-int Reconstructor::getModelSize()
+int Reconstructor::getModelSize(bool mode)
 {
-    return _F2D.sizeFT();
+    if (mode)
+        return _F3D.sizeFT();
+    else
+        return _F2D.sizeFT();
+}
+
+TabFunction& Reconstructor::getTabFuncRL()
+{
+    return _kernelRL;
 }
 
 int Reconstructor::getTauSize()
@@ -1086,34 +979,84 @@ int Reconstructor::getTauSize()
      return _tau.size();
 }
 
-void Reconstructor::getF(Complex* modelF)
+void Reconstructor::getF(Complex* modelF,
+                         bool mode,
+                         const unsigned int nThread)
 {
-    for (size_t i = 0; i < _F2D.sizeFT(); i++)
-        modelF[i] = _F2D[i];
+    if (mode)
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _F3D.sizeFT(); i++)
+            modelF[i] = _F3D[i];
+    }
+    else
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _F2D.sizeFT(); i++)
+            modelF[i] = _F2D[i];
+    }
 }
 
-void Reconstructor::getT(RFLOAT* modelT)
+void Reconstructor::getT(RFLOAT* modelT,
+                         bool mode,
+                         const unsigned int nThread)
 {
-    for (size_t i = 0; i < _T2D.sizeFT(); i++)
-        modelT[i] = REAL(_T2D[i]);
+    if (mode)
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _T3D.sizeFT(); i++)
+            modelT[i] = REAL(_T3D[i]);
+    }
+    else
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _T2D.sizeFT(); i++)
+            modelT[i] = REAL(_T2D[i]);
+    }
 }
 
-void Reconstructor::getTau(RFLOAT* tau)
+void Reconstructor::getTau(RFLOAT* arrayTau,
+                           const unsigned int nThread)
 {
-    for (size_t i = 0; i < _tau.size(); i++)
-        tau[i] = _tau(i);
+    #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+    for(size_t i = 0; i < _tau.size(); i++)
+        arrayTau[i] = _tau(i);
 }
 
-void Reconstructor::resetF(Complex* modelF)
+void Reconstructor::resetF(Complex* modelF,
+                           bool mode,
+                           const unsigned int nThread)
 {
-    for(size_t i = 0; i < _F2D.sizeFT(); i++)
-        _F2D[i] = modelF[i];
+    if (mode)
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _F3D.sizeFT(); i++)
+            _F3D[i] = modelF[i];
+    }
+    else
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _F2D.sizeFT(); i++)
+            _F2D[i] = modelF[i];
+    }
 }
 
-void Reconstructor::resetT(RFLOAT* modelT)
+void Reconstructor::resetT(RFLOAT* modelT,
+                           bool mode,
+                           const unsigned int nThread)
 {
-    for(size_t i = 0; i < _T2D.sizeFT(); i++)
-        _T2D[i] = COMPLEX(modelT[i], 0);
+    if (mode)
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _T3D.sizeFT(); i++)
+            _T3D[i] = COMPLEX(modelT[i], 0);
+    }
+    else
+    {
+        #pragma omp parallel for schedule(dynamic) num_threads(nThread)
+        for(size_t i = 0; i < _T2D.sizeFT(); i++)
+            _T2D[i] = COMPLEX(modelT[i], 0);
+    }
 }
 
 void Reconstructor::resetTau(RFLOAT* tau)
@@ -1122,7 +1065,9 @@ void Reconstructor::resetTau(RFLOAT* tau)
         _tau(i) = tau[i];
 }
         
-void Reconstructor::prepareTau()
+void Reconstructor::prepareTFG(std::vector<int>& iGPU,
+                               std::vector<void*>& stream,
+                               int nGPU)
 {
     IF_MASTER return;
 
@@ -1130,12 +1075,6 @@ void Reconstructor::prepareTau()
     BLOG(INFO, "LOGGER_RECO") << "Allreducing tau";
 
     allReduceTau();
-
-}
-
-void Reconstructor::prepareTFG(int gpuIdx)
-{
-    IF_MASTER return;
 
     ALOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
     BLOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
@@ -1188,13 +1127,15 @@ void Reconstructor::prepareTFG(int gpuIdx)
             Map<dmat33>(symMat + i * 9, 3, 3) = R;
 	    }
         
-        PrepareTF(gpuIdx,
-                  _F3D,
-                  _T3D,
-                  symMat,
-                  nSymmetryElement,
-                  _maxRadius,
-                  _pf);
+        symetrizeTF(iGPU,
+                    stream,
+                    _F3D,
+                    _T3D,
+                    symMat,
+                    nGPU,
+                    nSymmetryElement,
+                    _maxRadius,
+                    _pf);
         
         delete[]symMat;
 #endif
@@ -1216,6 +1157,7 @@ void Reconstructor::prepareTF(const unsigned int nThread)
     BLOG(INFO, "LOGGER_RECO") << "Allreducing T";
 
     allReduceT(nThread);
+    allReduceF();
 
     ALOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
     BLOG(INFO, "LOGGER_RECO") << "Adding Tau of Wiener Factor";
@@ -1264,8 +1206,6 @@ void Reconstructor::prepareTF(const unsigned int nThread)
 
     ALOG(INFO, "LOGGER_RECO") << "Allreducing F";
     BLOG(INFO, "LOGGER_RECO") << "Allreducing F";
-
-    allReduceF();
 
     // only in 3D mode, symmetry should be considered
     IF_MODE_3D
@@ -1342,8 +1282,6 @@ void Reconstructor::reconstruct(Volume& dst,
 
 #endif
 
-    // only in 3D mode, the MAP method is appropriate
-    //if (_MAP && (_mode == MODE_3D))
     if (_MAP)
     {
         // Obviously, wiener_filter with FSC can be wrong when dealing with
@@ -1357,14 +1295,14 @@ void Reconstructor::reconstruct(Volume& dst,
         {
             ringAverage(avg,
                         _T2D,
-                        gsl_real,
+                        REAL,
                         _maxRadius * _pf - 1);
         }
         else if (_mode == MODE_3D)
         {
             shellAverage(avg,
                          _T3D,
-                         gsl_real,
+                         REAL,
                          _maxRadius * _pf - 1,
                          nThread);
         }
@@ -1610,19 +1548,14 @@ void Reconstructor::reconstruct(Volume& dst,
             }
 
 #ifdef VERBOSE_LEVEL_2
-
             ALOG(INFO, "LOGGER_RECO") << "Convoluting C";
             BLOG(INFO, "LOGGER_RECO") << "Convoluting C";
-
 #endif
-
             convoluteC(nThread);
 
 #ifdef VERBOSE_LEVEL_2
-
             ALOG(INFO, "LOGGER_RECO") << "Re-Calculating W";
             BLOG(INFO, "LOGGER_RECO") << "Re-Calculating W";
-
 #endif
 
             if (_mode == MODE_2D)
@@ -1721,9 +1654,7 @@ void Reconstructor::reconstruct(Volume& dst,
             BLOG(INFO, "LOGGER_RECO") << "Calculating Distance to Total Balanced";
 
 #endif
-
             diffCPrev = diffC;
-
             diffC = checkC(nThread);
  
 #ifdef VERBOSE_LEVEL_2
@@ -1753,7 +1684,8 @@ void Reconstructor::reconstruct(Volume& dst,
 
             if ((diffC < DIFF_C_THRES) ||
                 ((m >= MIN_N_ITER_BALANCE) &&
-                (nDiffCNoDecrease == N_DIFF_C_NO_DECREASE))) break;
+                (nDiffCNoDecrease == N_DIFF_C_NO_DECREASE))) 
+                break;
         }
     }
     else
@@ -2037,9 +1969,20 @@ void Reconstructor::reconstruct(Volume& dst,
 }
 
 #ifdef GPU_RECONSTRUCT
+int Reconstructor::getFSCSize()
+{
+    return _FSC.size();
+}
 
-void Reconstructor::reconstructG(Volume& dst,
-                                 int gpuIdx,
+vec Reconstructor::getFSC()
+{
+    return _FSC;
+}
+
+void Reconstructor::reconstructG(std::vector<int>& iGPU,
+                                 std::vector<void*>& stream,
+                                 Volume& dst,
+                                 int nGPU,
                                  const unsigned int nThread)//LSQ:GPU 
 {
     IF_MASTER return;
@@ -2060,6 +2003,8 @@ void Reconstructor::reconstructG(Volume& dst,
     
     RFLOAT* volumeT;
     RFLOAT* volumeW;
+    RFLOAT* dev_W[nGPU];
+    RFLOAT* dev_T[nGPU];
 
     if (_mode == MODE_2D)
     {
@@ -2067,23 +2012,35 @@ void Reconstructor::reconstructG(Volume& dst,
         volumeT = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
         volumeW = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
 	    
+        #pragma omp parallel for num_threads(nThread)
         for(size_t i = 0; i < dimSize; i++)
 	    {
             volumeT[i] = REAL(_T2D[i]);
             volumeW[i] = REAL(_W2D[i]);
 	    }
+        
+        allocVolume(iGPU,
+                    dev_T,
+                    dev_W,
+                    nGPU,
+                    dimSize);
     }
     else if (_mode == MODE_3D)
     {
         size_t dimSize = _T3D.sizeFT();
         volumeT = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
-        volumeW = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
 	    
+        #pragma omp parallel for num_threads(nThread)
         for(size_t i = 0; i < dimSize; i++)
 	    {
             volumeT[i] = REAL(_T3D[i]);
-            volumeW[i] = REAL(_W3D[i]);
 	    }
+
+        allocVolume(iGPU,
+                    dev_T,
+                    dev_W,
+                    nGPU,
+                    dimSize);
     }
     else
     {
@@ -2096,27 +2053,25 @@ void Reconstructor::reconstructG(Volume& dst,
     // only in 3D mode, the MAP method is appropriate
     if (_MAP)
     {
-        if (_mode == MODE_2D)
+        if (_mode == MODE_3D)
         {
-            ExposePT2D(gpuIdx,
-                       volumeT,
-                       _maxRadius,
-                       _pf,
-                       _T2D.nRowFT(),
-                       _FSC,
-                       _joinHalf,
-                       WIENER_FACTOR_MIN_R);
-        }
-        else if (_mode == MODE_3D)
-        {
-            ExposePT(gpuIdx,
+            ExposePT(stream,
+                     iGPU,
                      volumeT,
+                     dev_T,
+                     _FSC,
+                     nGPU,
                      _maxRadius,
                      _pf,
                      _T3D.nSlcFT(),
-                     _FSC,
                      _joinHalf,
                      WIENER_FACTOR_MIN_R);
+            
+            #pragma omp parallel for num_threads(nThread)
+            for (size_t i = 0; i < _T3D.sizeFT(); i++)
+	        {
+                _T3D[i] = COMPLEX(volumeT[i], 0);
+	        }
         }
         else
         {
@@ -2127,21 +2082,6 @@ void Reconstructor::reconstructG(Volume& dst,
     }
 #endif
  
-    if (_mode == MODE_2D)
-    {
-        for (size_t i = 0; i < _T2D.sizeFT(); i++)
-	    {
-            _T2D[i] = COMPLEX(volumeT[i], 0);
-	    }
-    }
-    else if (_mode == MODE_3D)
-    {
-        for (size_t i = 0; i < _T3D.sizeFT(); i++)
-	    {
-            _T3D[i] = COMPLEX(volumeT[i], 0);
-	    }
-    }
- 
     if (_gridCorr)
     {
 #ifdef RECONSTRUCTOR_KERNEL_PADDING
@@ -2149,171 +2089,23 @@ void Reconstructor::reconstructG(Volume& dst,
 #else
         RFLOAT nf = MKB_RL(0, _a, _alpha);
 #endif
-        if (_mode == MODE_2D)
+        if (_mode == MODE_3D)
         {
-            ExposeWT2D(gpuIdx,
-                       volumeT,
-                       volumeW,
-                       _kernelRL,
-                       nf,
-                       _maxRadius,
-                       _pf,
-                       _T2D.nRowFT(),
-                       MAX_N_ITER_BALANCE,
-                       MIN_N_ITER_BALANCE,
-                       _N);
-        }
-        else if (_mode == MODE_3D)
-        {
-            int tabSize = 1e5;
-            int streamNum = 3;
-            RFLOAT *diff;
-            RFLOAT *cmax;
-            int *counter;
-            
-            Complex *dev_C;
-            RFLOAT *dev_W;
-            RFLOAT *dev_T;
-            RFLOAT *dev_tab;
-            void *stream[streamNum];
-            RFLOAT *devDiff;
-            RFLOAT *devMax;
-            int *devCount;
-#ifdef RECONSTRUCTOR_CHECK_C_AVERAGE        
-            diff = new RFLOAT[_C3D.nSlcFT()];
-            counter = new int[_C3D.nSlcFT()];
-#endif
-
-#ifdef RECONSTRUCTOR_CHECK_C_MAX
-            cmax = new RFLOAT[_C3D.nSlcFT()];
-#endif
-
-            AllocDevicePoint(gpuIdx,
-                             &dev_C,
-                             &dev_W,
-                             &dev_T,
-                             &dev_tab,
-                             &devDiff,
-                             &devMax,
-                             &devCount,
-                             stream,
-                             streamNum,
-                             tabSize,
-                             _C3D.nSlcFT());
-            
-            HostDeviceInit(gpuIdx,
+            gridCorrection(stream,
+                           iGPU,
                            _C3D,
-                           volumeW,
                            volumeT,
-                           _kernelRL.getData(),
                            dev_W,
                            dev_T,
-                           dev_tab,
-                           stream,
-                           streamNum,
-                           tabSize,
+                           _kernelRL,
+                           _fft,
+                           nf,
+                           nGPU,
                            _maxRadius,
                            _pf,
-                           _C3D.nSlcFT());
-            
-            RFLOAT diffC = TS_MAX_RFLOAT_VALUE;
-            RFLOAT diffCPrev = TS_MAX_RFLOAT_VALUE;
-
-            int m = 0;
-            int nDiffCNoDecrease = 0;
-
-            for (m = 0; m < MAX_N_ITER_BALANCE; m++)
-            {
-                ExposeC(gpuIdx,
-                        _C3D,
-                        dev_C,
-                        dev_T,
-                        dev_W,
-                        stream,
-                        streamNum,
-                        _C3D.nSlcFT());
-                
-                _fft.bwExecutePlan(_C3D, nThread);
-                
-                ExposeForConvC(gpuIdx,
-                               _C3D,
-                               dev_C,
-                               dev_tab,
-                               stream,
-                               _kernelRL,
-                               nf,
-                               streamNum,
-                               tabSize,
-                               _pf,
-                               _N);
-                
-                _fft.fwExecutePlan(_C3D);
-                
-                diffCPrev = diffC;
-                
-                ExposeWC(gpuIdx,
-                         _C3D,
-                         dev_C,
-                         diff,
-                         cmax,
-                         dev_W,
-                         devDiff,
-                         devMax,
-                         devCount,
-                         counter,
-                         stream,
-                         diffC,
-                         streamNum,
-                         _maxRadius,
-                         _pf);
- 
-                if (diffC > diffCPrev * DIFF_C_DECREASE_THRES)
-                    nDiffCNoDecrease += 1;
-                else
-                    nDiffCNoDecrease = 0;
-
-                if ((diffC < DIFF_C_THRES) ||
-                    ((m >= MIN_N_ITER_BALANCE) &&
-                    (nDiffCNoDecrease == N_DIFF_C_NO_DECREASE))) break;
-            }
-            
-            FreeDevHostPoint(gpuIdx,
-                             &dev_C,
-                             &dev_W,
-                             &dev_T,
-                             &dev_tab,
-                             &devDiff,
-                             &devMax,
-                             &devCount,
-                             stream,
-                             _C3D,
-                             volumeW,
-                             volumeT,
-                             streamNum,
-                             _C3D.nSlcFT());
-            
-#ifdef RECONSTRUCTOR_CHECK_C_AVERAGE        
-            delete[] diff;
-            delete[] counter;
-#endif
-
-#ifdef RECONSTRUCTOR_CHECK_C_MAX
-            delete[] cmax;
-#endif
-        }
-        else if (_mode == MODE_3D)
-        {
-            ExposeWT(gpuIdx,
-                     volumeT,
-                     volumeW,
-                     _kernelRL,
-                     _maxRadius,
-                     _pf,
-                     _T3D.nSlcFT(),
-                     nf,
-                     MAX_N_ITER_BALANCE,
-                     MIN_N_ITER_BALANCE,
-                     _N);
+                           _N,
+                           _MAP,
+                           nThread);
         }
         else
         {
@@ -2324,22 +2116,17 @@ void Reconstructor::reconstructG(Volume& dst,
     }
     else
     {
-        if (_mode == MODE_2D)
+        if (_mode == MODE_3D)
         {
-            ExposeWT2D(gpuIdx,
-                       volumeT,
-                       volumeW,
-                       _maxRadius,
-                       _pf,
-                       _T2D.nRowFT());
-        }
-        else if (_mode == MODE_3D)
-        {
-            ExposeWT(gpuIdx,
+            ExposeWT(stream,
+                     iGPU,
                      volumeT,
-                     volumeW,
+                     dev_W,
+                     dev_T,
+                     nGPU,
                      _maxRadius,
                      _pf,
+                     _MAP,
                      _T3D.nSlcFT());
         }
         else
@@ -2352,81 +2139,7 @@ void Reconstructor::reconstructG(Volume& dst,
 
     free(volumeT);
     
-    if (_mode == MODE_2D)
-    {
-#ifdef VERBOSE_LEVEL_2
-        ALOG(INFO, "LOGGER_RECO") << "Setting Up Padded Destination Image";
-        BLOG(INFO, "LOGGER_RECO") << "Setting Up Padded Destination Image";
-#endif
-
-        Image padDst(_N * _pf, _N * _pf, FT_SPACE);
-        Image padDstR(_N * _pf, _N * _pf, RL_SPACE);
-
-#ifdef VERBOSE_LEVEL_2
-        ALOG(INFO, "LOGGER_RECO") << "Placing F into Padded Destination Volume";
-        BLOG(INFO, "LOGGER_RECO") << "Placing F into Padded Destination Volume";
-#endif
-
-        ExposePF2D(gpuIdx,
-                   padDst,
-                   padDstR,
-                   _F2D,
-                   volumeW,
-                   _maxRadius,
-                   _pf);
-
-        padDst.clearFT();
-
-        Image img;
-        IMG_EXTRACT_RL(img, padDstR, 1.0 / _pf, nThread);//LSQ:pay attention.
-        
-        Volume dstT(_N, _N, 1, RL_SPACE);
-        
-        IMAGE_FOR_EACH_PIXEL_RL(img)
-            dstT.setRL(img.getRL(i, j), i, j, 0);  
-        img.clearRL();
-
-        Image imgDst(_N, _N, RL_SPACE);
-        SLC_EXTRACT_RL(imgDst, dstT, 0);
-        dstT.clearRL();
-        
-        RFLOAT nf = 0;
-#ifdef RECONSTRUCTOR_MKB_KERNEL
-        nf = MKB_RL(0, _a * _pf, _alpha);
-#endif
-
-        dst.alloc(_N, _N, 1, FT_SPACE);
-
-        int dim = imgDst.nRowRL();
-        RFLOAT *mkbRL = new RFLOAT[(dim / 2 + 1) * (dim / 2 + 1)];
-        int padSize = _pf * _N;
-    
-        for (int j = 0; j <= dim / 2; j++) 
-            for (int i = 0; i <= dim / 2; i++) 
-            {
-                size_t index = j * (dim / 2 + 1) + i;
-        
-#ifdef RECONSTRUCTOR_MKB_KERNEL
-                mkbRL[index] = MKB_RL(NORM(i, j) / padSize,
-                                  _a * _pf,
-                                  _alpha);
-#endif
-
-#ifdef RECONSTRUCTOR_TRILINEAR_KERNEL
-                mkbRL[index] = TIK_RL(NORM(i, j) / padSize);
-#endif
-            }
-    
-        ExposeCorrF2D(gpuIdx,
-                      imgDst,
-                      dst,
-                      mkbRL,
-                      nf);
-        
-        delete[] mkbRL;
-        imgDst.clearRL();
-    }
-    else if (_mode == MODE_3D)
+    if (_mode == MODE_3D)
     {
 #ifdef VERBOSE_LEVEL_2
         ALOG(INFO, "LOGGER_RECO") << "Setting Up Padded Destination Volume";
@@ -2437,13 +2150,18 @@ void Reconstructor::reconstructG(Volume& dst,
 
 #endif
 
-        Volume padDst(_N * _pf, _N * _pf, _N * _pf, FT_SPACE);
+        Volume padDst(_N * _pf, 
+                      _N * _pf, 
+                      _N * _pf, 
+                      FT_SPACE);
         //Volume padDstR(_N * _pf, _N * _pf, _N * _pf, RL_SPACE);
 
-        ExposePFW(gpuIdx,
+        ExposePFW(stream,
+                  iGPU,
                   padDst,
                   _F3D,
-                  volumeW,
+                  dev_W,
+                  nGPU,
                   _maxRadius,
                   _pf);
         
@@ -2482,6 +2200,7 @@ void Reconstructor::reconstructG(Volume& dst,
                   AROUND((1.0 / _pf) * padDst.nSlcRL()), 
                   RL_SPACE);
 
+        #pragma omp parallel for num_threads(nThread)
         VOLUME_FOR_EACH_PIXEL_RL(dst) 
             dst.setRL(padDst.getRL(i, j, k), i, j, k);
         
@@ -2491,50 +2210,38 @@ void Reconstructor::reconstructG(Volume& dst,
 #ifdef RECONSTRUCTOR_MKB_KERNEL
         nf = MKB_RL(0, _a * _pf, _alpha);
 #endif
-
         int padSize = _pf * _N;
         //int dim = dstN.nSlcRL();
         int dim = dst.nSlcRL();
         int slcSize = (dim / 2 + 1) * (dim / 2 + 1);
         RFLOAT *mkbRL = new RFLOAT[slcSize * (dim / 2 + 1)];
         
+        #pragma omp parallel for num_threads(nThread)
         for (int k = 0; k <= dim / 2; k++) 
             for (int j = 0; j <= dim / 2; j++) 
                 for (int i = 0; i <= dim / 2; i++) 
                 {
                     size_t index = k * slcSize + j * (dim / 2 + 1) + i;
-        
 #ifdef RECONSTRUCTOR_MKB_KERNEL
                     mkbRL[index] = MKB_RL(NORM_3(i, j, k) / padSize,
                                       _a * _pf,
                                       _alpha);
 #endif
-
 #ifdef RECONSTRUCTOR_TRILINEAR_KERNEL
                     mkbRL[index] = TIK_RL(NORM_3(i, j, k) / padSize);
 #endif
                 }
     
-        ExposeCorrF(gpuIdx,
+        ExposeCorrF(stream,
+                    iGPU,
                     dst,
                     mkbRL,
-                    nf);
-       
+                    nf,
+                    nGPU);
 #ifdef RECONSTRUCTOR_REMOVE_NEG
         REMOVE_NEG(dst);
 #endif
-
-        fft.fw(dst, nThread);//LSQ: the parameter maybe mistake for it's fw originally instead of fwMT.
-        
-        //ExposeCorrF(gpuIdx,
-        //            dstN,
-        //            dst,
-        //            mkbRL,
-        //            nf);
-        
         delete[] mkbRL;
-        //dstN.clearRL();
-        dst.clearRL();
     }
     else
     {
@@ -2542,8 +2249,6 @@ void Reconstructor::reconstructG(Volume& dst,
 
         abort();
     }
-
-    free(volumeW);
 
 #ifdef VERBOSE_LEVEL_2
     ALOG(INFO, "LOGGER_RECO") << "Convolution Kernel Corrected";

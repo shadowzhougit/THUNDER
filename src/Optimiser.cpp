@@ -30,7 +30,13 @@ void Optimiser::setGPUEnv()
 
         ILOG(INFO, "LOGGER_GPU") << "GPU DEVICE(S) FOR PROCESS RANK " << _commRank;
 
-        cuthunder::__host__checkHardware(_nGPU, _iGPU);
+        readGPUPARA(_para.gpus,
+                    _iGPU,
+                    _nGPU);
+        
+        gpuCheck(_stream,
+                 _iGPU,
+                 _nGPU);
 
         if (_commRank != _commSize - 1)
             MPI_Send(&flag, 1, MPI_C_BOOL, _commRank + 1, 0, MPI_COMM_WORLD);
@@ -38,6 +44,17 @@ void Optimiser::setGPUEnv()
 
 }
 
+void Optimiser::destoryGPUEnv()
+{
+    NT_MASTER
+    {
+        gpuEnvDestory(_stream,
+                      _iGPU,
+                      _nGPU);
+    }
+    
+    _nGPU = 0;
+}
 #endif
 
 Optimiser::~Optimiser()
@@ -1675,17 +1692,13 @@ void Optimiser::expectationG()
 
     allocPreCalIdx(_r, _rL);
 
-    std::vector<int> gpus;
-    getAviDevice(gpus);
+    int *deviCol[_nGPU];
+    int *deviRow[_nGPU];
 
-    int deviceNum = gpus.size();
-    int *deviCol[deviceNum];
-    int *deviRow[deviceNum];
-
-    #pragma omp parallel for num_threads(deviceNum)
-    for (int i = 0; i < deviceNum; i++)
+    #pragma omp parallel for num_threads(_nGPU)
+    for (int i = 0; i < _nGPU; i++)
     {
-        ExpectPreidx(gpus[i],
+        ExpectPreidx(_iGPU[i],
                      &deviCol[i],
                      &deviRow[i],
                      _iCol,
@@ -1784,7 +1797,6 @@ void Optimiser::expectationG()
         {
             double* trans = new double[nT * 2];
             double* rot = new double[nR * 4];
-            double* rotMat = new double[nR * 9];
             RFLOAT* baseL = new RFLOAT[_ID.size()];
 
             for (int k = 0; k < nT; k++)
@@ -1793,18 +1805,24 @@ void Optimiser::expectationG()
             for (int k = 0; k < nR; k++)
                 Map<dvec4>(rot + k * 4, 4, 1) = par.r().row(k).transpose();
 
-            Complex* traP = (Complex*)TSFFTW_malloc((long long)nT * _nPxl * sizeof(Complex));
-
-            ExpectRotran(traP,
+            Complex* devrotP[_stream.size()];
+            Complex* devtraP[_nGPU];
+            double* devRotMat[_nGPU];
+            
+            ExpectRotran(_iGPU,
+                         _stream,
+                         devrotP,
+                         devtraP,
                          trans,
                          rot,
-                         rotMat,
-                         _iCol,
-                         _iRow,
+                         devRotMat,
+                         deviCol,
+                         deviRow,
                          nR,
                          nT,
                          _para.size,
-                         _nPxl);
+                         _nPxl,
+                         _nGPU);
 
             delete[] trans;
             delete[] rot;
@@ -1816,19 +1834,26 @@ void Optimiser::expectationG()
             {
                 vol = &((const_cast<Volume&>(_model.proj(t).projectee3D()))[0]);
 
-                ExpectProject(vol,
+                ExpectProject(_iGPU, 
+                              _stream,
+                              vol,
                               rotP,
-                              rotMat,
-                              _iCol,
-                              _iRow,
+                              devrotP,
+                              devRotMat,
+                              deviCol,
+                              deviRow,
                               nR,
                               _model.proj(t).pf(),
                               _model.proj(t).interp(),
                               _model.proj(t).projectee3D().nSlcFT(),
-                              _nPxl);
+                              _nPxl,
+                              _nGPU);
 
-                ExpectGlobal3D(rotP,
-                               traP,
+                ExpectGlobal3D(_iGPU,
+                               _stream,
+                               devrotP,
+                               devtraP,
+                               rotP,
                                _datPR,
                                _datPI,
                                _ctfP,
@@ -1844,12 +1869,17 @@ void Optimiser::expectationG()
                                nR,
                                nT,
                                _nPxl,
-                               _ID.size());
+                               _ID.size(),
+                               _nGPU);
             }
 
+            freeRotran(_iGPU,
+                       devrotP,
+                       devtraP,
+                       devRotMat,
+                       _nGPU);
+
             delete[] baseL;
-            delete[] rotMat;
-            TSFFTW_free(traP);
             TSFFTW_free(rotP);
         }
         else
@@ -1878,7 +1908,9 @@ void Optimiser::expectationG()
 
             }
 
-            ExpectGlobal2D(vol,
+            ExpectGlobal2D(_iGPU,
+                           _stream,
+                           vol,
                            _datPR,
                            _datPI,
                            _ctfP,
@@ -1890,8 +1922,8 @@ void Optimiser::expectationG()
                            pr,
                            pt,
                            rot,
-                           _iCol,
-                           _iRow,
+                           deviCol,
+                           deviRow,
                            _para.k,
                            nR,
                            nT,
@@ -1900,7 +1932,8 @@ void Optimiser::expectationG()
                            _para.size,
                            _model.proj(0).projectee2D().nRowFT(),
                            _nPxl,
-                           _ID.size());
+                           _ID.size(),
+                           _nGPU);
 
             delete[] vol;
             delete[] trans;
@@ -2118,12 +2151,12 @@ void Optimiser::expectationG()
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search Performed.";
         BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search Performed.";
 
-#ifdef VERBOSE_LEVEL_1
+//#ifdef VERBOSE_LEVEL_1
         MPI_Barrier(_hemi);
 
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search in Hemisphere A Performed";
         BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search in Hemisphere B Performed";
-#endif
+//#endif
 
         delete[] weightC;
         delete[] weightR;
@@ -2155,14 +2188,14 @@ void Optimiser::expectationG()
     else
         allocPreCal(true, false, true);
 
-    RFLOAT* devfreQ[deviceNum];
+    RFLOAT* devfreQ[_nGPU];
 
     if(_searchType == SEARCH_TYPE_CTF)
     {
         #pragma omp parallel for
-        for (int i = 0; i < deviceNum; i++)
+        for (int i = 0; i < _nGPU; i++)
         {
-            ExpectPrefre(gpus[i],
+            ExpectPrefre(_iGPU[i],
                          &devfreQ[i],
                          _frequency,
                          _nPxl);
@@ -2179,11 +2212,11 @@ void Optimiser::expectationG()
 
     nPer = 0;
 
-    int streamNum = 3;
-    int buffNum = deviceNum * streamNum;
+    int streamNum = _stream.size() / _nGPU;
+    int buffNum = _nGPU * streamNum;
 
-    ManagedArrayTexture *mgr2D[deviceNum * _para.k];
-    ManagedArrayTexture *mgr3D[deviceNum];
+    ManagedArrayTexture *mgr2D[_nGPU * _para.k];
+    ManagedArrayTexture *mgr3D[_nGPU];
 
     int interp = _model.proj(0).interp();
     int vdim;
@@ -2195,15 +2228,15 @@ void Optimiser::expectationG()
     if (_para.mode == MODE_2D)
     {
         #pragma omp parallel for
-        for(int i = 0; i < deviceNum; i++)
+        for(int i = 0; i < _nGPU; i++)
         {
             for (int j = 0; j < _para.k; j++)
             {
                 mgr2D[i * _para.k + j] = new ManagedArrayTexture();
-                mgr2D[i * _para.k + j]->Init(_para.mode, vdim, gpus[i]);
+                mgr2D[i * _para.k + j]->Init(_para.mode, vdim, _iGPU[i]);
                 Complex* temp = &((const_cast<Image&>(_model.proj(j).projectee2D()))[0]);
                 int sizeModel = _model.proj(j).projectee2D().sizeFT();
-                ExpectLocalV2D(gpus[i],
+                ExpectLocalV2D(_iGPU[i],
                                mgr2D[i * _para.k + j],
                                temp,
                                sizeModel);
@@ -2213,10 +2246,10 @@ void Optimiser::expectationG()
     else
     {
         #pragma omp parallel for
-        for(int i = 0; i < deviceNum; i++)
+        for(int i = 0; i < _nGPU; i++)
         {
             mgr3D[i] = new ManagedArrayTexture();
-            mgr3D[i]->Init(_para.mode, vdim, gpus[i]);
+            mgr3D[i]->Init(_para.mode, vdim, _iGPU[i]);
         }
     }
 
@@ -2235,19 +2268,19 @@ void Optimiser::expectationG()
         }
     }
 
-    int cpyNum = omp_get_max_threads() / deviceNum;
-    int cpyNumL = (omp_get_max_threads() % deviceNum == 0) ? cpyNum : cpyNum + 1;
+    int cpyNum = omp_get_max_threads() / _nGPU;
+    int cpyNumL = (omp_get_max_threads() % _nGPU == 0) ? cpyNum : cpyNum + 1;
 
-    RFLOAT* devdatPR[deviceNum];
-    RFLOAT* devdatPI[deviceNum];
-    RFLOAT* devctfP[deviceNum];
-    RFLOAT* devsigP[deviceNum];
-    RFLOAT* devdefO[deviceNum];
+    RFLOAT* devdatPR[_nGPU];
+    RFLOAT* devdatPI[_nGPU];
+    RFLOAT* devctfP[_nGPU];
+    RFLOAT* devsigP[_nGPU];
+    RFLOAT* devdefO[_nGPU];
 
     #pragma omp parallel for
-    for (int i = 0; i < deviceNum; i++)
+    for (int i = 0; i < _nGPU; i++)
     {
-        ExpectLocalIn(gpus[i],
+        ExpectLocalIn(_iGPU[i],
                       &devdatPR[i],
                       &devdatPI[i],
                       &devctfP[i],
@@ -2264,14 +2297,14 @@ void Optimiser::expectationG()
     ManagedCalPoint *mcp[buffNum];
 
     #pragma omp parallel for
-    for (int i = 0; i < deviceNum; i++)
+    for (int i = 0; i < _nGPU; i++)
     {
         for (int j = 0; j < streamNum; j++)
         {
             mcp[i * streamNum + j] = new ManagedCalPoint();
             mcp[i * streamNum + j]->Init(_para.mode,
                                          _searchType,
-                                         gpus[i],
+                                         _iGPU[i],
                                          _para.mLR,
                                          _para.mLT,
                                          _para.mLD,
@@ -2293,10 +2326,10 @@ void Optimiser::expectationG()
     double* dpara[omp_get_max_threads()];
     double* rot[omp_get_max_threads()];
 
-    omp_lock_t* mtx = new omp_lock_t[deviceNum];
+    omp_lock_t* mtx = new omp_lock_t[_nGPU];
 
     #pragma omp parallel for
-    for(int i = 0; i < deviceNum; i++)
+    for(int i = 0; i < _nGPU; i++)
     {
         omp_init_lock(&mtx[i]);
     }
@@ -2304,14 +2337,14 @@ void Optimiser::expectationG()
     for (int i = 0; i < omp_get_max_threads(); i++)
     {
         int gpuIdx;
-        if (i / cpyNum > deviceNum)
-            gpuIdx = i - deviceNum * cpyNum;
-        else if (i / cpyNum == deviceNum)
+        if (i / cpyNum > _nGPU)
+            gpuIdx = i - _nGPU * cpyNum;
+        else if (i / cpyNum == _nGPU)
             gpuIdx = i % cpyNum;
         else
             gpuIdx = i / cpyNum;
 
-        ExpectLocalHostA(gpus[gpuIdx],
+        ExpectLocalHostA(_iGPU[gpuIdx],
                          &wC[i],
                          &wR[i],
                          &wT[i],
@@ -2339,10 +2372,10 @@ void Optimiser::expectationG()
         {
 
             #pragma omp parallel for
-            for (int i = 0; i < deviceNum; i++)
+            for (int i = 0; i < _nGPU; i++)
             {
                 Complex* temp = &((const_cast<Volume&>(_model.proj(itr).projectee3D()))[0]);
-                ExpectLocalV3D(gpus[i],
+                ExpectLocalV3D(_iGPU[i],
                                mgr3D[i],
                                temp,
                                vdim);
@@ -2372,18 +2405,18 @@ void Optimiser::expectationG()
 
                 int threadId = omp_get_thread_num();
                 int gpuIdx;
-                if (threadId / cpyNum > deviceNum)
-                    gpuIdx = threadId - deviceNum * cpyNum;
-                else if (threadId / cpyNum == deviceNum)
+                if (threadId / cpyNum > _nGPU)
+                    gpuIdx = threadId - _nGPU * cpyNum;
+                else if (threadId / cpyNum == _nGPU)
                     gpuIdx = threadId % cpyNum;
                 else
                     gpuIdx = threadId / cpyNum;
 
                 omp_set_lock(&mtx[gpuIdx]);
 
-                if (threadId < deviceNum * cpyNum)
+                if (threadId < _nGPU * cpyNum)
                 {
-                    ExpectLocalP(gpus[gpuIdx],
+                    ExpectLocalP(_iGPU[gpuIdx],
                                  devdatPR[gpuIdx],
                                  devdatPI[gpuIdx],
                                  devctfP[gpuIdx],
@@ -2400,7 +2433,7 @@ void Optimiser::expectationG()
                 }
                 else
                 {
-                    ExpectLocalP(gpus[gpuIdx],
+                    ExpectLocalP(_iGPU[gpuIdx],
                                  devdatPR[gpuIdx],
                                  devdatPI[gpuIdx],
                                  devctfP[gpuIdx],
@@ -2497,7 +2530,7 @@ void Optimiser::expectationG()
                     int streamId;
                     int datId;
                     int datShift;
-                    if (threadId < deviceNum * cpyNum)
+                    if (threadId < _nGPU * cpyNum)
                     {
                         datShift = threadId % cpyNum;
                         streamId = (threadId % cpyNum) % streamNum;
@@ -2512,7 +2545,7 @@ void Optimiser::expectationG()
 
                     omp_set_lock(&mtx[gpuIdx]);
 
-                    ExpectLocalRTD(gpus[gpuIdx],
+                    ExpectLocalRTD(_iGPU[gpuIdx],
                                    mcp[datId],
                                    oldR[threadId],
                                    oldT[threadId],
@@ -2523,7 +2556,7 @@ void Optimiser::expectationG()
 
                     if (_searchType == SEARCH_TYPE_CTF)
                     {
-                        ExpectLocalPreI3D(gpus[gpuIdx],
+                        ExpectLocalPreI3D(_iGPU[gpuIdx],
                                           datShift,
                                           mgr3D[gpuIdx],
                                           mcp[datId],
@@ -2543,7 +2576,7 @@ void Optimiser::expectationG()
                     }
                     else
                     {
-                        ExpectLocalPreI3D(gpus[gpuIdx],
+                        ExpectLocalPreI3D(_iGPU[gpuIdx],
                                           datShift,
                                           mgr3D[gpuIdx],
                                           mcp[datId],
@@ -2562,7 +2595,7 @@ void Optimiser::expectationG()
                                           interp);
                     }
 
-                    ExpectLocalM(gpus[gpuIdx],
+                    ExpectLocalM(_iGPU[gpuIdx],
                                  datShift,
                                  //vecImg[itr][l],
                                  mcp[datId],
@@ -2815,9 +2848,9 @@ void Optimiser::expectationG()
         {
             Complex* temp = &((const_cast<Volume&>(_model.proj(0).projectee3D()))[0]);
             #pragma omp parallel for
-            for (int i = 0; i < deviceNum; i++)
+            for (int i = 0; i < _nGPU; i++)
             {
-                ExpectLocalV3D(gpus[i],
+                ExpectLocalV3D(_iGPU[i],
                                mgr3D[i],
                                temp,
                                vdim);
@@ -2848,18 +2881,18 @@ void Optimiser::expectationG()
 
             int threadId = omp_get_thread_num();
             int gpuIdx;
-            if (threadId / cpyNum > deviceNum)
-                gpuIdx = threadId - deviceNum * cpyNum;
-            else if (threadId / cpyNum == deviceNum)
+            if (threadId / cpyNum > _nGPU)
+                gpuIdx = threadId - _nGPU * cpyNum;
+            else if (threadId / cpyNum == _nGPU)
                 gpuIdx = threadId % cpyNum;
             else
                 gpuIdx = threadId / cpyNum;
 
             omp_set_lock(&mtx[gpuIdx]);
 
-            if (threadId < deviceNum * cpyNum)
+            if (threadId < _nGPU * cpyNum)
             {
-                ExpectLocalP(gpus[gpuIdx],
+                ExpectLocalP(_iGPU[gpuIdx],
                              devdatPR[gpuIdx],
                              devdatPI[gpuIdx],
                              devctfP[gpuIdx],
@@ -2876,7 +2909,7 @@ void Optimiser::expectationG()
             }
             else
             {
-                ExpectLocalP(gpus[gpuIdx],
+                ExpectLocalP(_iGPU[gpuIdx],
                              devdatPR[gpuIdx],
                              devdatPI[gpuIdx],
                              devctfP[gpuIdx],
@@ -2989,7 +3022,7 @@ void Optimiser::expectationG()
                 int streamId;
                 int datId;
                 int datShift;
-                if (threadId < deviceNum * cpyNum)
+                if (threadId < _nGPU * cpyNum)
                 {
                     datShift = threadId % cpyNum;
                     streamId = (threadId % cpyNum) % streamNum;
@@ -3004,7 +3037,7 @@ void Optimiser::expectationG()
 
                 omp_set_lock(&mtx[gpuIdx]);
 
-                ExpectLocalRTD(gpus[gpuIdx],
+                ExpectLocalRTD(_iGPU[gpuIdx],
                                mcp[datId],
                                oldR[threadId],
                                oldT[threadId],
@@ -3017,7 +3050,7 @@ void Optimiser::expectationG()
                 {
                     if (_searchType == SEARCH_TYPE_CTF)
                     {
-                        ExpectLocalPreI2D(gpus[gpuIdx],
+                        ExpectLocalPreI2D(_iGPU[gpuIdx],
                                           datShift,
                                           mgr2D[gpuIdx * _para.k + cls],
                                           mcp[datId],
@@ -3037,7 +3070,7 @@ void Optimiser::expectationG()
                     }
                     else
                     {
-                        ExpectLocalPreI2D(gpus[gpuIdx],
+                        ExpectLocalPreI2D(_iGPU[gpuIdx],
                                           datShift,
                                           mgr2D[gpuIdx * _para.k + cls],
                                           mcp[datId],
@@ -3060,7 +3093,7 @@ void Optimiser::expectationG()
                 {
                     if (_searchType == SEARCH_TYPE_CTF)
                     {
-                        ExpectLocalPreI3D(gpus[gpuIdx],
+                        ExpectLocalPreI3D(_iGPU[gpuIdx],
                                           datShift,
                                           mgr3D[gpuIdx],
                                           mcp[datId],
@@ -3080,7 +3113,7 @@ void Optimiser::expectationG()
                     }
                     else
                     {
-                        ExpectLocalPreI3D(gpus[gpuIdx],
+                        ExpectLocalPreI3D(_iGPU[gpuIdx],
                                           datShift,
                                           mgr3D[gpuIdx],
                                           mcp[datId],
@@ -3100,7 +3133,7 @@ void Optimiser::expectationG()
                     }
                 }
 
-                ExpectLocalM(gpus[gpuIdx],
+                ExpectLocalM(_iGPU[gpuIdx],
                              datShift,
                              //l,
                              mcp[datId],
@@ -3359,14 +3392,14 @@ void Optimiser::expectationG()
     for (int i = 0; i < omp_get_max_threads(); i++)
     {
         int gpuIdx;
-        if (i / cpyNum > deviceNum)
-            gpuIdx = i - deviceNum * cpyNum;
-        else if (i / cpyNum == deviceNum)
+        if (i / cpyNum > _nGPU)
+            gpuIdx = i - _nGPU * cpyNum;
+        else if (i / cpyNum == _nGPU)
             gpuIdx = i % cpyNum;
         else
             gpuIdx = i / cpyNum;
 
-        ExpectLocalHostF(gpus[gpuIdx],
+        ExpectLocalHostF(_iGPU[gpuIdx],
                          &wC[i],
                          &wR[i],
                          &wT[i],
@@ -3381,9 +3414,9 @@ void Optimiser::expectationG()
     }
 
     #pragma omp parallel for
-    for (int i = 0; i < deviceNum; i++)
+    for (int i = 0; i < _nGPU; i++)
     {
-        ExpectLocalFin(gpus[i],
+        ExpectLocalFin(_iGPU[i],
                        &devdatPR[i],
                        &devdatPI[i],
                        &devctfP[i],
@@ -3399,12 +3432,12 @@ void Optimiser::expectationG()
 
     if (_para.mode == MODE_2D)
     {
-        for (int i = 0; i < deviceNum * _para.k; i++)
+        for (int i = 0; i < _nGPU * _para.k; i++)
             delete mgr2D[i];
     }
     else
     {
-        for (int i = 0; i < deviceNum; i++)
+        for (int i = 0; i < _nGPU; i++)
             delete mgr3D[i];
     }
 
@@ -3424,10 +3457,10 @@ void Optimiser::expectationG()
     //    printf("Expectation LocalB time_use:%lf\n", time_use);
 #endif // OPTIMISER_PARTICLE_FILTER
 
-    #pragma omp parallel for num_threads(deviceNum)
-    for (int i = 0; i < deviceNum; i++)
+    #pragma omp parallel for num_threads(_nGPU)
+    for (int i = 0; i < _nGPU; i++)
     {
-        ExpectFreeIdx(gpus[i],
+        ExpectFreeIdx(_iGPU[i],
                       &deviCol[i],
                       &deviRow[i]);
     }
@@ -4414,6 +4447,11 @@ void Optimiser::run()
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Database of Masked Region Reference Subtracted Images Saved";
 #endif
     }
+
+#ifdef GPU_VERSION
+    MLOG(INFO, "LOGGER_GPU") << "Destory GPU variable for Each Process";
+    destoryGPUEnv();
+#endif
 }
 
 void Optimiser::clear()
@@ -4729,7 +4767,7 @@ void Optimiser::initImg()
             /***
             int nSlc = atoi(imgName.substr(0, imgName.find('@')).c_str()) - 1;
             string filename = string(_para.parPrefix) + imgName.substr(imgName.find('@') + 1);
-
+            
             ImageFile imf(filename.c_str(), "rb");
             imf.readMetaData();
             imf.readImage(_img[l], nSlc);
@@ -5137,10 +5175,7 @@ void Optimiser::initCTF()
     _ctf.clear();
 
     CTFAttr ctfAttr;
-
-
 #ifdef GPU_VERSION
-
     FOR_EACH_2D_IMAGE
     {
         _db.ctf(ctfAttr, _ID[l]);
@@ -5173,12 +5208,15 @@ void Optimiser::initCTF()
                 ctfData[i * dimSizeFT + n] = _ctf[l + i][n];
         }
 
-        GCTFinit(ctfData,
+        GCTFinit(_stream,
+                 _iGPU,
+                 ctfData,
                  _ctfAttr,
                  _para.pixelSize,
                  _para.size,
                  l,
-                 batch);
+                 batch,
+                 _nGPU);
 
         for (int i = 0; i < batch; i++)
         {
@@ -6243,31 +6281,6 @@ void Optimiser::reMaskImg()
 #ifdef OPTIMISER_MASK_IMG
     if (_para.zeroMask)
     {
-        //if (_commRank == HEMI_B_LEAD)
-        //{
-        //    int imgNum = _ID.size();
-        //    printf("maskR:%lf, pixelS:%lf, idim:%d, imgNum:%d\n",_para.maskRadius,
-        //                                                         _para.pixelSize,
-        //                                                         _para.size,
-        //                                                         imgNum);
-        //    FILE* p;
-        //    for (int i = 0; i < imgNum; i++)
-        //    {
-        //        std::stringstream ss;
-        //        ss<<i;
-        //        std::string sC = ss.str();
-        //        std::string addT;
-        //        addT.append("image");
-        //        addT.append(sC);
-        //        addT.append(".dat");
-
-        //        p = fopen(addT.c_str(), "wb");
-        //        fwrite(&(_img[i][0]), sizeof(Complex), _img[i].sizeFT(), p);
-        //        fclose (p);
-        //    }
-        //    printf("write done!\n");
-        //}
-
         Image mask(_para.size, _para.size, RL_SPACE);
 
         softMask(mask,
@@ -6304,31 +6317,6 @@ void Optimiser::reMaskImgG()
 #ifdef OPTIMISER_MASK_IMG
     if (_para.zeroMask)
     {
-        //if (_commRank == HEMI_B_LEAD)
-        //{
-        //    int imgNum = 1200;
-        //    printf("maskR:%lf, pixelS:%lf, idim:%d, imgNum:%d\n",_para.maskRadius,
-        //                                                         _para.pixelSize,
-        //                                                         _para.size,
-        //                                                         imgNum);
-        //    FILE* p;
-        //    for (int i = 0; i < imgNum; i++)
-        //    {
-        //        std::stringstream ss;
-        //        ss<<i;
-        //        std::string sC = ss.str();
-        //        std::string addT;
-        //        addT.append("image");
-        //        addT.append(sC);
-        //        addT.append(".dat");
-
-        //        p = fopen(addT.c_str(), "wb");
-        //        fwrite(&(_img[i][0]), sizeof(Complex), _img[i].sizeFT(), p);
-        //        fclose (p);
-        //    }
-        //    printf("write done!\n");
-        //}
-
         int dimSizeFT = _para.size * (_para.size / 2 + 1);
         int nImg = _ID.size();
         int batch = IMAGE_BATCH;
@@ -6352,13 +6340,16 @@ void Optimiser::reMaskImgG()
                     imgData[i * dimSizeFT + n] = _img[l + i][n];
             }
 
-            reMask(imgData,
+            reMask(_stream,
+                   _iGPU,
+                   imgData,
                    _para.maskRadius,
                    _para.pixelSize,
                    EDGE_WIDTH_RL,
                    _para.size,
-                   batch);
-
+                   batch,
+                   _nGPU);
+            
             for (int i = 0; i < batch; i++)
             {
                 for (int n = 0; n < dimSizeFT; n++)
@@ -6921,6 +6912,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
     else
         allocPreCal(false, false, true);
 
+#ifdef GPU_VERSION
+    Complex *modelF;
+    RFLOAT *modelT;
+#endif
+
     NT_MASTER
     {
         if ((_para.parGra) && (_para.k != 1))
@@ -6940,6 +6936,88 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         (_searchType == SEARCH_TYPE_STOP)));
 
 #ifdef GPU_VERSION
+        Complex *dev_F[_nGPU];
+        RFLOAT *dev_T[_nGPU];
+        RFLOAT *devTau[_nGPU];
+        RFLOAT *arrayTau;
+        double *dev_O[_nGPU];
+        double *arrayO;
+        int *dev_C[_nGPU];
+        int *arrayC;
+        int *deviCol[_nGPU];
+        int *deviRow[_nGPU];
+        int *deviSig[_nGPU];
+        int vdim = _model.reco(0).getModelDim(_para.mode);
+        int modelSize = _model.reco(0).getModelSize(_para.mode);
+        int tauSize = _model.reco(0).getTauSize();
+
+        if (_para.mode == MODE_2D)
+        {
+            modelF = (Complex*)malloc(_para.k * modelSize * sizeof(Complex));
+            modelT = (RFLOAT*)malloc(_para.k * modelSize * sizeof(RFLOAT));
+            arrayTau = (RFLOAT*)malloc(_para.k * tauSize * sizeof(RFLOAT));
+            arrayO = new double[_para.k * 2];
+            arrayC = new int[_para.k];
+            
+            for (int t = 0; t < _para.k; t++)
+            {
+                _model.reco(t).getF(modelF + t * modelSize,
+                                    _para.mode,
+                                    _para.nThreadsPerProcess);
+                _model.reco(t).getT(modelT + t * modelSize,
+                                    _para.mode,
+                                    _para.nThreadsPerProcess);
+                _model.reco(t).getTau(arrayTau + t * tauSize,
+                                      _para.nThreadsPerProcess);
+                
+                arrayO[t * 2] = _model.reco(t).ox();
+                arrayO[t * 2 + 1] = _model.reco(t).oy();
+                arrayC[t] = _model.reco(t).counter();
+            }
+        }
+        else
+        {
+            modelF = (Complex*)malloc(modelSize * sizeof(Complex));
+            modelT = (RFLOAT*)malloc(modelSize * sizeof(RFLOAT));
+            arrayTau = (RFLOAT*)malloc(_para.k * tauSize * sizeof(RFLOAT));
+            arrayO = new double[_para.k * 3];
+            arrayC = new int[_para.k];
+
+            for (int t = 0; t < _para.k; t++)
+            {
+                _model.reco(t).getTau(arrayTau + t * tauSize,
+                                      _para.nThreadsPerProcess);
+                arrayO[t * 3] = _model.reco(t).ox();
+                arrayO[t * 3 + 1] = _model.reco(t).oy();
+                arrayO[t * 3 + 2] = _model.reco(t).oz();
+                arrayC[t] = _model.reco(t).counter();
+            }
+        }
+        
+        allocFTO(_iGPU,
+                 _stream,
+                 modelF,
+                 dev_F,
+                 modelT,
+                 dev_T,
+                 arrayTau,
+                 devTau,
+                 arrayO,
+                 dev_O,
+                 arrayC,
+                 dev_C,
+                 _iColPad,
+                 deviCol,
+                 _iRowPad,
+                 deviRow,
+                 _iSig,
+                 deviSig,
+                 _para.mode,
+                 _para.k,
+                 tauSize,
+                 vdim,
+                 _nPxl,
+                 _nGPU);
 
         if (_para.mode == MODE_2D)
         {
@@ -6997,49 +7075,46 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 }
             }
 
-            int vdim = _model.reco(0).getModelDim();
-            int modelSize = _model.reco(0).getModelSize();
-            int tauSize = _model.reco(0).getTauSize();
-            Complex* modelF = new Complex[_para.k * modelSize];
-            RFLOAT* modelT = new RFLOAT[_para.k * modelSize];
-            RFLOAT* tau = new RFLOAT[_para.k * tauSize];
-            double* O2D = new double[_para.k * 2];
-            int* counter = new int[_para.k];
+            InsertI2D(_iGPU, _stream, modelF, dev_F, modelT, dev_T, arrayTau,
+                      devTau, arrayO, dev_O, arrayC, dev_C, _datPR, _datPI, 
+                      _ctfP, _sigP, w, offS, nr, nt, nd, nc, ctfaData, deviCol, 
+                      deviRow, deviSig, _para.pixelSize, cSearch, _para.k, _para.pf, _nPxl, 
+                      _para.mReco, tauSize, _para.size, vdim, _ID.size(), _nGPU);
 
-            #pragma omp parallel for
+            allReduceFTO(_iGPU,
+                         _stream,
+                         modelF,
+                         dev_F,
+                         modelT,
+                         dev_T,
+                         arrayTau,
+                         devTau,
+                         arrayO,
+                         dev_O,
+                         arrayC,
+                         dev_C,
+                         _hemi,
+                         _para.mode,
+                         0,
+                         _para.k,
+                         tauSize,
+                         vdim,
+                         _nGPU);
+
             for (int t = 0; t < _para.k; t++)
             {
-                _model.reco(t).getF(modelF + t * modelSize);
-                _model.reco(t).getT(modelT + t * modelSize);
-                _model.reco(t).getTau(tau + t * tauSize);
-                O2D[t * 2] = _model.reco(t).ox();
-                O2D[t * 2 + 1] = _model.reco(t).oy();
-                counter[t] = _model.reco(t).counter();
+                _model.reco(t).resetF(modelF + t * modelSize,
+                                      _para.mode,
+                                      _para.nThreadsPerProcess);
+                _model.reco(t).resetT(modelT + t * modelSize,
+                                      _para.mode,
+                                      _para.nThreadsPerProcess);
+                _model.reco(t).resetTau(arrayTau + t * tauSize);
+                _model.reco(t).setOx(arrayO[t * 2]);
+                _model.reco(t).setOy(arrayO[t * 2 + 1]);
+                _model.reco(t).setCounter(arrayC[t]);
             }
-
-
-            InsertI2D(modelF, modelT, O2D, counter, _hemi, _slav,
-                      _datPR, _datPI, _ctfP, _sigP, tau, w, offS, 
-                      nc, nr, nt, nd, ctfaData, _iColPad, _iRowPad, 
-                      _iSig, _para.pixelSize, cSearch, tauSize, _para.k, 
-                      _para.pf, _nPxl, _para.mReco, _para.size, vdim, _ID.size());
-
-            #pragma omp parallel for
-            for (int t = 0; t < _para.k; t++)
-            {
-                _model.reco(t).resetF(modelF + t * modelSize);
-                _model.reco(t).resetT(modelT + t * modelSize);
-                _model.reco(t).resetTau(tau + t * tauSize);
-                _model.reco(t).setOx(O2D[t * 2]);
-                _model.reco(t).setOy(O2D[t * 2 + 1]);
-                _model.reco(t).setCounter(counter[t]);
-            }
-
-            delete[]modelF;
-            delete[]modelT;
-            delete[]tau;
-            delete[]O2D;
-            delete[]counter;
+            
             delete[]w;
             delete[]offS;
             delete[]nc;
@@ -7141,11 +7216,54 @@ void Optimiser::reconstructRef(const bool fscFlag,
                             }
                         }
 
-                        _model.reco(t).insertI(_datPR, _datPI, _ctfP, _sigP, w, offS, nr,
-                                               nt, nd, nc + shiftc, ctfaData,
-                                               _para.pixelSize, cSearch, _para.pf,
-                                               temp, _para.size, _ID.size());
+                        _model.reco(t).getF(modelF,
+                                            _para.mode,
+                                            _para.nThreadsPerProcess);
+                        _model.reco(t).getT(modelT,
+                                            _para.mode,
+                                            _para.nThreadsPerProcess);
+                        _model.reco(t).getTau(arrayTau + t * tauSize,
+                                              _para.nThreadsPerProcess);
+            
+            
+                        InsertFT(_iGPU, _stream, modelF, dev_F, modelT, dev_T, arrayTau, devTau,
+                                 arrayO, dev_O, arrayC, dev_C, _datPR, _datPI, _ctfP, _sigP, w, 
+                                 offS, nr, nt, nd, nc + shiftc, ctfaData, deviCol, deviRow, deviSig, _para.pixelSize, 
+                                 cSearch, t, _para.pf, _nPxl, temp, tauSize, _ID.size(), _para.size, vdim, _nGPU);
 
+                        allReduceFTO(_iGPU,
+                                     _stream,
+                                     modelF,
+                                     dev_F,
+                                     modelT,
+                                     dev_T,
+                                     arrayTau,
+                                     devTau,
+                                     arrayO,
+                                     dev_O,
+                                     arrayC,
+                                     dev_C,
+                                     _hemi,
+                                     _para.mode,
+                                     t,
+                                     _para.k,
+                                     tauSize,
+                                     vdim,
+                                     _nGPU);
+
+                        _model.reco(t).resetF(modelF,
+                                              _para.mode,
+                                              _para.nThreadsPerProcess);
+                        _model.reco(t).resetT(modelT,
+                                              _para.mode,
+                                              _para.nThreadsPerProcess);
+                        _model.reco(t).resetTau(arrayTau + t * tauSize);
+                        
+                        _model.reco(t).setOx(arrayO[t * 3]);
+                        _model.reco(t).setOy(arrayO[t * 3 + 1]);
+                        _model.reco(t).setOy(arrayO[t * 3 + 2]);
+                        _model.reco(t).setCounter(arrayC[t]);
+                        
                         delete[]nr;
                         delete[]nt;
                         delete[]nd;
@@ -7213,11 +7331,54 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     }
                 }
 
-                _model.reco(0).insertI(_datPR, _datPI, _ctfP, _sigP, w, offS, nr,
-                                       nt, nd, ctfaData, _para.pixelSize,
-                                       cSearch, _para.pf, _para.mReco,
-                                       _para.size, _ID.size());
+                _model.reco(0).getF(modelF,
+                                    _para.mode,
+                                    _para.nThreadsPerProcess);
+                _model.reco(0).getT(modelT,
+                                    _para.mode,
+                                    _para.nThreadsPerProcess);
+                _model.reco(0).getTau(arrayTau,
+                                      _para.nThreadsPerProcess);
+            
+                InsertFT(_iGPU, _stream, modelF, dev_F, modelT, dev_T, arrayTau, devTau,
+                         arrayO, dev_O, arrayC, dev_C, _datPR, _datPI, _ctfP, _sigP, w, 
+                         offS, nr, nt, nd, ctfaData, deviCol, deviRow, deviSig, _para.pixelSize, 
+                         cSearch, _para.pf, _nPxl, _para.mReco, tauSize, _ID.size(), 
+                         _para.size, vdim, _nGPU);
 
+                allReduceFTO(_iGPU,
+                             _stream,
+                             modelF,
+                             dev_F,
+                             modelT,
+                             dev_T,
+                             arrayTau,
+                             devTau,
+                             arrayO,
+                             dev_O,
+                             arrayC,
+                             dev_C,
+                             _hemi,
+                             _para.mode,
+                             0,
+                             _para.k,
+                             tauSize,
+                             vdim,
+                             _nGPU);
+
+                _model.reco(0).resetF(modelF,
+                                      _para.mode,
+                                      _para.nThreadsPerProcess);
+                _model.reco(0).resetT(modelT,
+                                      _para.mode,
+                                      _para.nThreadsPerProcess);
+                _model.reco(0).resetTau(arrayTau);
+                
+                _model.reco(0).setOx(arrayO[0]);
+                _model.reco(0).setOy(arrayO[1]);
+                _model.reco(0).setOy(arrayO[2]);
+                _model.reco(0).setCounter(arrayC[0]);
+                        
                 free(w);
                 free(offS);
                 free(nr);
@@ -7232,6 +7393,24 @@ void Optimiser::reconstructRef(const bool fscFlag,
             abort();
         }
 
+        freeFTO(_iGPU,
+                modelF,
+                dev_F,
+                modelT,
+                dev_T,
+                arrayTau,
+                devTau,        
+                arrayO        ,
+                dev_O,
+                arrayC,
+                dev_C,
+                deviCol,
+                deviRow,
+                deviSig,
+                _nGPU);
+
+        delete[] arrayO;
+        delete[] arrayC;
 #else
         // Complex* poolTransImgP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
 
@@ -7470,33 +7649,18 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
         MPI_Barrier(_hemi);
 
-#ifdef GPU_VERSION
-        std::vector<int> gpus;
-        getAviDevice(gpus);
-        int deviceNum = gpus.size();
-#endif
-
-#ifdef GPU_RECONSTRUCT
-        for (int t = 0; t < _para.k; t++)
-        {
-            _model.reco(t).allReduceCounter();
-            _model.reco(t).prepareTau();
-        }
-#endif
-
-#ifdef GPU_RECONSTRUCT
-        #pragma omp parallel for num_threads(deviceNum)
-#endif
         for (int t = 0; t < _para.k; t++)
         {
             ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Preparing Content in Reconstructor of Reference "
                                        << t;
             BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Preparing Content in Reconstructor of Reference "
                                        << t;
-#ifdef GPU_VERSION
-            _model.reco(t).prepareTFG(gpus[omp_get_thread_num()]);
-#else
             _model.reco(t).allReduceCounter();
+#ifdef GPU_VERSION
+            _model.reco(t).prepareTFG(_iGPU,
+                                      _stream,
+                                      _nGPU);
+#else
             _model.reco(t).prepareTF(_para.nThreadsPerProcess);
 #endif
         }
@@ -7546,20 +7710,14 @@ void Optimiser::reconstructRef(const bool fscFlag,
         NT_MASTER
         {
 #ifdef GPU_RECONSTRUCT
-            std::vector<int> gpus;
-
-            getAviDevice(gpus);
-
-            int deviceNum = gpus.size();
+            int vdim = _model.reco(0).getModelDim(_para.mode);
+            int modelSize = _model.reco(0).getModelSize(_para.mode);
 #endif
-
-#ifdef GPU_RECONSTRUCT
-            #pragma omp parallel for num_threads(deviceNum)
-#endif
+            
+            #pragma omp parallel for num_threads(_para.nThreadsPerProcess)
             for (int t = 0; t < _para.k; t++)
             {
                 _model.reco(t).setMAP(false);
-
 #ifdef OPTIMISER_RECONSTRUCT_JOIN_HALF
                 _model.reco(t).setJoinHalf(true);
 #else
@@ -7588,96 +7746,204 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
                     abort();
                 }
+            }
 
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
-                                           << t
-                                           << " for Determining FSC";
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
-                                           << t
-                                           << " for Determining FSC";
-
-                Volume ref;
-
+            if (_para.mode == MODE_2D)
+            {
+                int kbatch = CLASS_BATCH;
 #ifdef GPU_RECONSTRUCT
-                _model.reco(t).reconstructG(ref, gpus[omp_get_thread_num()], 1);
+                RFLOAT nf = _model.reco(0).getNF();
+                bool map = _model.reco(0).MAP();
+                bool gridCorr = _model.reco(0).gridCorr();
+                bool joinHalf = _model.reco(0).joinHalf();
+                int fscMatSize = _model.reco(0).getFSCSize();
+                int maxRadius = _model.reco(0).maxRadius();
+                int pf = _model.reco(0).pf();
+                int _N = _model.reco(0).N();
+                
+                Complex *refArray;
+                RFLOAT *fscMat;
+                RFLOAT *ox;
+                RFLOAT *oy;
+                refArray = (Complex*)malloc(kbatch * _N * (_N / 2 + 1) * sizeof(Complex)); 
+                fscMat = (RFLOAT*)malloc(kbatch * fscMatSize * sizeof(RFLOAT));
+                ox = (RFLOAT*)malloc(kbatch * sizeof(RFLOAT));
+                oy = (RFLOAT*)malloc(kbatch * sizeof(RFLOAT));
+#endif
+                for (int t = 0; t < _para.k;)
+                {
+                    if (t >= _para.k)
+                        break;
+                    
+                    kbatch = (t + CLASS_BATCH > _para.k) 
+                           ? (_para.k - t) : CLASS_BATCH;
+#ifdef GPU_RECONSTRUCT
+                    #pragma omp parallel for num_threads(_para.nThreadsPerProcess)
+                    for (int b = 0; b < kbatch; b++)
+                    {
+                        vec FSC = _model.reco(t + b).getFSC();
+                        Map<vec>(fscMat + b * fscMatSize, 
+                                 FSC.rows(), 
+                                 FSC.cols()) = FSC;
+                        ox[b] = (RFLOAT)(-_model.reco(t + b).ox());
+                        oy[b] = (RFLOAT)(-_model.reco(t + b).oy());
+                    }
+                    
+                    reconstructG2D(_iGPU,
+                                   _stream,
+                                   _model.reco(0).getTabFuncRL(),
+                                   refArray,
+                                   modelF + t * modelSize,
+                                   modelT + t * modelSize,
+                                   fscMat,
+                                   nf,
+                                   map,
+                                   gridCorr,
+                                   joinHalf,
+                                   fscMatSize,
+                                   maxRadius,
+                                   pf,
+                                   _N,
+                                   vdim,
+                                   kbatch,
+                                   _para.nThreadsPerProcess,
+                                   _nGPU);
+                    
+                    if (_mask.isEmptyRL() && _para.refAutoRecentre)
+                    {
+                        TranslateI2D(_stream,
+                                     _iGPU,
+                                     refArray,
+                                     ox,
+                                     oy,
+                                     kbatch, 
+                                     _model.rU(),
+                                     _N,
+                                     _nGPU);
+                    }
+
+                    for (int b = 0; b < kbatch; b++)
+                    {
+                        #pragma omp parallel for
+                        SET_0_FT(_model.ref(t + b));
+
+                        COPY_FT(_model.ref(t + b), (refArray + b * _N * (_N / 2 + 1)));
+                    }
 #else
-                _model.reco(t).reconstruct(ref, _para.nThreadsPerProcess);
+                    for (int b = 0; b < kbatch; b++)
+                    {
+                        Volume ref;
+                        _model.reco(t + b).reconstruct(ref, 
+                                                       _para.nThreadsPerProcess);
+                        fft.fw(ref, 
+                               _para.nThreadsPerProcess);
+                        
+                        if (_mask.isEmptyRL() && _para.refAutoRecentre)
+                        {
+                            Image img(_para.size, _para.size, FT_SPACE);
+
+                            SLC_EXTRACT_FT(img, ref, 0);
+                            
+                            translate(img, 
+                                      img, 
+                                      _model.rU(), 
+                                      -_model.reco(t).ox(), 
+                                      -_model.reco(t).oy(), 
+                                      _para.nThreadsPerProcess);
+
+                            SLC_REPLACE_FT(ref, img, 0);
+                        } 
+#ifndef NAN_NO_CHECK
+                        SEGMENT_NAN_CHECK_COMPLEX(ref.dataFT(), ref.sizeFT());
+#endif
+                        #pragma omp parallel for
+                        SET_0_FT(_model.ref(t + b));
+
+                        COPY_FT(_model.ref(t + b), ref);
+                    }
+#endif
+                    t += kbatch;
+                }
+#ifdef GPU_RECONSTRUCT
+                free(refArray); 
+                free(fscMat); 
+                free(ox); 
+                free(oy); 
+#endif
+            }
+            else if (_para.mode == MODE_3D)
+            {
+                for (int t = 0; t < _para.k; t++)
+                {
+                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
+                                               << t
+                                               << " for Determining FSC";
+                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
+                                               << t
+                                               << " for Determining FSC";
+                    Volume ref;
+#ifdef GPU_RECONSTRUCT
+                    _model.reco(t).reconstructG(_iGPU,
+                                                _stream,
+                                                ref,
+                                                _nGPU, 
+                                                _para.nThreadsPerProcess);
+                    
+#else
+                    _model.reco(t).reconstruct(ref, _para.nThreadsPerProcess);
 
 #ifndef NAN_NO_CHECK
-                SEGMENT_NAN_CHECK(ref.dataRL(), ref.sizeRL());
+                    SEGMENT_NAN_CHECK(ref.dataRL(), ref.sizeRL());
 #endif
 
 #ifdef VERBOSE_LEVEL_2
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
+                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
+                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
 #endif
-
-                fft.fw(ref, _para.nThreadsPerProcess);
-
 #endif
+                    fft.fw(ref, _para.nThreadsPerProcess);
 
 #ifndef NAN_NO_CHECK
-                SEGMENT_NAN_CHECK_COMPLEX(ref.dataFT(), ref.sizeFT());
+                    SEGMENT_NAN_CHECK_COMPLEX(ref.dataFT(), ref.sizeFT());
 #endif
 
-                if (_mask.isEmptyRL() && _para.refAutoRecentre)
-                {
-                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
-                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
-
-                    if (_para.mode == MODE_2D)
+                    if (_mask.isEmptyRL() && _para.refAutoRecentre)
                     {
-                        Image img(_para.size, _para.size, FT_SPACE);
+                        ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
+                        BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
 
-                        SLC_EXTRACT_FT(img, ref, 0);
-
-#ifdef GPU_RECONSTRUCT
-                        TranslateI2D(gpus[omp_get_thread_num()],
-                                     img,
-                                     -_model.reco(t).ox(),
-                                     -_model.reco(t).oy(),
-                                      _model.rU());
-#else
-                        translate(img, img, _model.rU(), -_model.reco(t).ox(), -_model.reco(t).oy(), _para.nThreadsPerProcess);
-#endif
-
-                        SLC_REPLACE_FT(ref, img, 0);
-                    }
-                    else if (_para.mode == MODE_3D)
-                    {
                         if (_sym.pgGroup() == PG_CN)
                         {
 #ifdef GPU_RECONSTRUCT
-                            TranslateI(gpus[omp_get_thread_num()],
+                            TranslateI(_iGPU,
+                                       _stream,
                                        ref,
                                        -_model.reco(t).ox(),
                                        -_model.reco(t).oy(),
                                        -_model.reco(t).oz(),
+                                       _nGPU,
                                        _model.rU());
 #else
-                            translate(ref, ref, _model.rU(), -_model.reco(t).ox(), -_model.reco(t).oy(), -_model.reco(t).oz(), _para.nThreadsPerProcess);
+                            translate(ref, 
+                                      ref, 
+                                      _model.rU(), 
+                                      -_model.reco(t).ox(), 
+                                      -_model.reco(t).oy(), 
+                                      -_model.reco(t).oz(), 
+                                      _para.nThreadsPerProcess);
 #endif
                         }
                     }
-                    else
-                    {
-                        REPORT_ERROR("INEXISTENT MODE");
-                    }
-                }
-
-#ifndef NAN_NO_CHECK
-                SEGMENT_NAN_CHECK_COMPLEX(ref.dataFT(), ref.sizeFT());
-#endif
-
-                #pragma omp parallel for
-                SET_0_FT(_model.ref(t));
-
-                COPY_FT(_model.ref(t), ref);
 
 #ifdef VERBOSE_LEVEL_2
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
+                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
+                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
 #endif
+                    #pragma omp parallel for
+                    SET_0_FT(_model.ref(t));
+
+                    COPY_FT(_model.ref(t), ref);
+                }
             }
         }
 
@@ -7788,26 +8054,18 @@ void Optimiser::reconstructRef(const bool fscFlag,
     }
 
 #ifdef RECONSTRUCTOR_WIENER_FILTER_FSC
-
     if (avgFlag)
     {
         NT_MASTER
         {
 #ifdef GPU_RECONSTRUCT
-            std::vector<int> gpus;
-
-            getAviDevice(gpus);
-
-            int deviceNum = gpus.size();
+            int vdim = _model.reco(0).getModelDim(_para.mode);
+            int modelSize = _model.reco(0).getModelSize(_para.mode);
 #endif
-
-#ifdef GPU_RECONSTRUCT
-            #pragma omp parallel for num_threads(deviceNum)
-#endif
+            #pragma omp parallel for num_threads(_para.nThreadsPerProcess)
             for (int t = 0; t < _para.k; t++)
             {
                 _model.reco(t).setMAP(true);
-
 #ifdef OPTIMISER_RECONSTRUCT_JOIN_HALF
                 _model.reco(t).setJoinHalf(true);
 #else
@@ -7836,84 +8094,204 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
                     abort();
                 }
-
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
-                                           << t
-                                           << " for Next Iteration";
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
-                                           << t
-                                           << " for Next Iteration";
-
-                Volume ref;
-
+            }
+            
+            if (_para.mode == MODE_2D)
+            {
+                int kbatch = CLASS_BATCH;
 #ifdef GPU_RECONSTRUCT
-                _model.reco(t).reconstructG(ref, gpus[omp_get_thread_num()], 1);
+                RFLOAT nf = _model.reco(0).getNF();
+                bool map = _model.reco(0).MAP();
+                bool gridCorr = _model.reco(0).gridCorr();
+                bool joinHalf = _model.reco(0).joinHalf();
+                int fscMatSize = _model.reco(0).getFSCSize();
+                int maxRadius = _model.reco(0).maxRadius();
+                int pf = _model.reco(0).pf();
+                int _N = _model.reco(0).N();
+                Complex *refArray;
+                refArray = (Complex*)malloc(kbatch * _N * (_N / 2 + 1) * sizeof(Complex)); 
+                RFLOAT *fscMat;
+                fscMat = (RFLOAT*)malloc(kbatch * fscMatSize * sizeof(RFLOAT));
+                RFLOAT *ox;
+                ox = (RFLOAT*)malloc(kbatch * sizeof(RFLOAT));
+                RFLOAT *oy;
+                oy = (RFLOAT*)malloc(kbatch * sizeof(RFLOAT));
+#endif
+                for (int t = 0; t < _para.k;)
+                {
+                    if (t >= _para.k)
+                        break;
+                    
+                    kbatch = (t + CLASS_BATCH > _para.k) 
+                           ? (_para.k - t) : CLASS_BATCH;
+#ifdef GPU_RECONSTRUCT
+                    #pragma omp parallel for num_threads(_para.nThreadsPerProcess)
+                    for (int b = 0; b < kbatch; b++)
+                    {
+                        vec FSC = _model.reco(t + b).getFSC();
+                        Map<vec>(fscMat + b * fscMatSize, 
+                                 FSC.rows(), 
+                                 FSC.cols()) = FSC;
+                        ox[b] = (RFLOAT)(-_model.reco(t + b).ox());
+                        oy[b] = (RFLOAT)(-_model.reco(t + b).oy());
+                    }
+                    
+                    reconstructG2D(_iGPU,
+                                   _stream,
+                                   _model.reco(0).getTabFuncRL(),
+                                   refArray,
+                                   modelF + t * modelSize,
+                                   modelT + t * modelSize,
+                                   fscMat,
+                                   nf,
+                                   map,
+                                   gridCorr,
+                                   joinHalf,
+                                   fscMatSize,
+                                   maxRadius,
+                                   pf,
+                                   _N,
+                                   vdim,
+                                   kbatch,
+                                   _para.nThreadsPerProcess,
+                                   _nGPU);
+                    
+                    if (_mask.isEmptyRL() && _para.refAutoRecentre)
+                    {
+                        TranslateI2D(_stream,
+                                     _iGPU,
+                                     refArray,
+                                     ox,
+                                     oy,
+                                     kbatch, 
+                                     _model.rU(),
+                                     _N,
+                                     _nGPU);
+                    }
+
+                    for (int b = 0; b < kbatch; b++)
+                    {
+                        #pragma omp parallel for
+                        SET_0_FT(_model.ref(t + b));
+
+                        COPY_FT(_model.ref(t + b), (refArray + b * _N * (_N / 2 + 1)));
+                    }
 #else
-                _model.reco(t).reconstruct(ref, _para.nThreadsPerProcess);
+                    for (int b = 0; b < kbatch; b++)
+                    {
+                        Volume ref;
+                        _model.reco(t + b).reconstruct(ref, 
+                                                       _para.nThreadsPerProcess);
+                        fft.fw(ref, 
+                               _para.nThreadsPerProcess);
+                        
+                        if (_mask.isEmptyRL() && _para.refAutoRecentre)
+                        {
+                            Image img(_para.size, _para.size, FT_SPACE);
+
+                            SLC_EXTRACT_FT(img, ref, 0);
+                            
+                            translate(img, 
+                                      img, 
+                                      _model.rU(), 
+                                      -_model.reco(t).ox(), 
+                                      -_model.reco(t).oy(), 
+                                      _para.nThreadsPerProcess);
+
+                            SLC_REPLACE_FT(ref, img, 0);
+                        } 
+#ifndef NAN_NO_CHECK
+                        SEGMENT_NAN_CHECK_COMPLEX(ref.dataFT(), ref.sizeFT());
+#endif
+                        #pragma omp parallel for
+                        SET_0_FT(_model.ref(t + b));
+
+                        COPY_FT(_model.ref(t + b), ref);
+                    }
+#endif
+                    t += kbatch;
+                }
+#ifdef GPU_RECONSTRUCT
+                free(refArray); 
+                free(fscMat); 
+                free(ox); 
+                free(oy); 
+#endif
+            }
+            else if (_para.mode == MODE_3D)
+            {
+                for (int t = 0; t < _para.k; t++)
+                {
+                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
+                                               << t
+                                               << " for Next Iteration";
+                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reconstructing Reference "
+                                               << t
+                                               << " for Next Iteration";
+
+                    Volume ref;
+#ifdef GPU_RECONSTRUCT
+                    _model.reco(t).reconstructG(_iGPU,
+                                                _stream,
+                                                ref,
+                                                _nGPU, 
+                                                _para.nThreadsPerProcess);
+                    
+#else
+                    _model.reco(t).reconstruct(ref, _para.nThreadsPerProcess);
+
+#ifndef NAN_NO_CHECK
+                    SEGMENT_NAN_CHECK(ref.dataRL(), ref.sizeRL());
+#endif
 
 #ifdef VERBOSE_LEVEL_2
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
+                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
+                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Fourier Transforming Reference " << t;
+#endif
+#endif
+                    fft.fw(ref, _para.nThreadsPerProcess);
+
+#ifndef NAN_NO_CHECK
+                    SEGMENT_NAN_CHECK_COMPLEX(ref.dataFT(), ref.sizeFT());
 #endif
 
-                fft.fw(ref, _para.nThreadsPerProcess);
-
-#endif
-
-                if (_mask.isEmptyRL() && _para.refAutoRecentre)
-                {
-                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
-                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
-
-                    if (_para.mode == MODE_2D)
+                    if (_mask.isEmptyRL() && _para.refAutoRecentre)
                     {
-                        Image img(_para.size, _para.size, FT_SPACE);
+                        ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
+                        BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Centring Reference " << t;
 
-                        SLC_EXTRACT_FT(img, ref, 0);
-
-#ifdef GPU_RECONSTRUCT
-                        TranslateI2D(gpus[omp_get_thread_num()],
-                                     img,
-                                     -_model.reco(t).ox(),
-                                     -_model.reco(t).oy(),
-                                     _model.rU());
-#else
-                        translate(img, img, _model.rU(), -_model.reco(t).ox(), -_model.reco(t).oy(), _para.nThreadsPerProcess);
-#endif
-
-                        SLC_REPLACE_FT(ref, img, 0);
-                    }
-                    else if (_para.mode == MODE_3D)
-                    {
                         if (_sym.pgGroup() == PG_CN)
                         {
 #ifdef GPU_RECONSTRUCT
-                            TranslateI(gpus[omp_get_thread_num()],
+                            TranslateI(_iGPU,
+                                       _stream,
                                        ref,
                                        -_model.reco(t).ox(),
                                        -_model.reco(t).oy(),
                                        -_model.reco(t).oz(),
+                                       _nGPU,
                                        _model.rU());
 #else
-                            translate(ref, ref, _model.rU(), -_model.reco(t).ox(), -_model.reco(t).oy(), -_model.reco(t).oz(), _para.nThreadsPerProcess);
+                            translate(ref, 
+                                      ref, 
+                                      _model.rU(), 
+                                      -_model.reco(t).ox(), 
+                                      -_model.reco(t).oy(), 
+                                      -_model.reco(t).oz(), 
+                                      _para.nThreadsPerProcess);
 #endif
                         }
                     }
-                    else
-                    {
-                        REPORT_ERROR("INEXISTENT MODE");
-                    }
-                }
-
-                #pragma omp parallel for
-                SET_0_FT(_model.ref(t));
-
-                COPY_FT(_model.ref(t), ref);
 
 #ifdef VERBOSE_LEVEL_2
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
+                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
+                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Reference " << t << "Fourier Transformed";
 #endif
+                    #pragma omp parallel for
+                    SET_0_FT(_model.ref(t));
+
+                    COPY_FT(_model.ref(t), ref);
+                }
             }
         }
 
@@ -7980,6 +8358,14 @@ void Optimiser::reconstructRef(const bool fscFlag,
         _model.compareTwoHemispheres(false, true, AVERAGE_TWO_HEMISPHERE_THRES, _para.nThreadsPerProcess);
     }
 
+#endif
+
+#ifdef GPU_VERSION
+    NT_MASTER
+    {
+        free(modelF);
+        free(modelT);
+    }
 #endif
 
     if (_searchType != SEARCH_TYPE_CTF)
@@ -8989,11 +9375,7 @@ void Optimiser::saveMapHalf(const bool finished)
                 ref.saveFTToBMP(filename, 0.001);
                 ***/
 
-#ifdef GPU_RECONSTRUCT
-                fft.bw(ref, 1);
-#else
                 fft.bw(ref, _para.nThreadsPerProcess);
-#endif
 
                 softMask(ref,
                          ref,
@@ -9029,11 +9411,7 @@ void Optimiser::saveMapHalf(const bool finished)
                 ref.saveFTToBMP(filename, 0.001);
                 ***/
 
-#ifdef GPU_RECONSTRUCT
-                fft.bw(ref, 1);
-#else
                 fft.bw(ref, _para.nThreadsPerProcess);
-#endif
 
                 softMask(ref,
                          ref,
@@ -9062,11 +9440,7 @@ void Optimiser::saveMapHalf(const bool finished)
             {
                 lowPass = _model.ref(t).copyVolume();
 
-#ifdef GPU_RECONSTRUCT
-                fft.bw(lowPass, 1);
-#else
                 fft.bw(lowPass, _para.nThreadsPerProcess);
-#endif
             }
             else
             {
@@ -9080,11 +9454,7 @@ void Optimiser::saveMapHalf(const bool finished)
                 lowPass = _model.ref(t).copyVolume();
 #endif
 
-#ifdef GPU_RECONSTRUCT
-                fft.bw(lowPass, 1);
-#else
                 fft.bw(lowPass, _para.nThreadsPerProcess);
-#endif
             }
 
             if (_commRank == HEMI_A_LEAD)
@@ -9192,11 +9562,7 @@ void Optimiser::saveMapJoin(const bool finished)
                 FOR_EACH_PIXEL_FT(ref)
                     ref[i] = (A[i] + B[i]) / 2;
 
-#ifdef GPU_RECONSTRUCT
-                fft.bw(ref, 1);
-#else
                 fft.bw(ref, _para.nThreadsPerProcess);
-#endif
 
                 imf.writeStack(ref, l);
                 if(finished)
@@ -9266,11 +9632,7 @@ void Optimiser::saveMapJoin(const bool finished)
                 FOR_EACH_PIXEL_FT(ref)
                     ref[i] = (A[i] + B[i]) / 2;
 
-#ifdef GPU_RECONSTRUCT
-                fft.bw(ref, 1);
-#else
                 fft.bw(ref, _para.nThreadsPerProcess);
-#endif
 
                 if (finished)
                     sprintf(filename, "%sReference_%03d_Final.mrc", _para.dstPrefix, l);

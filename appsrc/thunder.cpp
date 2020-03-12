@@ -234,6 +234,7 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     dst.transS = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_TRANS_S).asFloat();
     dst.initRes = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_INIT_RES).asFloat();
     dst.globalSearchRes = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_GLOBAL_SEARCH_RES).asFloat();
+    copy_string(dst.gpus, JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_GPU).asString());
     copy_string(dst.sym, JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_SYM).asString());
     copy_string(dst.initModel, JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_INIT_MODEL).asString());
     copy_string(dst.db, JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_DB).asString());

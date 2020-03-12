@@ -61,6 +61,12 @@ class TabFunction
         inline RFLOAT* getData() const{ return _tab.get(); } 
 
         inline RFLOAT getStep() const{ return _s; }
+        
+        inline RFLOAT getBegin() const{ return _a; }
+        
+        inline RFLOAT getStop() const{ return _b; }
+        
+        inline int getTabSize() const{ return _n; }
 };
 
 #endif // TAB_FUNCTION_H

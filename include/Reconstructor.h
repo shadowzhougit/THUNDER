@@ -512,6 +512,37 @@ class Reconstructor : public Parallel
         void setMaxRadius(const int maxRadius /**< [in] the maximal radius that points may affect each other during interpolation */);
 
         /**
+         * @brief Return the padding factor of volume. 
+         *
+         * @return the padding factor of volume. 
+         */
+        int pf() const;
+
+        /**
+         * @brief Set the padding factor of volume. 
+         */
+        void setPf(const int pf /**< [in] the padding factor of volume */);
+
+        /**
+         * @brief Return the real size of the 3D Fourier reconstructor space that is used to determine the size (PAD_SIZE) of Volume in 3 dimensions(xyz). 
+         *
+         * @return the padding factor of volume. 
+         */
+        int N() const;
+
+        /**
+         * @brief Set the real size of the 3D Fourier reconstructor space that is used to determine the size (PAD_SIZE) of Volume in 3 dimensions(xyz). 
+         */
+        void setN(const int N /**< [in] the real size of volume */);
+
+        /**
+         * @brief Return the padding factor of volume. 
+         *
+         * @return the padding factor of volume. 
+         */
+        RFLOAT getNF();
+
+        /**
          * @brief Get pre-calculation parameters.
          *
          * @return pre-calculation parameters
@@ -628,63 +659,26 @@ class Reconstructor : public Parallel
                     );
 
 #ifdef GPU_INSERT
-
-        /**
-         * @brief Insert the complex 2D images into reconstructor by GPU. 
-         */
-        void insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR, /**< [in]  */
-                     MemoryBazaar<RFLOAT, BaseType, 4>& datPI, /**< [in]  */
-                     MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,  /**< [in]  */
-                     MemoryBazaar<RFLOAT, BaseType, 4>& sigP,  /**< [in]  */
-                     RFLOAT*  w,         /**< [in] the weights that measure the possibility of the rotation matrix and translation vector */
-                     double*  offS,      /**< [in]  */
-                     double*  nr,        /**< [in]  */
-                     double*  nt,        /**< [in]  */
-                     double*  nd,        /**< [in]  */
-                     int*     nc,        /**< [in]  */
-                     CTFAttr* ctfaData,  /**< [in]  */
-                     RFLOAT   pixelSize, /**< [in] pixel size */
-                     bool     cSearch,   /**< [in] the indicator of whther to perform ctf search or not */
-                     int      opf,       /**< [in]  */
-                     int      mReco,     /**< [in]  */
-                     int      idim,      /**< [in] boxsize of image */
-                     int      imgNum     /**< [in] number of images */
-                    );
-
-        /**
-         * @brief Insert the complex 2D images into reconstructor by GPU. 
-         */
-        void insertI(MemoryBazaar<RFLOAT, BaseType, 4>& datPR, /**< [in]  */
-                     MemoryBazaar<RFLOAT, BaseType, 4>& datPI, /**< [in]  */
-                     MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,  /**< [in]  */
-                     MemoryBazaar<RFLOAT, BaseType, 4>& sigP,  /**< [in]  */
-                     RFLOAT*  w,         /**< [in] the weights that measure the possibility of the rotation matrix and translation vector */
-                     double*  offS,      /**< [in]  */
-                     double*  nr,        /**< [in]  */
-                     double*  nt,        /**< [in]  */
-                     double*  nd,        /**< [in]  */
-                     CTFAttr* ctfaData,  /**< [in]  */
-                     RFLOAT   pixelSize, /**< [in] pixel size */
-                     bool     cSearch,   /**< [in] the indicator of whther to perform ctf search or not */
-                     int      opf,       /**< [in]  */
-                     int      mReco,     /**< [in]  */
-                     int      idim,      /**< [in] boxsize of image */
-                     int      imgNum     /**< [in] number of images */
-                    );
-
         /**
          * @brief Get the dimension of _F2D.
          *
          * @return the dimension of _F2D
          */
-        int getModelDim();
+        int getModelDim(bool mode              /**< [in] 2D or 3D mode */);
 
         /**
          * @brief Get the size of _F2D.
          *
          * @return the size of _F2D
          */
-        int getModelSize();
+        int getModelSize(bool mode             /**< [in] 2D or 3D mode */);
+
+        /**
+         * @brief Get the object of TabFunction.
+         *
+         * @return the object of TabFunction
+         */
+        TabFunction& getTabFuncRL();
 
         /**
          * @brief Get the size of _tau.
@@ -696,42 +690,54 @@ class Reconstructor : public Parallel
         /**
          * @brief Get the values of _F2D.
          */
-        void getF(Complex* modelF    /**< [out] the values of _F2D */);
+        void getF(Complex* modelF,             /**< [out] the values of _F volume */
+                  bool mode,                   /**< [in] 2D or 3D mode */ 
+                  const unsigned int nThread   /**< [in] the number of threads */
+                 );
 
         /**
          * @brief Get the real part values of _T2D.
          */
-        void getT(RFLOAT* modelT     /**< [out] the real part of _T2D */);
+        void getT(RFLOAT* modelT,              /**< [out] the real part of _T2D */
+                  bool mode,                   /**< [in] 2D or 3D mode */ 
+                  const unsigned int nThread   /**< [in] the number of threads */
+                 );
 
         /**
-         * @brief Get the real part values of Tau.
+         * @brief Get the real part values of _T2D.
          */
-        void getTau(RFLOAT* tau     /* *< [out] the real part of _tau */);
-
+        void getTau(RFLOAT* arrayTau,          /**< [out] the values of _tau */
+                    const unsigned int nThread /**< [in] the number of threads */
+                   );
+        
         /**
          * @brief Reset the values of _F2D by modelF.
          */
-        void resetF(Complex* modelF  /**< [in] reset values */);
+        void resetF(Complex* modelF,             /**< [in] reset values */
+                    bool mode,                   /**< [in] 2D or 3D mode */ 
+                    const unsigned int nThread   /**< [in] the number of threads */
+                   );
 
         /**
          * @brief Reset the values of _T2D by modelT.
          */
-        void resetT(RFLOAT* modelT   /**< [in] reset values */);
+        void resetT(RFLOAT* modelT,              /**< [in] reset values */
+                    bool mode,                   /**< [in] 2D or 3D mode */ 
+                    const unsigned int nThread   /**< [in] the number of threads */
+                   );
 
         /**
          * @brief Reset the values of _tau.
          */
         void resetTau(RFLOAT* tau   /* *< [in] reset values */);
-      
-        /**
-         * @brief AllReduce _tau.
-         */
-        void prepareTau(); 
 
         /**
          * @brief Prepare parameters for symmetrizing _T and _F by GPU.
          */
-        void prepareTFG(int gpuIdx   /**< [in] gpu index */);
+        void prepareTFG(std::vector<int>& iGPU,     /**< [in] GPU device array*/
+                        std::vector<void*>& stream, /**< [in] GPU device stream vector*/
+                        int nGPU                    /**< [in] the number of GPU device*/
+                        );
 #endif
 
         /**
@@ -763,10 +769,26 @@ class Reconstructor : public Parallel
 
 #ifdef GPU_RECONSTRUCT
         /**
+         * @brief Get the size of _FSC vector.
+         *
+         * @return the size of _FSC vector
+         */
+        int getFSCSize();
+
+        /**
+         * @brief Get the _FSC vector.
+         *
+         * @return the _FSC vector
+         */
+        vec getFSC();
+
+        /**
          * @brief Reconstruct a 3D model and save it into a volume by GPU.
          */
-        void reconstructG(Volume& dst,               /**< [in] the destination volume where the reconstructor object saves the result of reconstruction */
-                          int gpuIdx,                /**< [in] the gpu index */
+        void reconstructG(std::vector<int>& iGPU,    /**< [in] GPU device vector*/
+                          std::vector<void*>& stream,/**< [in] GPU device stream vector*/ 
+                          Volume& dst,               /**< [in] the destination volume where the reconstructor object saves the result of reconstruction */
+                          int nGPU,                  /**< [in] the number of GPU device*/
                           const unsigned int nThread /**< [in] the number of threads */
                          );
 #endif

@@ -12,6 +12,7 @@
 
 #include "Config.h"
 
+#include "Kernel.cuh"
 #include "Device.cuh"
 #include "Volume.cuh"
 #include "Weilume.cuh"
@@ -26,18 +27,6 @@
 namespace cuthunder {
 
 #define NORM2(a, b) norm3d((double)a, (double)b, 0.0)
-
-#ifndef PI
-#define PI 3.14159265358979323846
-#endif
-
-#ifndef PI_2
-#define PI_2 6.28318530717959
-#endif
-
-#ifndef divPI2
-#define divPI2 1.57079632679489661923132169164
-#endif
 
 class Constructor
 {

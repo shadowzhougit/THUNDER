@@ -77,6 +77,8 @@
 
 #define AVERAGE_TWO_HEMISPHERE_THRES 0.95
 
+#define CLASS_BATCH 5
+
 #define IMAGE_BATCH 4096
 
 #define SCANNING_PHASE_BATCH_MEMORY_USAGE (1.0 * GIGABYTE)
@@ -104,6 +106,13 @@ struct OptimiserPara
      * 2D or 3D mode
      */
     int mode;
+
+#define KEY_GPU "Available GPUs"
+
+    /**
+     * Available GPUs
+     */
+    char gpus[FILE_NAME_LENGTH];
 
 #define KEY_G_SEARCH "Global Search"
 
@@ -515,11 +524,9 @@ class Optimiser : public Parallel
     private:
 
 #ifdef GPU_VERSION
-
-        int _nGPU;
-
+        std::vector<void*> _stream;
         std::vector<int> _iGPU;
-
+        int _nGPU;
 #endif
 
         OptimiserPara _para;
@@ -801,9 +808,8 @@ class Optimiser : public Parallel
         }
 
 #ifdef GPU_VERSION
-
         void setGPUEnv();
-
+        void destoryGPUEnv();
 #endif
 
         ~Optimiser();

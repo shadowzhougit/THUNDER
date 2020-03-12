@@ -438,17 +438,13 @@ void Model::compareTwoHemispheres(const bool fscFlag,
                     randomPhase(randomPhaseA, A, randomPhaseThres, nThread);
                     randomPhase(randomPhaseB, B, randomPhaseThres, nThread);
 
-#ifdef GPU_RECONSTRUCT
-                    fft.bw(randomPhaseA, 1);
-                    fft.bw(randomPhaseB, 1);
-#else
                     fft.bw(randomPhaseA, nThread);
                     fft.bw(randomPhaseB, nThread);
-#endif
 
 
                     // fft.bwExecutePlan(randomPhaseA, nThread);
                     // fft.bwExecutePlan(randomPhaseB, nThread);
+
 
                     MLOG(INFO, "LOGGER_COMPARE") << "Performing Mask on Random Phase Reference";
 
@@ -469,13 +465,8 @@ void Model::compareTwoHemispheres(const bool fscFlag,
                         softMask(randomPhaseB, randomPhaseB, mask, 0, nThread);
                     }
 
-#ifdef GPU_RECONSTRUCT
-                    fft.fw(randomPhaseA, 1);
-                    fft.fw(randomPhaseB, 1);
-#else
                     fft.fw(randomPhaseA, nThread);
                     fft.fw(randomPhaseB, nThread);
-#endif
 
                     // fft.fwExecutePlan(randomPhaseA);
                     // fft.fwExecutePlan(randomPhaseB);
@@ -492,13 +483,8 @@ void Model::compareTwoHemispheres(const bool fscFlag,
 
                     MLOG(INFO, "LOGGER_COMPARE") << "Masking Reference";
 
-#ifdef GPU_RECONSTRUCT
-                    fft.bw(A, 1);
-                    fft.bw(B, 1);
-#else
                     fft.bw(A, nThread);
                     fft.bw(B, nThread);
-#endif
 
                     // fft.bwExecutePlan(A, nThread);
                     // fft.bwExecutePlan(B, nThread);
@@ -519,13 +505,8 @@ void Model::compareTwoHemispheres(const bool fscFlag,
                         mask.clearRL();
                     }
 
-#ifdef GPU_RECONSTRUCT
-                    fft.fw(maskA, 1);
-                    fft.fw(maskB, 1);
-#else
                     fft.fw(maskA, nThread);
                     fft.fw(maskB, nThread);
-#endif
 
                     // fft.fwExecutePlan(maskA);
                     // fft.fwExecutePlan(maskB);
@@ -533,13 +514,8 @@ void Model::compareTwoHemispheres(const bool fscFlag,
                     maskA.clearRL();
                     maskB.clearRL();
 
-#ifdef GPU_RECONSTRUCT
-                    fft.fw(A, 1);
-                    fft.fw(B, 1);
-#else
                     fft.fw(A, nThread);
                     fft.fw(B, nThread);
-#endif
 
                     // fft.fwExecutePlan(A);
                     // fft.fwExecutePlan(B);

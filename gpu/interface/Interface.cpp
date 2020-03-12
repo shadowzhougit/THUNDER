@@ -2,9 +2,31 @@
 
 #include "cuthunder.h"
 
-void getAviDevice(std::vector<int>& gpus)
+void readGPUPARA(char* gpuList,
+                 std::vector<int>& iGPU,
+                 int& nGPU)
 {
-    cuthunder::getAviDevice(gpus);
+    cuthunder::readGPUPARA(gpuList,
+                           iGPU,
+                           nGPU);
+}
+
+void gpuCheck(std::vector<void*>& stream,
+              std::vector<int>& iGPU,
+              int& nGPU)
+{
+    cuthunder::gpuCheck(stream,
+                        iGPU,
+                        nGPU);
+}
+
+void gpuEnvDestory(std::vector<void*>& stream,
+                   std::vector<int>& iGPU,
+                   int nGPU)
+{
+    cuthunder::gpuEnvDestory(stream,
+                             iGPU,
+                             nGPU);
 }
 
 void ExpectPreidx(int gpuIdx,
@@ -360,7 +382,9 @@ void ExpectPrecal(vector<CTFAttr>& ctfAttr,
                             imgNum);
 }
 
-void ExpectGlobal2D(Complex* vol,
+void ExpectGlobal2D(std::vector<int>& iGPU,
+                    std::vector<void*>& stream,
+                    Complex* vol,
                     MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
                     MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
                     MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
@@ -372,8 +396,8 @@ void ExpectGlobal2D(Complex* vol,
                     double* pR,
                     double* pT,
                     double* rot,
-                    const int *iCol,
-                    const int *iRow,
+                    int** deviCol,
+                    int** deviRow,
                     int nK,
                     int nR,
                     int nT,
@@ -382,11 +406,14 @@ void ExpectGlobal2D(Complex* vol,
                     int idim,
                     int vdim,
                     int npxl,
-                    int imgNum)
+                    int imgNum,
+                    int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Expectation Global.";
 
-    cuthunder::expectGlobal2D(reinterpret_cast<cuthunder::Complex*>(vol),
+    cuthunder::expectGlobal2D(iGPU,
+                              stream,
+                              reinterpret_cast<cuthunder::Complex*>(vol),
                               datPR,
                               datPI,
                               ctfP,
@@ -398,8 +425,8 @@ void ExpectGlobal2D(Complex* vol,
                               pR,
                               pT,
                               rot,
-                              iCol,
-                              iRow,
+                              deviCol,
+                              deviRow,
                               nK,
                               nR,
                               nT,
@@ -408,61 +435,81 @@ void ExpectGlobal2D(Complex* vol,
                               idim,
                               vdim,
                               npxl,
-                              imgNum);
+                              imgNum,
+                              nGPU);
 }
 
-void ExpectRotran(Complex* traP,
+void ExpectRotran(std::vector<int>& iGPU,
+                  std::vector<void*>& stream,
+                  Complex** devrotP,
+                  Complex** devtraP,
                   double* trans,
                   double* rot,
-                  double* rotMat,
-                  const int *iCol,
-                  const int *iRow,
+                  double** devRotMat,
+                  int** deviCol,
+                  int** deviRow,
                   int nR,
                   int nT,
                   int idim,
-                  int npxl)
+                  int npxl,
+                  int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Expectation Rotation and Translate.";
 
-    cuthunder::expectRotran(reinterpret_cast<cuthunder::Complex*>(traP),
+    cuthunder::expectRotran(iGPU,
+                            stream,
+                            reinterpret_cast<cuthunder::Complex**>(devrotP),
+                            reinterpret_cast<cuthunder::Complex**>(devtraP),
                             trans,
                             rot,
-                            rotMat,
-                            iCol,
-                            iRow,
+                            devRotMat,
+                            deviCol,
+                            deviRow,
                             nR,
                             nT,
                             idim,
-                            npxl);
+                            npxl,
+                            nGPU);
 }
 
-void ExpectProject(Complex* volume,
+void ExpectProject(std::vector<int>& iGPU,
+                   std::vector<void*>& stream,
+                   Complex* volume,
                    Complex* rotP,
-                   double* rotMat,
-                   const int *iCol,
-                   const int *iRow,
+                   Complex** devrotP,
+                   double** devRotMat,
+                   int** deviCol,
+                   int** deviRow,
                    int nR,
                    int pf,
                    int interp,
                    int vdim,
-                   int npxl)
+                   int npxl,
+                   int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Expectation Projection.";
 
-    cuthunder::expectProject(reinterpret_cast<cuthunder::Complex*>(volume),
+    cuthunder::expectProject(iGPU,
+                             stream,
+                             reinterpret_cast<cuthunder::Complex*>(volume),
                              reinterpret_cast<cuthunder::Complex*>(rotP),
-                             rotMat,
-                             iCol,
-                             iRow,
+                             reinterpret_cast<cuthunder::Complex**>(devrotP),
+                             devRotMat,
+                             deviCol,
+                             deviRow,
                              nR,
                              pf,
                              interp,
                              vdim,
-                             npxl);
+                             npxl,
+                             nGPU);
 }
 
-void ExpectGlobal3D(Complex* rotP,
-                    Complex* traP,
+void ExpectGlobal3D(std::vector<int>& iGPU,
+                    std::vector<void*>& stream,
+                    Complex** devrotP,
+                    Complex** devtraP,
+                    Complex* rotP,
                     MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
                     MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
                     MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
@@ -478,12 +525,16 @@ void ExpectGlobal3D(Complex* rotP,
                     int nR,
                     int nT,
                     int npxl,
-                    int imgNum)
+                    int imgNum,
+                    int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Expectation Global.";
 
-    cuthunder::expectGlobal3D(reinterpret_cast<cuthunder::Complex*>(rotP),
-                              reinterpret_cast<cuthunder::Complex*>(traP),
+    cuthunder::expectGlobal3D(iGPU,
+                              stream,
+                              reinterpret_cast<cuthunder::Complex**>(devrotP),
+                              reinterpret_cast<cuthunder::Complex**>(devtraP),
+                              reinterpret_cast<cuthunder::Complex*>(rotP),
                               datPR,
                               datPI,
                               ctfP,
@@ -499,245 +550,435 @@ void ExpectGlobal3D(Complex* rotP,
                               nR,
                               nT,
                               npxl,
-                              imgNum);
+                              imgNum,
+                              nGPU);
 }
 
-void InsertI2D(Complex* F2D,
-               RFLOAT* T2D,
-               double* O2D,
-               int* counter,
-               MPI_Comm& hemi,
-               MPI_Comm& slav,
+void freeRotran(std::vector<int>& iGPU,
+                Complex** devrotP,
+                Complex** devtraP,
+                double** devRotMat,
+                int nGPU)
+{
+    LOG(INFO) << "Prepare Parameter for Expectation Global.";
+
+    cuthunder::freeRotran(iGPU,
+                          reinterpret_cast<cuthunder::Complex**>(devrotP),
+                          reinterpret_cast<cuthunder::Complex**>(devtraP),
+                          devRotMat,
+                          nGPU);
+}
+
+void allocFTO(std::vector<int>& iGPU,
+              std::vector<void*>& stream,
+              Complex* volumeF,
+              Complex** dev_F,
+              RFLOAT* volumeT,
+              RFLOAT** dev_T,
+              RFLOAT* arrayTau,
+              RFLOAT** devTau,
+              double* arrayO,
+              double** dev_O,
+              int* arrayC,
+              int** dev_C,
+              const int* iCol,
+              int** deviCol,
+              const int* iRow,
+              int** deviRow,
+              const int* iSig,
+              int** deviSig,
+              bool mode,
+              int nk,
+              int tauSize,
+              int vdim,
+              int npxl,
+              int nGPU)
+{
+
+    cuthunder::allocFTO(iGPU,
+                        stream,
+                        reinterpret_cast<cuthunder::Complex*>(volumeF),
+                        reinterpret_cast<cuthunder::Complex**>(dev_F),
+                        volumeT,
+                        dev_T,
+                        arrayTau,
+                        devTau,
+                        arrayO,
+                        dev_O,
+                        arrayC,
+                        dev_C,
+                        iCol,
+                        deviCol,
+                        iRow,
+                        deviRow,
+                        iSig,
+                        deviSig,
+                        mode,
+                        nk,
+                        tauSize,
+                        vdim,
+                        npxl,
+                        nGPU);
+
+}
+
+void InsertI2D(std::vector<int>& iGPU,
+               std::vector<void*>& stream,
+               Complex* volumeF,
+               Complex** dev_F,
+               RFLOAT* volumeT,
+               RFLOAT** dev_T,
+               RFLOAT* arrayTau,
+               RFLOAT** devTau,
+               double* arrayO,
+               double** dev_O,
+               int* arrayC,
+               int** dev_C,
                MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
                MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
                MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
                MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-               RFLOAT* tau,
                RFLOAT* w,
                double* offS,
+               double *nR,
+               double *nT,
+               double *nD,
                int* nC,
-               double* nR,
-               double* nT,
-               double* nD,
-               CTFAttr* ctfaData,
-               const int* iCol,
-               const int* iRow,
-               const int* iSig,
+               CTFAttr *ctfaData,
+               int** deviCol,
+               int** deviRow,
+               int** deviSig,
                RFLOAT pixelSize,
                bool cSearch,
-               int tauSize,
                int nk,
                int opf,
                int npxl,
                int mReco,
+               int tauSize,
                int idim,
                int vdim,
-               int imgNum)
+               int imgNum,
+               int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Tranlate and Insert.";
 
-    cuthunder::InsertI2D(reinterpret_cast<cuthunder::Complex*>(F2D),
-                         T2D,
-                         O2D,
-                         counter,
-                         hemi,
-                         slav,
+    cuthunder::InsertI2D(iGPU,
+                         stream,
+                         reinterpret_cast<cuthunder::Complex*>(volumeF),
+                         reinterpret_cast<cuthunder::Complex**>(dev_F),
+                         volumeT,
+                         dev_T,
+                         arrayTau,
+                         devTau,
+                         arrayO,
+                         dev_O,
+                         arrayC,
+                         dev_C,
                          datPR,
                          datPI,
                          ctfP,
                          sigRcpP,
-                         tau,
                          w,
                          offS,
-                         nC,
                          nR,
                          nT,
                          nD,
+                         nC,
                          reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
-                         iCol,
-                         iRow,
-                         iSig,
+                         deviCol,
+                         deviRow,
+                         deviSig,
                          pixelSize,
                          cSearch,
-                         tauSize,
                          nk,
                          opf,
                          npxl,
                          mReco,
+                         tauSize,
                          idim,
                          vdim,
-                         imgNum);
+                         imgNum,
+                         nGPU);
 }
 
-void InsertFT(Volume& F3D,
-              Volume& T3D,
-              double* O3D,
-              int* counter,
-              MPI_Comm& hemi,
-              MPI_Comm& slav,
+void InsertFT(std::vector<int>& iGPU,
+              std::vector<void*>& stream,
+              Complex* volumeF,
+              Complex** dev_F,
+              RFLOAT* volumeT,
+              RFLOAT** dev_T,
+              RFLOAT* arrayTau,
+              RFLOAT** devTau,
+              double* arrayO,
+              double** dev_O,
+              int* arrayC,
+              int** dev_C,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-              RFLOAT* tau,
-              CTFAttr* ctfaData,
-              double* offS,
               RFLOAT* w,
+              double* offS,
               double* nR,
               double* nT,
               double* nD,
               int* nC,
-              const int* iCol,
-              const int* iRow,
-              const int* iSig,
+              CTFAttr* ctfaData,
+              int** deviCol,
+              int** deviRow,
+              int** deviSig,
               RFLOAT pixelSize,
               bool cSearch,
-              int tauSize,
+              int kIdx,
               int opf,
               int npxl,
               int mReco,
+              int tauSize,
+              int imgNum,
               int idim,
-              int dimSize,
-              int imgNum)
+              int vdim,
+              int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Tranlate and Insert.";
 
-    Complex *comF3D = &F3D[0];
-
-    RFLOAT *douT3D = new RFLOAT[dimSize];
-	for(int i = 0; i < dimSize; i++)
-	{
-        douT3D[i] = REAL(T3D[i]);
-	}
-
-    cuthunder::InsertFT(reinterpret_cast<cuthunder::Complex*>(comF3D),
-                        douT3D,
-                        O3D,
-                        counter,
-                        hemi,
-                        slav,
+    cuthunder::InsertFT(iGPU,
+                        stream,
+                        reinterpret_cast<cuthunder::Complex*>(volumeF),
+                        reinterpret_cast<cuthunder::Complex**>(dev_F),
+                        volumeT,
+                        dev_T,
+                        arrayTau,
+                        devTau,
+                        arrayO,
+                        dev_O,
+                        arrayC,
+                        dev_C,
                         datPR,
                         datPI,
                         ctfP,
                         sigRcpP,
-                        tau,
-                        reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
-                        offS,
                         w,
+                        offS,
                         nR,
                         nT,
                         nD,
                         nC,
-                        iCol,
-                        iRow,
-                        iSig,
+                        reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
+                        deviCol,
+                        deviRow,
+                        deviSig,
                         pixelSize,
                         cSearch,
-                        tauSize,
+                        kIdx,
                         opf,
                         npxl,
                         mReco,
+                        tauSize,
                         imgNum,
                         idim,
-                        F3D.nSlcFT());
-
-    for(int i = 0; i < dimSize; i++)
-	{
-        T3D[i] = COMPLEX(douT3D[i], 0);
-	}
-
-    delete[]douT3D;
+                        vdim,
+                        nGPU);
 }
 
-void InsertFT(Volume& F3D,
-              Volume& T3D,
-              double* O3D,
-              int* counter,
-              MPI_Comm& hemi,
-              MPI_Comm& slav,
+void InsertFT(std::vector<int>& iGPU,
+              std::vector<void*>& stream,
+              Complex* volumeF,
+              Complex** dev_F,
+              RFLOAT* volumeT,
+              RFLOAT** dev_T,
+              RFLOAT* arrayTau,
+              RFLOAT** devTau,
+              double* arrayO,
+              double** dev_O,
+              int* arrayC,
+              int** dev_C,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-              RFLOAT* tau,
-              CTFAttr* ctfaData,
-              double* offS,
               RFLOAT* w,
+              double* offS,
               double* nR,
               double* nT,
               double* nD,
-              const int* iCol,
-              const int* iRow,
-              const int* iSig,
+              CTFAttr* ctfaData,
+              int** deviCol,
+              int** deviRow,
+              int** deviSig,
               RFLOAT pixelSize,
               bool cSearch,
-              int tauSize,
               int opf,
               int npxl,
               int mReco,
+              int tauSize,
+              int imgNum,
               int idim,
-              int dimSize,
-              int imgNum)
+              int vdim,
+              int nGPU)
 {
     LOG(INFO) << "Prepare Parameter for Tranlate and Insert.";
 
-    Complex *comF3D = &F3D[0];
-
-    RFLOAT *douT3D = new RFLOAT[dimSize];
-	for(int i = 0; i < dimSize; i++)
-	{
-        douT3D[i] = REAL(T3D[i]);
-	}
-
-    cuthunder::InsertFT(reinterpret_cast<cuthunder::Complex*>(comF3D),
-                        douT3D,
-                        O3D,
-                        counter,
-                        hemi,
-                        slav,
+    cuthunder::InsertFT(iGPU,
+                        stream,
+                        reinterpret_cast<cuthunder::Complex*>(volumeF),
+                        reinterpret_cast<cuthunder::Complex**>(dev_F),
+                        volumeT,
+                        dev_T,
+                        arrayTau,
+                        devTau,
+                        arrayO,
+                        dev_O,
+                        arrayC,
+                        dev_C,
                         datPR,
                         datPI,
                         ctfP,
                         sigRcpP,
-                        tau,
-                        reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
-                        offS,
                         w,
+                        offS,
                         nR,
                         nT,
                         nD,
-                        iCol,
-                        iRow,
-                        iSig,
+                        reinterpret_cast<cuthunder::CTFAttr*>(ctfaData),
+                        deviCol,
+                        deviRow,
+                        deviSig,
                         pixelSize,
                         cSearch,
-                        tauSize,
                         opf,
                         npxl,
                         mReco,
+                        tauSize,
                         imgNum,
                         idim,
-                        F3D.nSlcFT());
+                        vdim,
+                        nGPU);
+}
+
+void allReduceFTO(std::vector<int>& iGPU,
+                  std::vector<void*>& stream,
+                  Complex* volumeF,
+                  Complex** dev_F,
+                  RFLOAT* volumeT,
+                  RFLOAT** dev_T,
+                  RFLOAT* arrayTau,
+                  RFLOAT** devTau,
+                  double* arrayO,
+                  double** dev_O,
+                  int* arrayC,
+                  int** dev_C,
+                  MPI_Comm& hemi,
+                  bool mode,
+                  int kIdx,
+                  int nk,
+                  int tauSize,
+                  int vdim,
+                  int nGPU)
+{
+    cuthunder::allReduceFTO(iGPU,
+                            stream,
+                            reinterpret_cast<cuthunder::Complex*>(volumeF),
+                            reinterpret_cast<cuthunder::Complex**>(dev_F),
+                            volumeT,
+                            dev_T,
+                            arrayTau,
+                            devTau,
+                            arrayO,
+                            dev_O,
+                            arrayC,
+                            dev_C,
+                            hemi,
+                            mode,
+                            kIdx,
+                            nk,
+                            tauSize,
+                            vdim,
+                            nGPU);
+}
+
+void freeFTO(std::vector<int>& iGPU,
+             Complex* volumeF,
+             Complex** dev_F,
+             RFLOAT* volumeT,
+             RFLOAT** dev_T,
+             RFLOAT* arrayTau,
+             RFLOAT** devTau,
+             double* arrayO,
+             double** dev_O,
+             int* arrayC,
+             int** dev_C,
+             int** deviCol,
+             int** deviRow,
+             int** deviSig,
+             int nGPU)
+{
+    cuthunder::freeFTO(iGPU,
+                       reinterpret_cast<cuthunder::Complex*>(volumeF),
+                       reinterpret_cast<cuthunder::Complex**>(dev_F),
+                       volumeT,
+                       dev_T,
+                       arrayTau,
+                       devTau,
+                       arrayO,
+                       dev_O,
+                       arrayC,
+                       dev_C,
+                       deviCol,
+                       deviRow,
+                       deviSig,
+                       nGPU);
+
+}
+
+void normalizeTF(std::vector<int>& iGPU,
+                 std::vector<void*>& stream,
+                 Volume& F3D,
+	             Volume& T3D,
+                 int nGPU)
+{
+	LOG(INFO) << "Step1: Prepare Parameter for NormalizeT.";
+
+	RFLOAT sf = 1.0 / REAL(T3D[0]);
+    int dim = T3D.nSlcFT();
+    int dimSize = dim * dim * (dim / 2 + 1);
+
+    Complex *comF3D = &F3D[0];
+	Complex *comT3D = &T3D[0];
+    RFLOAT *douT3D = new RFLOAT[dimSize];
+	for(int i = 0; i < dimSize; i++)
+	{
+        douT3D[i] = REAL(comT3D[i]);
+	}
+
+    LOG(INFO) << "Step2: Start PrepareTF...";
+    cuthunder::normalizeTF(iGPU,
+                           stream,
+                           reinterpret_cast<cuthunder::Complex*>(comF3D),
+                           douT3D,
+                           sf,
+                           nGPU,
+                           dim);
 
     for(int i = 0; i < dimSize; i++)
 	{
-        T3D[i] = COMPLEX(douT3D[i], 0);
+        comT3D[i] = COMPLEX(douT3D[i], 0);
 	}
 
     delete[]douT3D;
 }
 
-void PrepareTF(int gpuIdx,
-               Volume& F3D,
-	           Volume& T3D,
-	           double* symMat,
-               int nSymmetryElement,
-               int maxRadius,
-	           int pf)
+void symetrizeTF(std::vector<int>& iGPU,
+                 std::vector<void*>& stream,
+                 Volume& F3D,
+	             Volume& T3D,
+	             double* symMat,
+                 int nGPU,
+                 int nSymmetryElement,
+                 int maxRadius,
+	             int pf)
 {
-	LOG(INFO) << "Step1: Prepare Parameter for NormalizeT.";
+	LOG(INFO) << "Step1: Prepare Parameter for SymetrizeT.";
 
-	RFLOAT sf = 1.0 / REAL(T3D[0]);
     int dim = T3D.nSlcFT();
     int dimSize = dim * dim * (dim / 2 + 1);
     int r = (maxRadius * pf + 1) * (maxRadius * pf + 1);
@@ -750,18 +991,17 @@ void PrepareTF(int gpuIdx,
         douT3D[i] = REAL(comT3D[i]);
 	}
 
-
-    LOG(INFO) << "Step2: Start PrepareTF...";
-
-    cuthunder::PrepareTF(gpuIdx,
-                         reinterpret_cast<cuthunder::Complex*>(comF3D),
-                         douT3D,
-                         symMat,
-                         sf,
-                         nSymmetryElement,
-                         LINEAR_INTERP,
-                         dim,
-                         r);
+    LOG(INFO) << "Step2: Start SymetrizeTF...";
+    cuthunder::symmetrizeTF(iGPU,
+                            stream,
+                            reinterpret_cast<cuthunder::Complex*>(comF3D),
+                            douT3D,
+                            symMat,
+                            nGPU,
+                            nSymmetryElement,
+                            LINEAR_INTERP,
+                            dim,
+                            r);
 
     for(int i = 0; i < dimSize; i++)
 	{
@@ -771,42 +1011,289 @@ void PrepareTF(int gpuIdx,
     delete[]douT3D;
 }
 
-void ExposePT2D(int gpuIdx,
-                RFLOAT* T2D,
-	            int maxRadius,
-	            int pf,
-                int dim,
-	            vec FSC,
-	            bool joinHalf,
-                const int wienerF)
+void reconstructG2D(std::vector<int>& iGPU,
+                    std::vector<void*>& stream,
+                    TabFunction& kernelRL,
+                    Complex* ref,
+                    Complex* modelF,
+                    RFLOAT* modelT,
+                    RFLOAT* fscMat,
+                    RFLOAT nf,
+                    bool map,
+                    bool gridCorr,
+	                bool joinHalf,
+                    int fscMatSize,
+	                int maxRadius,
+	                int pf,
+                    int _N,
+                    int vdim,
+                    int kbatch,
+                    int nThread,
+                    int nGPU)
 {
-	LOG(INFO) << "Step1: Prepare Parameter for T.";
+    int dimSize = vdim * (vdim / 2 + 1);
+    int padSize = _N * pf;
+    int r = (maxRadius * pf) * (maxRadius * pf);
+    RFLOAT *dev_T[nGPU];
+    RFLOAT *dev_W[nGPU];
 
-    int fscMatsize = FSC.size();
-    RFLOAT *FSCmat = new RFLOAT[fscMatsize];
-    Map<vec>(FSCmat, FSC.rows(), FSC.cols()) = FSC;
+    cuthunder::allocVolume(iGPU,
+                           dev_T,
+                           dev_W,
+                           nGPU,
+                           kbatch * dimSize);
 
-    LOG(INFO) << "Step2: Start CalculateT...";
+#ifdef RECONSTRUCTOR_WIENER_FILTER_FSC
+    if (map)
+    {
+        cuthunder::CalculateT2D(stream,
+                                iGPU,
+                                modelT,
+                                dev_T,
+                                fscMat,
+                                joinHalf,
+                                fscMatSize,
+                                maxRadius,
+                                WIENER_FACTOR_MIN_R,
+                                vdim,
+                                pf,
+                                kbatch,
+                                nGPU);
+    }
+#endif
+    if (gridCorr)
+    {
+        RFLOAT *tabData = kernelRL.getData();
+        RFLOAT begin = kernelRL.getBegin();
+        RFLOAT stop = kernelRL.getStop();
+        RFLOAT step = kernelRL.getStep();
+        int tabSize = kernelRL.getTabSize();
+        
+        Complex* devFourC[nGPU];
+        RFLOAT* devRealC[nGPU];
+        RFLOAT* dev_tab[nGPU];
+        RFLOAT* devDiff[nGPU];
+        RFLOAT* devMax[nGPU];
+        int* devCount[nGPU];
+        std::vector<void*> planC2R;
+        std::vector<void*> planR2C;
+        
+        cuthunder::allocDevicePoint2D(stream,
+                                      iGPU,
+                                      planC2R,
+                                      planR2C,
+                                      reinterpret_cast<cuthunder::Complex**>(devFourC),
+                                      devRealC,
+                                      dev_T,
+                                      dev_tab,
+                                      devDiff,
+                                      devMax,
+                                      tabData,
+                                      devCount,
+                                      tabSize,
+                                      kbatch,
+                                      vdim,
+                                      nGPU);
+        
+        int gpuIdx = 0;
+        int streamIdx = 0;
+        #pragma omp parallel for num_threads(nGPU)
+        for (int t = 0; t < kbatch; t++)
+        {
+            gpuIdx = t % nGPU;
+            streamIdx = gpuIdx * (stream.size() / nGPU) 
+                      + (t / nGPU); 
+            
+            cuthunder::CalculateW2D(iGPU[gpuIdx],
+                                    streamIdx,
+                                    stream[streamIdx],
+                                    planC2R[streamIdx],
+                                    planR2C[streamIdx],
+                                    reinterpret_cast<cuthunder::Complex**>(devFourC),
+                                    devRealC,
+                                    dev_T,
+                                    dev_W,
+                                    dev_tab,
+                                    devDiff,
+                                    devMax,
+                                    modelT,
+                                    tabData,
+                                    devCount,
+                                    begin,
+                                    stop,
+                                    step,
+                                    nf,
+                                    DIFF_C_THRES,
+                                    DIFF_C_DECREASE_THRES,
+                                    map,
+                                    t,
+                                    tabSize,
+                                    vdim,
+                                    r,
+                                    MAX_N_ITER_BALANCE,
+                                    MIN_N_ITER_BALANCE,
+                                    N_DIFF_C_NO_DECREASE,
+                                    padSize,
+                                    kbatch,
+                                    nGPU);
+        }
+            
+        cuthunder::freePoint2D(iGPU,
+                               planC2R,
+                               planR2C,
+                               reinterpret_cast<cuthunder::Complex**>(devFourC),
+                               devRealC,
+                               dev_T,
+                               dev_tab,
+                               devDiff,
+                               devMax,
+                               devCount,
+                               nGPU);
+    }
+    else
+    {
+        cuthunder::CalculateW2D(stream,
+                                iGPU,
+                                dev_T,
+                                dev_W,
+                                modelT,
+                                kbatch,
+                                vdim,
+                                r,
+                                nGPU);
+    }
+   
+    RFLOAT* padDstR[kbatch];
+    int pdim = _N * pf;
+    int pImgSizeRL = pdim * pdim; 
 
-    cuthunder::CalculateT2D(gpuIdx,
-                            T2D,
-                            FSCmat,
-                            fscMatsize,
-                            joinHalf,
-                            maxRadius,
-                            wienerF,
-                            dim,
-                            pf);
+    for (int t = 0; t < kbatch; t++)
+    {
+        padDstR[t] = (RFLOAT*)malloc(sizeof(RFLOAT) * pImgSizeRL);
+    }
 
-    delete[]FSCmat;
+    cuthunder::CalculateF2D(stream,
+                            iGPU,
+                            padDstR,
+                            dev_W,
+                            reinterpret_cast<cuthunder::Complex*>(modelF),
+                            kbatch,
+                            r,
+                            pdim,
+                            vdim,
+                            nGPU);
+    
+    RFLOAT* img[kbatch];
+    int tempDim = AROUND((1.0 / pf) * pdim);
+    int tempSize = tempDim * tempDim;
+    for (int t = 0; t < kbatch; t++)
+    {
+        img[t] = (RFLOAT*)malloc(sizeof(RFLOAT) * tempSize);
+    }
+
+    int idxI, idxP;
+    for (int t = 0; t < kbatch; t++)
+    {
+        #pragma omp parallel for num_threads(nThread)
+        for (int j = -tempDim / 2; j < tempDim / 2; j++)
+            for (int i = -tempDim / 2; i < tempDim / 2; i++)
+            {    
+                idxI = (j >= 0 ? j : j + tempDim) * tempDim
+                     + (i >= 0 ? i : i + tempDim);
+                
+                idxP = (j >= 0 ? j : j + pdim) * pdim
+                     + (i >= 0 ? i : i + pdim);
+                
+                img[t][idxI] = padDstR[t][idxP];
+            }
+    }
+
+    RFLOAT* imgDst[kbatch];
+    for (int t = 0; t < kbatch; t++)
+    {
+        imgDst[t] = (RFLOAT*)malloc(sizeof(RFLOAT) * _N * _N);
+    }
+    
+    for (int t = 0; t < kbatch; t++)
+    {
+        #pragma omp parallel for num_threads(nThread)
+        for (int j = -tempDim / 2; j < tempDim / 2; j++)
+            for (int i = -tempDim / 2; i < tempDim / 2; i++)
+            {    
+                idxI = (j >= 0 ? j : j + tempDim) * tempDim
+                     + (i >= 0 ? i : i + tempDim);
+                
+                idxP = (j >= 0 ? j : j + _N) * _N
+                     + (i >= 0 ? i : i + _N);
+                
+                imgDst[t][idxP] = img[t][idxI];
+            }
+    }
+    
+    for (int t = 0; t < kbatch; t++)
+    {
+        free(img[t]);
+    }
+    
+    RFLOAT *mkbRL = new RFLOAT[(_N / 2 + 1) * (_N / 2 + 1)];
+    
+    #pragma omp parallel for num_threads(nThread)
+    for (int j = 0; j <= _N / 2; j++)
+    { 
+        for (int i = 0; i <= _N / 2; i++) 
+        {
+            size_t index = j * (_N / 2 + 1) + i;
+#ifdef RECONSTRUCTOR_MKB_KERNEL
+                mkbRL[index] = MKB_RL(NORM(i, j) / padSize,
+                                  _a * _pf,
+                                  _alpha);
+#endif
+#ifdef RECONSTRUCTOR_TRILINEAR_KERNEL
+                mkbRL[index] = TIK_RL(NORM(i, j) / padSize);
+#endif
+        }
+    }
+    
+    cuthunder::CorrSoftMaskF2D(stream,
+                               iGPU,
+                               reinterpret_cast<cuthunder::Complex*>(ref),
+                               imgDst,
+                               mkbRL,
+                               nf,
+                               kbatch,
+                               _N,
+                               nGPU);
+   
+    for (int t = 0; t < kbatch; t++)
+    {
+        free(imgDst[t]);
+    }
+    
+    delete[] mkbRL;
 }
 
-void ExposePT(int gpuIdx,
+void allocVolume(std::vector<int>& iGPU,
+                 RFLOAT** dev_T,
+                 RFLOAT** dev_W,
+                 int nGPU,
+                 size_t dimSize)
+{
+    cuthunder::allocVolume(iGPU,
+                           dev_T,
+                           dev_W,
+                           nGPU,
+                           dimSize);
+}
+
+void ExposePT(std::vector<void*>& stream,
+              std::vector<int>& iGPU,
               RFLOAT* T3D,
+              RFLOAT** dev_T,
+	          vec FSC,
+	          int nGPU,
 	          int maxRadius,
 	          int pf,
               int dim,
-	          vec FSC,
 	          bool joinHalf,
               const int wienerF)
 {
@@ -818,303 +1305,172 @@ void ExposePT(int gpuIdx,
 
     LOG(INFO) << "Step2: Start CalculateT...";
 
-    cuthunder::CalculateT(gpuIdx,
+    cuthunder::CalculateT(stream,
+                          iGPU,
                           T3D,
+                          dev_T,
                           FSCmat,
                           fscMatsize,
                           joinHalf,
                           maxRadius,
                           wienerF,
+                          nGPU,
                           dim,
                           pf);
 
     delete[]FSCmat;
 }
 
-void ExposeWT2D(int gpuIdx,
-                RFLOAT* T2D,
-                RFLOAT* W2D,
-                TabFunction& kernelRL,
-                RFLOAT nf,
-                int maxRadius,
-                int pf,
-                int dim,
-                int maxIter,
-                int minIter,
-                int size)
+void gridCorrection(std::vector<void*>& stream,
+                    std::vector<int>& iGPU,
+                    Volume& C3D,
+                    RFLOAT* volumeT,
+                    RFLOAT** dev_W,
+                    RFLOAT** dev_T,
+                    TabFunction& kernelRL,
+                    FFT& fft,
+                    RFLOAT nf,
+                    int nGPU,
+                    int maxRadius,
+                    int pf,
+                    int _N,
+                    bool map,
+                    int nThread)
 {
-    LOG(INFO) << "Step1: Prepare Parameter for WC.";
-
-    RFLOAT *tabdata = kernelRL.getData();
+    Complex *comC3D;
+    RFLOAT *realC3D;
+    int buffNum = stream.size();
+    int dim = C3D.nSlcRL();
+    size_t dimSize = dim * dim * (dim / 2 + 1);
+    Complex* devPartC[buffNum];
+    RFLOAT* dev_tab[nGPU];
+    RFLOAT* devDiff[nGPU];
+    RFLOAT* devMax[nGPU];
+    int* devCount[nGPU];
+    
+    RFLOAT* volumeC = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
+    RFLOAT begin = kernelRL.getBegin();
+    RFLOAT stop = kernelRL.getStop();
     RFLOAT step = kernelRL.getStep();
-    int padSize = pf * size;
+    RFLOAT diffC = TS_MAX_RFLOAT_VALUE;
+    RFLOAT diffCPrev = TS_MAX_RFLOAT_VALUE;
     int r = (maxRadius * pf) * (maxRadius * pf);
+    int padSize = pf * _N;
+    int tabSize = kernelRL.getTabSize();
 
-    LOG(INFO) << "Step2: Start Calculate C...";
-
-    cuthunder::CalculateW2D(gpuIdx,
-                            T2D,
-                            W2D,
-                            tabdata,
-                            0,
-                            1,
-                            step,
-                            1e5,
-                            dim,
-                            r,
-                            nf,
-                            maxIter,
-                            minIter,
-                            padSize);
-}
-
-void AllocDevicePoint(int gpuIdx,
-                      Complex** dev_C,
-                      RFLOAT** dev_W,
-                      RFLOAT** dev_T,
-                      RFLOAT** dev_tab,
-                      RFLOAT** devDiff,
-                      RFLOAT** devMax,
-                      int** devCount,
-                      void** stream,
-                      int streamNum,
-                      int tabSize,
-                      int dim)
-{
-    cuthunder::allocDevicePoint(gpuIdx,
-                                reinterpret_cast<cuthunder::Complex**>(dev_C),
-                                dev_W,
-                                dev_T,
+    cuthunder::allocDevicePoint(iGPU,
+                                reinterpret_cast<cuthunder::Complex**>(devPartC),
                                 dev_tab,
                                 devDiff,
                                 devMax,
                                 devCount,
-                                stream,
-                                streamNum,
                                 tabSize,
-                                dim);
-}
+                                dim,
+                                nGPU);
 
-void HostDeviceInit(int gpuIdx,
-                    Volume& C3D,
-                    RFLOAT* W3D,
-                    RFLOAT* T3D,
-                    RFLOAT* tab,
-                    RFLOAT* dev_W,
-                    RFLOAT* dev_T,
-                    RFLOAT* dev_tab,
-                    void** stream,
-                    int streamNum,
-                    int tabSize,
-                    int maxRadius,
-                    int pf,
-                    int dim)
-{
-    int r = (maxRadius * pf) * (maxRadius * pf);
-
-    Complex *comC3D = &C3D[0];
-
-    cuthunder::hostDeviceInit(gpuIdx,
-                              reinterpret_cast<cuthunder::Complex*>(comC3D),
-                              W3D,
-                              T3D,
-                              tab,
+    cuthunder::hostDeviceInit(iGPU,
+                              stream,
+                              volumeC,
+                              volumeT,
+                              kernelRL.getData(),
                               dev_W,
                               dev_T,
                               dev_tab,
-                              stream,
-                              streamNum,
+                              nGPU,
                               tabSize,
                               r,
+                              map,
                               dim);
-}
+            
+    int m = 0;
+    int nDiffCNoDecrease = 0;
+    for (m = 0; m < MAX_N_ITER_BALANCE; m++)
+    {
+        cuthunder::CalculateC(iGPU,
+                              stream,
+                              volumeC,
+                              reinterpret_cast<cuthunder::Complex**>(devPartC),
+                              dev_T,
+                              dev_W,
+                              nGPU,
+                              dim);
+        
+        #pragma omp parallel for num_threads(nThread)
+        for(size_t i = 0; i < dimSize; i++)
+	    {
+            C3D[i].dat[0] = volumeC[i];
+            C3D[i].dat[1] = 0;
+	    }
+        
+        fft.bwExecutePlan(C3D, nThread);
+        
+        realC3D = &C3D(0);
+        cuthunder::ConvoluteC(iGPU,
+                              stream,
+                              realC3D,
+                              reinterpret_cast<cuthunder::Complex**>(devPartC),
+                              dev_tab,
+                              begin,
+                              stop,
+                              step,
+                              nf,
+                              nGPU,
+                              tabSize,
+                              padSize,
+                              dim);
+        
+        fft.fwExecutePlan(C3D);
+        
+        comC3D = &C3D[0];
+        diffCPrev = diffC;
+        
+        cuthunder::UpdateWC(iGPU,
+                            stream,
+                            reinterpret_cast<cuthunder::Complex*>(comC3D),
+                            reinterpret_cast<cuthunder::Complex**>(devPartC),
+                            dev_W,
+                            devDiff,
+                            devMax,
+                            devCount,
+                            diffC,
+                            nGPU,
+                            r,
+                            dim);
+        
+        if (diffC > diffCPrev * DIFF_C_DECREASE_THRES)
+            nDiffCNoDecrease += 1;
+        else
+            nDiffCNoDecrease = 0;
 
-void ExposeC(int gpuIdx,
-             Volume& C3D,
-             Complex* dev_C,
-             RFLOAT* dev_T,
-             RFLOAT* dev_W,
-             void** stream,
-             int streamNum,
-             int dim)
-{
-    Complex *comC3D = &C3D[0];
-
-    cuthunder::CalculateC(gpuIdx,
-                          reinterpret_cast<cuthunder::Complex*>(comC3D),
-                          reinterpret_cast<cuthunder::Complex*>(dev_C),
-                          dev_T,
-                          dev_W,
-                          stream,
-                          streamNum,
-                          dim);
-}
-
-void ExposeForConvC(int gpuIdx,
-                    Volume& C3D,
-                    Complex* dev_C,
-                    RFLOAT* dev_tab,
-                    void** stream,
-                    TabFunction& kernelRL,
-                    RFLOAT nf,
-                    int streamNum,
-                    int tabSize,
-                    int pf,
-                    int size)
-{
-    int dim = C3D.nSlcRL();
-    int padSize = pf * size;
-    RFLOAT step = kernelRL.getStep();
-
-    RFLOAT *comC3D = &C3D(0);
-
-    cuthunder::ConvoluteC(gpuIdx,
-                          comC3D,
-                          reinterpret_cast<RFLOAT*>(dev_C),
-                          dev_tab,
-                          stream,
-                          0,
-                          1,
-                          step,
-                          tabSize,
-                          nf,
-                          streamNum,
-                          padSize,
-                          dim);
-}
-
-void ExposeWC(int gpuIdx,
-              Volume& C3D,
-              Complex* dev_C,
-              RFLOAT* diff,
-              RFLOAT* cmax,
-              RFLOAT* dev_W,
-              RFLOAT* devDiff,
-              RFLOAT* devMax,
-              int *devCount,
-              int* counter,
-              void** stream,
-              RFLOAT& diffC,
-              int streamNum,
-              int maxRadius,
-              int pf)
-{
-    int dim = C3D.nSlcFT();
-    int r = (maxRadius * pf) * (maxRadius * pf);
-
-    Complex *comC3D = &C3D[0];
-    cuthunder::UpdateWC(gpuIdx,
-                        reinterpret_cast<cuthunder::Complex*>(comC3D),
-                        reinterpret_cast<cuthunder::Complex*>(dev_C),
-                        diff,
-                        cmax,
-                        dev_W,
-                        devDiff,
-                        devMax,
-                        devCount,
-                        counter,
-                        stream,
-                        diffC,
-                        streamNum,
-                        r,
-                        dim);
-}
-
-void FreeDevHostPoint(int gpuIdx,
-                      Complex** dev_C,
-                      RFLOAT** dev_W,
-                      RFLOAT** dev_T,
-                      RFLOAT** dev_tab,
-                      RFLOAT** devDiff,
-                      RFLOAT** devMax,
-                      int** devCount,
-                      void** stream,
-                      Volume& C3D,
-                      RFLOAT* volumeW,
-                      RFLOAT* volumeT,
-                      int streamNum,
-                      int dim)
-{
-    Complex *comC3D = &C3D[0];
-
-    cuthunder::freeDevHostPoint(gpuIdx,
-                                reinterpret_cast<cuthunder::Complex**>(dev_C),
-                                dev_W,
+        if ((diffC < DIFF_C_THRES) ||
+            ((m >= MIN_N_ITER_BALANCE) &&
+            (nDiffCNoDecrease == N_DIFF_C_NO_DECREASE))) 
+            break;
+    }
+            
+    cuthunder::freeDevHostPoint(iGPU,
+                                reinterpret_cast<cuthunder::Complex**>(devPartC),
                                 dev_T,
                                 dev_tab,
                                 devDiff,
                                 devMax,
                                 devCount,
-                                stream,
-                                reinterpret_cast<cuthunder::Complex*>(comC3D),
-                                volumeW,
-                                volumeT,
-                                streamNum,
+                                volumeC,
+                                nGPU,
                                 dim);
+
+    free(volumeC);
 }
 
-void ExposeWT(int gpuIdx,
+void ExposeWT(std::vector<void*>& stream,
+              std::vector<int>& iGPU,
               RFLOAT* T3D,
-              RFLOAT* W3D,
-              TabFunction& kernelRL,
-              RFLOAT nf,
+              RFLOAT** dev_W,
+              RFLOAT** dev_T,
+              int nGPU,
               int maxRadius,
               int pf,
-              int dim,
-              int maxIter,
-              int minIter,
-              int size)
-{
-    LOG(INFO) << "Step1: Prepare Parameter for InitialW.";
-
-    RFLOAT *tabdata = kernelRL.getData();
-    RFLOAT step = kernelRL.getStep();
-    int padSize = pf * size;
-    int r = (maxRadius * pf) * (maxRadius * pf);
-
-    LOG(INFO) << "Step2: Start Calculate C...";
-
-    cuthunder::CalculateW(gpuIdx,
-                          T3D,
-                          W3D,
-                          tabdata,
-                          0,
-                          1,
-                          step,
-                          1e5,
-                          dim,
-                          r,
-                          nf,
-                          maxIter,
-                          minIter,
-                          padSize);
-}
-
-void ExposeWT2D(int gpuIdx,
-                RFLOAT* T2D,
-                RFLOAT* W2D,
-                int maxRadius,
-                int pf,
-                int dim)
-{
-    LOG(INFO) << "Step1: Prepare Parameter for InitialW.";
-
-    int r = (maxRadius * pf) * (maxRadius * pf);
-
-    LOG(INFO) << "Step2: Start Calculate W...";
-
-    cuthunder::CalculateW2D(gpuIdx,
-                            T2D,
-                            W2D,
-                            dim,
-                            r);
-}
-
-void ExposeWT(int gpuIdx,
-              RFLOAT* T3D,
-              RFLOAT* W3D,
-              int maxRadius,
-              int pf,
+              bool map,
               int dim)
 {
     LOG(INFO) << "Step1: Prepare Parameter for InitialW.";
@@ -1123,49 +1479,23 @@ void ExposeWT(int gpuIdx,
 
     LOG(INFO) << "Step2: Start Calculate W...";
 
-    cuthunder::CalculateW(gpuIdx,
+    cuthunder::CalculateW(stream,
+                          iGPU,
                           T3D,
-                          W3D,
+                          dev_W,
+                          dev_T,
+                          nGPU,
                           dim,
+                          map,
                           r);
 }
 
-void ExposePF2D(int gpuIdx,
-                Image& padDst,
-                Image& padDstR,
-                Image& F2D,
-                RFLOAT* W2D,
-                int maxRadius,
-                int pf)
-{
-    LOG(INFO) << "Step1: Prepare Parameter for pad.";
-
-    Complex *comPAD = &padDst[0];
-    Complex *comF2D = &F2D[0];
-    RFLOAT *comPADR = &padDstR(0);
-
-    LOG(INFO) << "Step2: Prepare Paramete for CalculateFW.";
-
-    int dim = F2D.nRowFT();
-    int pdim = padDst.nRowFT();
-    int r = (maxRadius * pf) * (maxRadius * pf);
-
-    LOG(INFO) << "Step4: Start PrepareF...";
-
-    cuthunder::CalculateF2D(gpuIdx,
-                            reinterpret_cast<cuthunder::Complex*>(comPAD),
-                            reinterpret_cast<cuthunder::Complex*>(comF2D),
-                            comPADR,
-                            W2D,
-                            r,
-                            pdim,
-                            dim);
-}
-
-void ExposePFW(int gpuIdx,
+void ExposePFW(std::vector<void*>& stream,
+               std::vector<int>& iGPU,
                Volume& padDst,
                Volume& F3D,
-               RFLOAT* W3D,
+               RFLOAT** dev_W,
+               int nGPU,
                int maxRadius,
                int pf)
 {
@@ -1180,17 +1510,18 @@ void ExposePFW(int gpuIdx,
 
     LOG(INFO) << "Step2: Start PrepareF...";
 
-    cuthunder::CalculateFW(gpuIdx,
+    cuthunder::CalculateFW(stream,
+                           iGPU,
                            reinterpret_cast<cuthunder::Complex*>(comPAD),
                            reinterpret_cast<cuthunder::Complex*>(comF3D),
-                           W3D,
+                           dev_W,
+                           nGPU,
                            r,
                            pdim,
                            dim);
 }
 
-void ExposePF(int gpuIdx,
-              Volume& padDst,
+void ExposePF(Volume& padDst,
               Volume& padDstR,
               Volume& F3D,
               RFLOAT* W3D,
@@ -1211,8 +1542,7 @@ void ExposePF(int gpuIdx,
 
     LOG(INFO) << "Step3: Start PrepareF...";
 
-    cuthunder::CalculateF(gpuIdx,
-                          reinterpret_cast<cuthunder::Complex*>(comPAD),
+    cuthunder::CalculateF(reinterpret_cast<cuthunder::Complex*>(comPAD),
                           reinterpret_cast<cuthunder::Complex*>(comF3D),
                           comPADR,
                           W3D,
@@ -1221,51 +1551,29 @@ void ExposePF(int gpuIdx,
                           dim);
 }
 
-void ExposeCorrF2D(int gpuIdx,
-                   Image& imgDst,
-                   Volume& dst,
-                   RFLOAT* mkbRL,
-                   RFLOAT nf)
-{
-    LOG(INFO) << "Step1: Prepare Parameter for CorrectingF.";
-
-    RFLOAT *comIDst = &imgDst(0);
-    Complex *comDst = &dst[0];
-    int dim = imgDst.nRowRL();
-
-    LOG(INFO) << "Step2: Start CorrSoftMaskF...";
-
-    cuthunder::CorrSoftMaskF2D(gpuIdx,
-                               comIDst,
-                               reinterpret_cast<cuthunder::Complex*>(comDst),
-                               mkbRL,
-                               nf,
-                               dim);
-
-}
-
-void ExposeCorrF(int gpuIdx,
+void ExposeCorrF(std::vector<void*>& stream,
+                 std::vector<int>& iGPU,
                  Volume& dst,
                  RFLOAT* mkbRL,
-                 RFLOAT nf)
+                 RFLOAT nf,
+                 int nGPU)
 {
     LOG(INFO) << "Step1: Prepare Parameter for CorrectingF.";
-
     RFLOAT *comDst = &dst(0);
     int dim = dst.nSlcRL();
-
+    
     LOG(INFO) << "Step2: Start CorrSoftMaskF...";
-
-    cuthunder::CorrSoftMaskF(gpuIdx,
+    cuthunder::CorrSoftMaskF(stream,
+                             iGPU,
                              comDst,
                              mkbRL,
                              nf,
+                             nGPU,
                              dim);
 
 }
 
-void ExposeCorrF(int gpuIdx,
-                 Volume& dstN,
+void ExposeCorrF(Volume& dstN,
                  Volume& dst,
                  RFLOAT* mkbRL,
                  RFLOAT nf)
@@ -1278,8 +1586,7 @@ void ExposeCorrF(int gpuIdx,
 
     LOG(INFO) << "Step2: Start CorrSoftMaskF...";
 
-    cuthunder::CorrSoftMaskF(gpuIdx,
-                             reinterpret_cast<cuthunder::Complex*>(comDst),
+    cuthunder::CorrSoftMaskF(reinterpret_cast<cuthunder::Complex*>(comDst),
                              comDstN,
                              mkbRL,
                              nf,
@@ -1287,32 +1594,36 @@ void ExposeCorrF(int gpuIdx,
 
 }
 
-void TranslateI2D(int gpuIdx,
-                  Image& img,
-                  double ox,
-                  double oy,
-                  int r)
+void TranslateI2D(std::vector<void*>& stream,
+                  std::vector<int>& iGPU,
+                  Complex* img,
+                  RFLOAT* ox,
+                  RFLOAT* oy,
+                  int kbatch,
+                  int r,
+                  int dim,
+                  int nGPU)
 {
     LOG(INFO) << "Step1: Prepare Parameter for TransImg.";
 
-    Complex *comImg = &img[0];
-    int dim = img.nRowRL();
-
-    LOG(INFO) << "Step4: Start PrepareF...";
-
-    cuthunder::TranslateI2D(gpuIdx,
-                            reinterpret_cast<cuthunder::Complex*>(comImg),
-                            (RFLOAT)ox,
-                            (RFLOAT)oy,
+    cuthunder::TranslateI2D(stream,
+                            iGPU,
+                            reinterpret_cast<cuthunder::Complex*>(img),
+                            ox,
+                            oy,
+                            kbatch,
                             r,
-                            dim);
+                            dim,
+                            nGPU);
 }
 
-void TranslateI(int gpuIdx,
+void TranslateI(std::vector<int>& iGPU,
+                std::vector<void*>& stream,
                 Volume& ref,
                 double ox,
                 double oy,
                 double oz,
+                int nGPU,
                 int r)
 {
     LOG(INFO) << "Step1: Prepare Parameter for TransImg.";
@@ -1322,11 +1633,13 @@ void TranslateI(int gpuIdx,
 
     LOG(INFO) << "Step4: Start PrepareF...";
 
-    cuthunder::TranslateI(gpuIdx,
+    cuthunder::TranslateI(iGPU,
+                          stream,
                           reinterpret_cast<cuthunder::Complex*>(comRef),
                           (RFLOAT)ox,
                           (RFLOAT)oy,
                           (RFLOAT)oz,
+                          nGPU,
                           r,
                           dim);
 }
@@ -1343,51 +1656,55 @@ void hostFree(Complex* img)
     cuthunder::hostFree(reinterpret_cast<cuthunder::Complex*>(img));
 }
 
-void reMask(Complex* img,
+void reMask(std::vector<void*>& stream,
+            std::vector<int>& iGPU,
+            Complex* img,
             RFLOAT maskRadius,
             RFLOAT pixelSize,
             RFLOAT ew,
             int idim,
-            int imgNum)
+            int imgNum,
+            int nGPU)
 {
     LOG(INFO) << "Step1: Prepare Parameter for Remask.";
 
-    //std::vector<cuthunder::Complex*> imgData;
-    //for (int i = 0; i < imgNum; i++)
-    //{
-    //    imgData.push_back(reinterpret_cast<cuthunder::Complex*>(&img[i][0]));
-    //}
-
-    cuthunder::reMask(reinterpret_cast<cuthunder::Complex*>(img),
+    cuthunder::reMask(stream,
+                      iGPU,
+                      reinterpret_cast<cuthunder::Complex*>(img),
                       maskRadius,
                       pixelSize,
                       ew,
                       idim,
-                      imgNum);
+                      imgNum,
+                      nGPU);
 }
 
-void GCTFinit(Complex* ctf,
+void GCTFinit(std::vector<void*>& stream,
+              std::vector<int>& iGPU,
+              Complex* ctf,
               vector<CTFAttr>& ctfAttr,
               RFLOAT pixelSize,
               int idim,
               int shift,
-              int imgNum)
+              int imgNum,
+              int nGPU)
 {
     LOG(INFO) << "Step1: Prepare Parameter for CTF calculation";
 
     std::vector<cuthunder::CTFAttr*> ctfaData;
-    //std::vector<cuthunder::Complex*> imgData;
 
     for (int i = 0; i < imgNum; i++)
     {
-        //imgData.push_back(reinterpret_cast<cuthunder::Complex*>(&img[i][0]));
         ctfaData.push_back(reinterpret_cast<cuthunder::CTFAttr*>(&ctfAttr[shift + i]));
     }
 
-    cuthunder::GCTF(reinterpret_cast<cuthunder::Complex*>(ctf),
+    cuthunder::GCTF(stream,
+                    iGPU,
+                    reinterpret_cast<cuthunder::Complex*>(ctf),
                     ctfaData,
                     pixelSize,
                     idim,
-                    imgNum);
+                    imgNum,
+                    nGPU);
 
 }

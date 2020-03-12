@@ -223,6 +223,29 @@ D_CALLABLE void addFTC(Complex* devDataF,
  * @param ...
  * @param ...
  */
+D_CALLABLE RFLOAT getTexture(RFLOAT iCol,
+                             RFLOAT iRow,
+                             RFLOAT iSlc,
+                             const int dim,
+                             cudaTextureObject_t texObject)
+{
+    if (iRow < 0) iRow += dim;
+    if (iSlc < 0) iSlc += dim;
+
+#ifdef SINGLE_PRECISION
+    float dval = tex3D<float>(texObject, iCol, iRow, iSlc);
+    return dval;
+#else
+    int2 dval = tex3D<int2>(texObject, iCol, iRow, iSlc);
+    return __hiloint2double(dval.y, dval.x);
+#endif    
+}
+
+/**
+ * @brief ...
+ * @param ...
+ * @param ...
+ */
 D_CALLABLE Complex getTextureC(RFLOAT iCol,
                                RFLOAT iRow,
                                RFLOAT iSlc,
@@ -321,6 +344,55 @@ D_CALLABLE Complex getByInterp2D(RFLOAT iCol,
  * @param ...
  * @param ...
  */
+D_CALLABLE RFLOAT getByInterpolationFT(RFLOAT iCol,
+                                       RFLOAT iRow,
+                                       RFLOAT iSlc,
+                                       const int interp,
+                                       const int dim,
+                                       cudaTextureObject_t texObject)
+{
+    if (iCol < 0)
+    {
+        iCol *= -1;
+        iRow *= -1;
+        iSlc *= -1;
+    }
+
+    if(interp == 0)
+    {
+        RFLOAT result = getTexture(iCol, 
+                                   iRow,
+                                   iSlc,
+                                   dim,
+                                   texObject);
+        return result;
+    }
+
+    RFLOAT w[2][2][2];
+    int x0[3];
+    RFLOAT x[3] = {iCol, iRow, iSlc};
+
+    WG_TRI_LINEAR_INTERPF(w, x0, x);
+
+    RFLOAT result = 0.0;
+    for (int k = 0; k < 2; k++)
+        for (int j = 0; j < 2; j++)
+            for (int i = 0; i < 2; i++){
+                result += getTexture((RFLOAT)x0[0] + i, 
+                                     (RFLOAT)x0[1] + j, 
+                                     (RFLOAT)x0[2] + k, 
+                                     dim, 
+                                     texObject)
+                        * w[k][j][i];
+            } 
+    return result;
+}
+
+/**
+ * @brief ...
+ * @param ...
+ * @param ...
+ */
 D_CALLABLE Complex getByInterpolationFTC(RFLOAT iCol,
                                          RFLOAT iRow,
                                          RFLOAT iSlc,
@@ -406,68 +478,32 @@ __global__ void kernel_ExpectPrectf(CTFAttr* dev_ctfa,
  * @param ...
  * @param ...
  */
-__global__ void kernel_TranslateL(Complex* devtraP,
-                                  double* devnT,
-                                  int* deviCol,
-                                  int* deviRow,
-                                  int idim,
-                                  int npxl)
-{
-    int i, j;
-
-    Complex imgTemp(0.0, 0.0);
-    RFLOAT phase, col, row;
-    col = (RFLOAT)(PI_2 * devnT[blockIdx.x * 2] / idim);
-    row = (RFLOAT)(PI_2 * devnT[blockIdx.x * 2 + 1] / idim);
-
-    int tIdx = blockIdx.x * npxl;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
-    {
-        i = deviCol[itr];
-        j = deviRow[itr];
-        phase = -1 * (i * col + j * row);
-#ifdef SINGLE_PRECISION
-        devtraP[tIdx + itr].set(cosf(phase), sinf(phase));
-#else
-        devtraP[tIdx + itr].set(cos(phase), sin(phase));
-#endif
-    }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
 __global__ void kernel_Translate(Complex* devtraP,
                                  double* dev_trans,
                                  int* deviCol,
                                  int* deviRow,
                                  int idim,
+                                 int batch,
                                  int npxl)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int tNum;
     int i, j;
-    int tranoff = blockIdx.x * 2;
-    int poff = blockIdx.x * npxl;
-
-    Complex imgTemp(0.0, 0.0);
     RFLOAT phase, col, row;
-
-    col = (RFLOAT)(PI_2 * dev_trans[tranoff] / idim);
-    row = (RFLOAT)(PI_2 * dev_trans[tranoff + 1] / idim);
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        i = deviCol[itr];
-        j = deviRow[itr];
+        tNum = itr / npxl;
+        i = deviCol[itr % npxl];
+        j = deviRow[itr % npxl];
+
+        col = (RFLOAT)(PI_2 * dev_trans[tNum * 2] / idim);
+        row = (RFLOAT)(PI_2 * dev_trans[tNum * 2 + 1] / idim);
 
         phase = -1 * (i * col + j * row);
-
 #ifdef SINGLE_PRECISION
-        devtraP[poff + itr].set(cosf(phase), sinf(phase));
+        devtraP[itr].set(cosf(phase), sinf(phase));
 #else
-        devtraP[poff + itr].set(cos(phase), sin(phase));
+        devtraP[itr].set(cos(phase), sin(phase));
 #endif
     }
 }
@@ -486,30 +522,36 @@ __global__ void kernel_CalCTFL(RFLOAT* devctfP,
                                RFLOAT conT,
                                RFLOAT k1,
                                RFLOAT k2,
+                               int dSize,
                                int npxl)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
     RFLOAT freq, ki;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    int dNum;
+    int pIdx;
+    for (int itr = tid; itr < npxl * dSize; itr += gridDim.x * blockDim.x)
     {
-        freq = devfreQ[itr] * devfreQ[itr];
+        dNum = itr / npxl;
+        pIdx = itr % npxl;
+        freq = devfreQ[pIdx] * devfreQ[pIdx];
 
         ki = k1
-           * devdefO[itr]
-           * devdP[blockIdx.x]
+           * devdefO[pIdx]
+           * devdP[dNum]
            * freq
            + k2
            * freq * freq
            - phaseShift;
 #ifdef SINGLE_PRECISION
-        devctfP[blockIdx.x * npxl + itr] = -sqrtf(1 - conT * conT)
-                                         * sinf(ki)
-                                         + conT
-                                         * cosf(ki);
+        devctfP[itr] = -sqrtf(1 - conT * conT)
+                     * sinf(ki)
+                     + conT
+                     * cosf(ki);
 #else
-        devctfP[blockIdx.x * npxl + itr] = -sqrt(1 - conT * conT)
-                                         * sin(ki)
-                                         + conT
-                                         * cos(ki);
+        devctfP[itr] = -sqrt(1 - conT * conT)
+                     * sin(ki)
+                     + conT
+                     * cos(ki);
 #endif
     }
 }
@@ -520,135 +562,50 @@ __global__ void kernel_CalCTFL(RFLOAT* devctfP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_getRotMatL(double* devRotm,
-                                  double* devnR,
-                                  int nR)
-{
-    extern __shared__ double matS[];
-
-    double *mat, *res;
-    mat = matS + threadIdx.x * 18;
-    res = mat  + 9;
-
-    mat[0] = 0; mat[4] = 0; mat[8] = 0;
-    mat[5] = devnR[threadIdx.x * 4 + 1];
-    mat[6] = devnR[threadIdx.x * 4 + 2];
-    mat[1] = devnR[threadIdx.x * 4 + 3];
-    mat[7] = -mat[5];
-    mat[2] = -mat[6];
-    mat[3] = -mat[1];
-
-    for(int i = 0; i < 9; i++)
-        res[i] = 0;
-
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)
-            for (int k = 0; k < 3; k++)
-                res[i + j * 3] += mat[i + k * 3] * mat[k + j * 3];
-
-    double scale = 2 * devnR[threadIdx.x * 4];
-    for (int n = 0; n < 9; n++)
-    {
-        mat[n] *= scale;
-        mat[n] += res[n] * 2;
-    }
-
-    mat[0] += 1;
-    mat[4] += 1;
-    mat[8] += 1;
-
-    for (int n = 0; n < 9; n++)
-    {
-        devRotm[threadIdx.x * 9 + n] = mat[n];
-    }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_getRotMat(double* devRotm,
+__global__ void kernel_getRotMat(double* devRotMat,
                                  double* devnR,
-                                 int nR)
+                                 int batch)
 {
     extern __shared__ double matRot[];
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-    if (tid >= nR)
-        return;
-
-    double *mat, *res;
-    mat = matRot + threadIdx.x * 18;
-    res = mat  + 9;
-
-    mat[0] = 0; mat[4] = 0; mat[8] = 0;
-    mat[5] = devnR[tid * 4 + 1];
-    mat[6] = devnR[tid * 4 + 2];
-    mat[1] = devnR[tid * 4 + 3];
-    mat[7] = -mat[5];
-    mat[2] = -mat[6];
-    mat[3] = -mat[1];
-
-    for(int i = 0; i < 9; i++)
-        res[i] = 0;
-
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)
-            for (int k = 0; k < 3; k++)
-                res[i + j * 3] += mat[i + k * 3] * mat[k + j * 3];
-
-    double scale = 2 * devnR[tid * 4];
-    for (int n = 0; n < 9; n++)
+    if (tid < batch)
     {
-        mat[n] *= scale;
-        mat[n] += res[n] * 2;
-    }
+        double *mat, *res;
+        mat = matRot + threadIdx.x * 18;
+        res = mat  + 9;
 
-    mat[0] += 1;
-    mat[4] += 1;
-    mat[8] += 1;
+        mat[0] = 0; mat[4] = 0; mat[8] = 0;
+        mat[5] = devnR[tid * 4 + 1];
+        mat[6] = devnR[tid * 4 + 2];
+        mat[1] = devnR[tid * 4 + 3];
+        mat[7] = -mat[5];
+        mat[2] = -mat[6];
+        mat[3] = -mat[1];
 
-    for (int n = 0; n < 9; n++)
-    {
-        devRotm[tid * 9 + n] = mat[n];
-    }
-}
+        for(int i = 0; i < 9; i++)
+            res[i] = 0;
 
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_Project3DL(Complex* priRotP,
-                                  double* devRotm,
-                                  int* deviCol,
-                                  int* deviRow,
-                                  int pf,
-                                  int vdim,
-                                  int npxl,
-                                  int interp,
-                                  cudaTextureObject_t texObject)
-{
-    Mat33 mat;
-    mat.init(&devRotm[blockIdx.x * 9], 0);
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                for (int k = 0; k < 3; k++)
+                    res[i + j * 3] += mat[i + k * 3] * mat[k + j * 3];
 
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
-    {
-        Vec3 newCor((double)(deviCol[itr] * pf),
-                    (double)(deviRow[itr] * pf),
-                    0);
+        double scale = 2 * devnR[tid * 4];
+        for (int n = 0; n < 9; n++)
+        {
+            mat[n] *= scale;
+            mat[n] += res[n] * 2;
+        }
 
-        Vec3 oldCor = mat * newCor;
+        mat[0] += 1;
+        mat[4] += 1;
+        mat[8] += 1;
 
-        priRotP[blockIdx.x * npxl + itr] = getByInterpolationFTC((RFLOAT)oldCor(0),
-                                                                 (RFLOAT)oldCor(1),
-                                                                 (RFLOAT)oldCor(2),
-                                                                 interp,
-                                                                 vdim,
-                                                                 texObject);
+        for (int n = 0; n < 9; n++)
+        {
+            devRotMat[tid * 9 + n] = mat[n];
+        }
     }
 }
 
@@ -659,121 +616,35 @@ __global__ void kernel_Project3DL(Complex* priRotP,
  * @param ...
  */
 __global__ void kernel_Project3D(Complex* priRotP,
-                                 double* devRotm,
+                                 double* devRotMat,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int pf,
                                  int vdim,
                                  int npxl,
                                  int interp,
                                  cudaTextureObject_t texObject)
 {
-    //extern __shared__ double rotMat[];
-
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int rNum;
     Mat33 mat;
-    mat.init(&devRotm[blockIdx.x * 9], 0);
-
-    //for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-    //    rotMat[itr] = devRotm[(blockIdx.x + shift) * 9 + itr];
-
-    //__syncthreads();
-    //mat.init(rotMat, 0);
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        Vec3 newCor((double)(deviCol[itr] * pf),
-                    (double)(deviRow[itr] * pf),
+        rNum = itr / npxl;
+        mat.init(&devRotMat[rNum * 9], 0);
+        
+        Vec3 newCor((double)(deviCol[itr % npxl] * pf),
+                    (double)(deviRow[itr % npxl] * pf),
                     0);
-
         Vec3 oldCor = mat * newCor;
 
-        priRotP[blockIdx.x * npxl + itr] = getByInterpolationFTC((RFLOAT)oldCor(0),
-                                                                 (RFLOAT)oldCor(1),
-                                                                 (RFLOAT)oldCor(2),
-                                                                 interp,
-                                                                 vdim,
-                                                                 texObject);
-    }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_Project3D(Complex* priRotP,
-                                 double* devRotm,
-                                 int* deviCol,
-                                 int* deviRow,
-                                 int shift,
-                                 int pf,
-                                 int vdim,
-                                 int npxl,
-                                 int interp,
-                                 cudaTextureObject_t texObject)
-{
-    //extern __shared__ double rotMat[];
-
-    Mat33 mat;
-    mat.init(&devRotm[(blockIdx.x + shift) * 9], 0);
-
-    //for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-    //    rotMat[itr] = devRotm[(blockIdx.x + shift) * 9 + itr];
-
-    //__syncthreads();
-    //mat.init(rotMat, 0);
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
-    {
-        Vec3 newCor((double)(deviCol[itr] * pf),
-                    (double)(deviRow[itr] * pf),
-                    0);
-
-        Vec3 oldCor = mat * newCor;
-
-        priRotP[blockIdx.x * npxl + itr] = getByInterpolationFTC((RFLOAT)oldCor(0),
-                                                                 (RFLOAT)oldCor(1),
-                                                                 (RFLOAT)oldCor(2),
-                                                                 interp,
-                                                                 vdim,
-                                                                 texObject);
-    }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_Project2DL(Complex* priRotP,
-                                  double* devnR,
-                                  int* deviCol,
-                                  int* deviRow,
-                                  int pf,
-                                  int vdim,
-                                  int npxl,
-                                  int interp,
-                                  cudaTextureObject_t texObject)
-{
-    double i, j;
-    double oldi, oldj;
-    int rIdx = blockIdx.x * 2;
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
-    {
-        i = (double)(deviCol[itr] * pf);
-        j = (double)(deviRow[itr] * pf);
-
-        oldi = i * devnR[rIdx] - j * devnR[rIdx + 1];
-        oldj = i * devnR[rIdx + 1] + j * devnR[rIdx];
-
-        priRotP[blockIdx.x * npxl + itr] = getByInterp2D((RFLOAT)oldi,
-                                                         (RFLOAT)oldj,
-                                                         interp,
-                                                         vdim,
-                                                         texObject);
+        priRotP[itr] = getByInterpolationFTC((RFLOAT)oldCor(0),
+                                             (RFLOAT)oldCor(1),
+                                             (RFLOAT)oldCor(2),
+                                             interp,
+                                             vdim,
+                                             texObject);
     }
 }
 
@@ -787,34 +658,31 @@ __global__ void kernel_Project2D(Complex* priRotP,
                                  double* devnR,
                                  int* deviCol,
                                  int* deviRow,
-                                 int shift,
+                                 int batch,
                                  int pf,
                                  int vdim,
                                  int npxl,
                                  int interp,
                                  cudaTextureObject_t texObject)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int rNum;
     double i, j;
     double oldi, oldj;
-    extern __shared__ double rotMat[];
-    for (int itr = threadIdx.x; itr < 2; itr += blockDim.x)
-        rotMat[itr] = devnR[(blockIdx.x + shift) * 2 + itr];
-
-    __syncthreads();
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        i = (double)(deviCol[itr] * pf);
-        j = (double)(deviRow[itr] * pf);
+        rNum = itr / npxl;
+        i = (double)(deviCol[itr % npxl] * pf);
+        j = (double)(deviRow[itr % npxl] * pf);
 
-        oldi = i * rotMat[0] - j * rotMat[1];
-        oldj = i * rotMat[1] + j * rotMat[0];
+        oldi = i * devnR[rNum * 2] - j * devnR[rNum * 2 + 1];
+        oldj = i * devnR[rNum * 2 + 1] + j * devnR[rNum * 2];
 
-        priRotP[blockIdx.x * npxl + itr] = getByInterp2D((RFLOAT)oldi,
-                                                         (RFLOAT)oldj,
-                                                         interp,
-                                                         vdim,
-                                                         texObject);
+        priRotP[itr] = getByInterp2D((RFLOAT)oldi,
+                                     (RFLOAT)oldj,
+                                     interp,
+                                     vdim,
+                                     texObject);
     }
 }
 
@@ -855,12 +723,6 @@ __global__ void kernel_logDataVSL(Complex* priRotP,
         imagC = devdatPI[itr] - temp.imag();
         tempD = realC * realC + imagC * imagC;
         resL[threadIdx.x] += tempD * devsigP[itr];
-        //if (blockIdx.x == 2)
-        //{
-        //    devre[itr] = tempD * devsigP[itr];
-        //    if (itr == 0)
-        //       printf("itr:%d, block:%d, thread:%d,devre:%lf\n", itr, blockIdx.x, itr, devre[itr]);
-        //}
     }
 
     __syncthreads();
@@ -879,8 +741,6 @@ __global__ void kernel_logDataVSL(Complex* priRotP,
     if (threadIdx.x == 0)
     {
         devDvp[blockIdx.x] = resL[0];
-        //if (blockIdx.x == 2)
-        //    printf("result:%lf, devDvp:%lf\n", resL[0], devDvp[blockIdx.x]);
     }
 
 }
@@ -1024,46 +884,6 @@ __global__ void kernel_logDataVS(RFLOAT* devdatPR,
  * @param ...
  * @param ...
  */
-__global__ void kernel_getMaxBaseL(RFLOAT* devBaseL,
-                                   RFLOAT* devDvp,
-                                   int angleNum)
-{
-    extern __shared__ RFLOAT resBase[];
-
-    RFLOAT temp = devDvp[threadIdx.x];
-    for (int itr = threadIdx.x; itr < angleNum; itr += blockDim.x)
-    {
-        if (temp < devDvp[itr])
-            temp = devDvp[itr];
-    }
-    resBase[threadIdx.x] = temp;
-
-    __syncthreads();
-
-    int i = 32;
-    while (i != 0)
-    {
-        if (threadIdx.x < i)
-        {
-            if (resBase[threadIdx.x] < resBase[threadIdx.x + i])
-                resBase[threadIdx.x] = resBase[threadIdx.x + i];
-        }
-        __syncthreads();
-        i /= 2;
-    }
-
-    if (threadIdx.x == 0)
-    {
-        devBaseL[0] = resBase[0];
-    }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
 __global__ void kernel_getMaxBase(RFLOAT* devbaseL,
                                   RFLOAT* devDvp,
                                   int angleNum)
@@ -1072,7 +892,12 @@ __global__ void kernel_getMaxBase(RFLOAT* devbaseL,
 
     int imgIdx = blockIdx.x * angleNum;
 
-    RFLOAT tempD = devDvp[imgIdx + threadIdx.x];
+    RFLOAT tempD;
+    
+    if (threadIdx.x < angleNum)
+        tempD = devDvp[imgIdx + threadIdx.x];
+    else
+        tempD = 0.0;
 
     for (int itr = threadIdx.x; itr < angleNum; itr += blockDim.x)
     {
@@ -1080,22 +905,68 @@ __global__ void kernel_getMaxBase(RFLOAT* devbaseL,
             tempD = devDvp[imgIdx + itr];
     }
 
-    resD[threadIdx.x] = tempD;
+    if (threadIdx.x < angleNum)
+        resD[threadIdx.x] = tempD;
+    else
+        resD[threadIdx.x] = 0.0;
 
     __syncthreads();
 
-    int i = 256;
+    int i;
+    int size;
+    bool flag;
+    if (angleNum < blockDim.x)
+        size = angleNum;
+    else
+        size = blockDim.x;
+
+    if (blockDim.x % 2 == 0)
+    {
+        i = size / 2;
+        flag = true;
+    }
+    else
+    {
+        i = size / 2 + 1;
+        flag = false;
+    }
     while (i != 0)
     {
-        if (threadIdx.x < i)
+        if (flag)
         {
-            if (resD[threadIdx.x] < resD[threadIdx.x + i])
-                resD[threadIdx.x] = resD[threadIdx.x + i];
+            if (threadIdx.x < i)
+            {
+                if (resD[threadIdx.x] < resD[threadIdx.x + i])
+                {
+                    resD[threadIdx.x] = resD[threadIdx.x + i];
+                }
+            }
+
         }
+        else
+        {
+            if (threadIdx.x < i - 1)
+            {
+                if (resD[threadIdx.x] < resD[threadIdx.x + i])
+                {
+                    resD[threadIdx.x] = resD[threadIdx.x + i];
+                }
+            }
+
+        }
+
         __syncthreads();
+
+        if(i % 2 != 0 && i != 1)
+        {
+            i++;
+            flag = false;
+        }
+        else
+            flag = true;
+
         i /= 2;
     }
-
     if (threadIdx.x == 0)
     {
         devbaseL[blockIdx.x] = resD[0];
@@ -1115,7 +986,8 @@ __global__ void kernel_setBaseLine(RFLOAT* devcomP,
                                    RFLOAT* devwT,
                                    int nK,
                                    int nR,
-                                   int nT)
+                                   int nT,
+                                   int total)
 {
     if (devcomP[blockIdx.x] > devbaseL[blockIdx.x])
     {
@@ -1128,14 +1000,27 @@ __global__ void kernel_setBaseLine(RFLOAT* devcomP,
 #endif
         int shiftR = blockIdx.x * nK * nR;
         int shiftT = blockIdx.x * nK * nT;
-        for (int c = threadIdx.x; c < nK; c+= blockDim.x)
+        int kIdx, rtIdx;
+        for (int itr = threadIdx.x; itr < total; itr += blockDim.x)
         {
-            devwC[blockIdx.x * nK + c] *= nf;
-            for (int r = threadIdx.x; r < nR; r+= blockDim.x)
-                devwR[shiftR + c * nR + r] *= nf;
-            for (int t = threadIdx.x; t < nT; t+= blockDim.x)
-                devwT[shiftT + c * nT + t] *= nf;
-        }
+            if (itr / nK < 1)
+                devwC[blockIdx.x * nK + itr] *= nf;
+            else
+            {
+                if (itr / nK < (1 + nR))
+                {
+                    kIdx = ((itr - nK) / nR) * nR;
+                    rtIdx = (itr - nK) % nR;
+                    devwR[shiftR + kIdx + rtIdx] *= nf;
+                }
+                else
+                {
+                    kIdx = ((itr - nK * (nR + 1)) / nT) * nT;
+                    rtIdx = (itr - nK * (nR + 1)) % nT;
+                    devwT[shiftT + kIdx + rtIdx] *= nf;
+                }
+            }
+        } 
 
         if (threadIdx.x == 0)
             devbaseL[blockIdx.x] = devcomP[blockIdx.x];
@@ -1158,201 +1043,99 @@ __global__ void kernel_UpdateW(RFLOAT* devDvp,
                                int kIdx,
                                int nK,
                                int nR,
+                               int nT,
                                int rSize)
 {
-    extern __shared__ RFLOAT resC[];
+    extern __shared__ RFLOAT result[];
+    int itr = 0;
+    for (itr = threadIdx.x; itr < blockDim.x * (nT + 1); itr += blockDim.x)
+        result[itr] = 0;
 
-    resC[threadIdx.x] = 0;
+    __syncthreads();
 
     RFLOAT w;
-    int rIdx = 0;
-
+    int tIdx;
+    int index;
+    int indexC = nT * blockDim.x;
     int shiftR = blockIdx.x * nK * nR + kIdx * nR;
-    int shiftT = blockIdx.x * nK * blockDim.x + kIdx * blockDim.x;
-
-    for (int itr = threadIdx.x; itr < rSize; itr += blockDim.x)
+    for (itr = threadIdx.x; itr < nR; itr += blockDim.x)
     {
+        index = blockIdx.x * rSize + itr * nT;
+        for (tIdx = 0; tIdx < nT; tIdx++)
+        {
 #ifdef SINGLE_PRECISION
-        w = expf(devDvp[blockIdx.x * rSize + itr] - devbaseL[blockIdx.x]);
+            w = expf(devDvp[index + tIdx] - devbaseL[blockIdx.x]);
 #else
-        w = exp(devDvp[blockIdx.x * rSize + itr] - devbaseL[blockIdx.x]);
+            w = exp(devDvp[index + tIdx] - devbaseL[blockIdx.x]);
 #endif
-        resC[threadIdx.x] += w * devpR[rIdx] * devpT[threadIdx.x];
-        devwT[shiftT + threadIdx.x] += w * devpR[rIdx];
-        atomicAdd(&devwR[shiftR + rIdx], w * devpT[threadIdx.x]);
-        rIdx += 1;
+            result[indexC + threadIdx.x] += w * devpR[itr] * devpT[tIdx];
+            result[tIdx * blockDim.x + threadIdx.x] += w * devpR[itr]; 
+            devwR[shiftR + itr] += w * devpT[tIdx];
+        } 
     }
 
     __syncthreads();
 
-    int j;
+    int i;
     bool flag;
     if (blockDim.x % 2 == 0)
     {
-        j = blockDim.x / 2;
+        i = blockDim.x / 2;
         flag = true;
     }
     else
     {
-        j = blockDim.x / 2 + 1;
+        i = blockDim.x / 2 + 1;
         flag = false;
     }
-    while (j != 0)
+    while (i != 0)
     {
         if (flag)
         {
-            if (threadIdx.x < j)
+            if (threadIdx.x < i)
             {
-                resC[threadIdx.x] += resC[threadIdx.x + j];
+                for (itr = 0; itr < nT; itr++)
+                {
+                    index = itr * blockDim.x + threadIdx.x;
+                    result[index] += result[index + i];
+                } 
+                result[indexC + threadIdx.x] += result[indexC + threadIdx.x + i];
             }
-
         }
         else
         {
-            if (threadIdx.x < j - 1)
+            if (threadIdx.x < i - 1)
             {
-                resC[threadIdx.x] += resC[threadIdx.x + j];
+                for (itr = 0; itr < nT; itr++)
+                {
+                    index = itr * blockDim.x + threadIdx.x;
+                    result[index] += result[index + i];
+                } 
+                result[indexC + threadIdx.x] += result[indexC + threadIdx.x + i];
             }
-
         }
-
+        
         __syncthreads();
-
-        if(j % 2 != 0 && j != 1)
+        
+        if(i % 2 != 0 && i != 1)
         {
-            j++;
+            i++;
             flag = false;
         }
         else
             flag = true;
 
-        j /= 2;
+        i /= 2;
     }
-
+    
     if (threadIdx.x == 0)
+        devwC[blockIdx.x * nK + kIdx] = result[indexC];
+    
+    int shiftT = blockIdx.x * nK * nT + kIdx * nT;
+    for (itr = threadIdx.x; itr < nT; itr += blockDim.x)
     {
-
-        devwC[blockIdx.x * nK + kIdx] = resC[0];
-    }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_UpdateWL(RFLOAT* devDvp,
-                                RFLOAT* devBaseL,
-                                RFLOAT* devwC,
-                                RFLOAT* devwR,
-                                RFLOAT* devwT,
-                                RFLOAT* devwD,
-                                double* devR,
-                                double* devT,
-                                double* devD,
-                                double oldC,
-                                int nT,
-                                int l)
-{
-    extern __shared__ RFLOAT totalW[];
-
-    RFLOAT* resC = totalW;
-    RFLOAT* resR = &resC[blockDim.x];
-    RFLOAT* resD = &resR[blockDim.x];
-    resC[threadIdx.x] = 0;
-    resR[threadIdx.x] = 0;
-    resD[threadIdx.x] = 0;
-
-    for(int itr = threadIdx.x; itr < nT; itr += blockDim.x)
-        devwT[itr] = 0;
-
-    __syncthreads();
-
-    RFLOAT w;
-    int dvpIdx = threadIdx.x * nT;
-    double rd = devR[threadIdx.x] * devD[0];
-    double rc = devR[threadIdx.x] * oldC;
-    double dc = devD[0] * oldC;
-    double rcd = rc * devD[0];
-
-    for (int itr = 0; itr < nT; itr++)
-    {
-#ifdef SINGLE_PRECISION
-        w = expf(devDvp[dvpIdx + itr] - devBaseL[0]);
-#else
-        w = exp(devDvp[dvpIdx + itr] - devBaseL[0]);
-#endif
-        resC[threadIdx.x] += w * rd * devT[itr];
-        //if (threadIdx.x == 0)
-        //    printf("itr:%d, w:%lf, dc:%lf, devT:%lf\n", itr, w, dc, devT[itr]);
-        resR[threadIdx.x] += w * dc * devT[itr];
-        //if (l == 4 && threadIdx.x == 0){
-        //    printf("itr:%d, w:%lf, dc:%lf, devT:%lf\n", itr, w, dc, devT[itr]);
-        //    if (itr == 2)
-        //        printf("devDvp:%lf, baseL:%lf, dvpIdx:%d\n", devDvp[dvpIdx + itr], devBaseL[0], dvpIdx + itr);
-        //    //printf("itr:%d, resR:%lf\n", itr, 10000 * w * dc * devT[itr]);
-        //}
-        resD[threadIdx.x] += w * rc * devT[itr];
-        //if (l == 0 && threadIdx.x == 0)
-        //   dpart[threadIdx.x]
-        atomicAdd(&devwT[itr], w * rcd);
-    }
-
-    devwR[threadIdx.x] = resR[threadIdx.x];
-    __syncthreads();
-
-    int j;
-    bool flag;
-    if (blockDim.x % 2 == 0)
-    {
-        j = blockDim.x / 2;
-        flag = true;
-    }
-    else
-    {
-        j = blockDim.x / 2 + 1;
-        flag = false;
-    }
-    while (j != 0)
-    {
-        if (flag)
-        {
-            if (threadIdx.x < j)
-            {
-                resC[threadIdx.x] += resC[threadIdx.x + j];
-                resD[threadIdx.x] += resD[threadIdx.x + j];
-            }
-
-        }
-        else
-        {
-            if (threadIdx.x < j - 1)
-            {
-                resC[threadIdx.x] += resC[threadIdx.x + j];
-                resD[threadIdx.x] += resD[threadIdx.x + j];
-            }
-
-        }
-
-        __syncthreads();
-
-        if(j % 2 != 0 && j != 1)
-        {
-            j++;
-            flag = false;
-        }
-        else
-            flag = true;
-
-        j /= 2;
-    }
-
-    if (threadIdx.x == 0)
-    {
-        devwC[blockIdx.x] = resC[0];
-        devwD[blockIdx.x] = resD[0];
-    }
+        devwT[shiftT + itr] += result[itr * blockDim.x];
+    } 
 }
 
 /**
@@ -1378,11 +1161,12 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
     RFLOAT* resC = resCRD;
     RFLOAT* resR = &resC[blockDim.x];
     RFLOAT* resD = &resR[blockDim.x];
+    RFLOAT* resT = &resD[blockDim.x];
     resC[threadIdx.x] = 0;
     resR[threadIdx.x] = 0;
     resD[threadIdx.x] = 0;
-
-    for(int itr = threadIdx.x; itr < nT; itr += blockDim.x)
+    int itr;
+    for (itr = threadIdx.x; itr < nT; itr += blockDim.x)
         devwT[itr] = 0;
 
     __syncthreads();
@@ -1394,7 +1178,7 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
     double dc = devD[0] * oldC;
     double rcd = rc * devD[0];
 
-    for (int itr = 0; itr < nT; itr++)
+    for (itr = 0; itr < nT; itr++)
     {
 #ifdef SINGLE_PRECISION
         w = expf(devDvp[dvpIdx + itr] - devBaseL[0]);
@@ -1402,17 +1186,16 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
         w = exp(devDvp[dvpIdx + itr] - devBaseL[0]);
 #endif
         resC[threadIdx.x] += w * rd * devT[itr];
-        //if (threadIdx.x == 0)
-        //    printf("itr:%d, w:%lf, dc:%lf, devT:%lf\n", itr, w, dc, devT[itr]);
         resR[threadIdx.x] += w * dc * devT[itr];
         resD[threadIdx.x] += w * rc * devT[itr];
-        atomicAdd(&devwT[itr], w * rcd);
+        resT[itr * blockDim.x + threadIdx.x] = w * rcd; 
     }
 
     devwR[threadIdx.x] = resR[threadIdx.x];
     __syncthreads();
 
     int j;
+    int index;
     bool flag;
     if (blockDim.x % 2 == 0)
     {
@@ -1430,6 +1213,11 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
         {
             if (threadIdx.x < j)
             {
+                for (itr = 0; itr < nT; itr++)
+                {
+                    index = itr * blockDim.x + threadIdx.x;
+                    resT[index] += resT[index + j];
+                } 
                 resC[threadIdx.x] += resC[threadIdx.x + j];
                 resD[threadIdx.x] += resD[threadIdx.x + j];
             }
@@ -1439,6 +1227,11 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
         {
             if (threadIdx.x < j - 1)
             {
+                for (itr = 0; itr < nT; itr++)
+                {
+                    index = itr * blockDim.x + threadIdx.x;
+                    resT[index] += resT[index + j];
+                } 
                 resC[threadIdx.x] += resC[threadIdx.x + j];
                 resD[threadIdx.x] += resD[threadIdx.x + j];
             }
@@ -1458,6 +1251,12 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
         j /= 2;
     }
 
+    for (itr = threadIdx.x; itr < nT; itr += blockDim.x)
+    {
+        index = itr * blockDim.x;
+        devwT[itr] = resT[index];
+    } 
+    
     if (threadIdx.x == 0)
     {
         devwC[blockIdx.x] = resC[0];
@@ -1971,39 +1770,39 @@ __global__ void kernel_Translate(RFLOAT* devdatPR,
                                  int* dev_nc,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int insertIdx,
                                  int opf,
                                  int npxl,
                                  int mReco,
                                  int idim)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int offNum, ntNum;
+    int i, j;
+    Complex imgTemp(0.0, 0.0);
+    Complex datTemp(0.0, 0.0);
+    RFLOAT phase, col, row;
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        int i, j;
-        int off = (blockIdx.x * mReco + insertIdx) * 2;
-
-        Complex imgTemp(0.0, 0.0);
-        Complex datTemp(0.0, 0.0);
-        RFLOAT phase, col, row;
-
-        col = -(RFLOAT)(dev_tran[off]) / idim;
-        row = -(RFLOAT)(dev_tran[off + 1]) / idim;
-        //col = (RFLOAT)(PI_2 * (dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim);
-        //row = (RFLOAT)(PI_2 * (dev_tran[off + 1] - dev_offS[blockIdx.x * 2 + 1]) / idim);
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        offNum = itr / npxl;
+        
+        if (insertIdx < dev_nc[offNum])
         {
-            i = deviCol[itr] / opf;
-            j = deviRow[itr] / opf;
-
+            ntNum = offNum * mReco + insertIdx;
+            i = deviCol[itr % npxl] / opf;
+            j = deviRow[itr % npxl] / opf;
+            col = -(RFLOAT)(dev_tran[ntNum]) / idim;
+            row = -(RFLOAT)(dev_tran[ntNum + 1]) / idim;
             phase = PI_2 * (i * col + j * row);
 #ifdef SINGLE_PRECISION
             imgTemp.set(cosf(-phase), sinf(-phase));
 #else
             imgTemp.set(cos(-phase), sin(-phase));
 #endif
-            datTemp.set(devdatPR[blockIdx.x * npxl + itr],
-                        devdatPI[blockIdx.x * npxl + itr]);
-            devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
+            datTemp.set(devdatPR[itr],
+                        devdatPI[itr]);
+            devtranP[itr] = datTemp * imgTemp;
         }
     }
 }
@@ -2022,39 +1821,40 @@ __global__ void kernel_Translate(RFLOAT* devdatPR,
                                  int* dev_nc,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int insertIdx,
                                  int opf,
                                  int npxl,
                                  int mReco,
                                  int idim)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int offNum, ntNum;
+    int i, j;
+    Complex imgTemp(0.0, 0.0);
+    Complex datTemp(0.0, 0.0);
+    RFLOAT phase, col, row;
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        int i, j;
-        int off = (blockIdx.x * mReco + insertIdx) * 2;
-
-        Complex imgTemp(0.0, 0.0);
-        Complex datTemp(0.0, 0.0);
-        RFLOAT phase, col, row;
-
-        col = -(RFLOAT)(dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim;
-        row = -(RFLOAT)(dev_tran[off + 1] - dev_offS[blockIdx.x * 2 + 1]) / idim;
-        //col = (RFLOAT)(PI_2 * (dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim);
-        //row = (RFLOAT)(PI_2 * (dev_tran[off + 1] - dev_offS[blockIdx.x * 2 + 1]) / idim);
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        offNum = itr / npxl;
+        
+        if (insertIdx < dev_nc[offNum])
         {
-            i = deviCol[itr] / opf;
-            j = deviRow[itr] / opf;
-
+            ntNum = offNum * mReco + insertIdx;
+            i = deviCol[itr % npxl] / opf;
+            j = deviRow[itr % npxl] / opf;
+            col = -(RFLOAT)(dev_tran[ntNum * 2] - dev_offS[offNum * 2]) / idim;
+            row = -(RFLOAT)(dev_tran[ntNum * 2 + 1] - dev_offS[offNum * 2 + 1]) / idim;
             phase = PI_2 * (i * col + j * row);
 #ifdef SINGLE_PRECISION
             imgTemp.set(cosf(-phase), sinf(-phase));
 #else
             imgTemp.set(cos(-phase), sin(-phase));
 #endif
-            datTemp.set(devdatPR[blockIdx.x * npxl + itr],
-                        devdatPI[blockIdx.x * npxl + itr]);
-            devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
+            datTemp.set(devdatPR[itr],
+                        devdatPI[itr]);
+            devtranP[itr] = datTemp * imgTemp;
         }
     }
 }
@@ -2071,28 +1871,29 @@ __global__ void kernel_Translate(RFLOAT* devdatPR,
                                  double* dev_tran,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int insertIdx,
                                  int opf,
                                  int npxl,
                                  int mReco,
                                  int idim)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    int ntNum;
     int i, j;
-    int off = (blockIdx.x * mReco + insertIdx) * 2;
-
     Complex imgTemp(0.0, 0.0);
     Complex datTemp(0.0, 0.0);
     RFLOAT phase, col, row;
 
-    col = -(RFLOAT)(dev_tran[off]) / idim;
-    row = -(RFLOAT)(dev_tran[off + 1]) / idim;
-    //col = (RFLOAT)(PI_2 * (dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim);
-    //row = (RFLOAT)(PI_2 * (dev_tran[off + 1] - dev_offS[blockIdx.x * 2 + 1]) / idim);
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        i = deviCol[itr] / opf;
-        j = deviRow[itr] / opf;
+        i = deviCol[itr % npxl] / opf;
+        j = deviRow[itr % npxl] / opf;
 
+        ntNum = (itr / npxl) * mReco + insertIdx;
+        col = -(RFLOAT)(dev_tran[ntNum]) / idim;
+        row = -(RFLOAT)(dev_tran[ntNum + 1]) / idim;
         phase = PI_2 * (i * col + j * row);
 
 #ifdef SINGLE_PRECISION
@@ -2100,9 +1901,9 @@ __global__ void kernel_Translate(RFLOAT* devdatPR,
 #else
         imgTemp.set(cos(-phase), sin(-phase));
 #endif
-        datTemp.set(devdatPR[blockIdx.x * npxl + itr],
-                    devdatPI[blockIdx.x * npxl + itr]);
-        devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
+        datTemp.set(devdatPR[itr],
+                    devdatPI[itr]);
+        devtranP[itr] = datTemp * imgTemp;
     }
 }
 
@@ -2119,28 +1920,29 @@ __global__ void kernel_Translate(RFLOAT* devdatPR,
                                  double* dev_tran,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int insertIdx,
                                  int opf,
                                  int npxl,
                                  int mReco,
                                  int idim)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int i, j;
-    int off = (blockIdx.x * mReco + insertIdx) * 2;
-
+    int offNum, ntNum;
     Complex imgTemp(0.0, 0.0);
     Complex datTemp(0.0, 0.0);
     RFLOAT phase, col, row;
 
-    col = -(RFLOAT)(dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim;
-    row = -(RFLOAT)(dev_tran[off + 1] - dev_offS[blockIdx.x * 2 + 1]) / idim;
-    //col = (RFLOAT)(PI_2 * (dev_tran[off] - dev_offS[blockIdx.x * 2]) / idim);
-    //row = (RFLOAT)(PI_2 * (dev_tran[off + 1] - dev_offS[blockIdx.x * 2 + 1]) / idim);
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        i = deviCol[itr] / opf;
-        j = deviRow[itr] / opf;
+        i = deviCol[itr % npxl] / opf;
+        j = deviRow[itr % npxl] / opf;
 
+        offNum = itr / npxl;
+        ntNum = (itr / npxl) * mReco + insertIdx;
+        col = -(RFLOAT)(dev_tran[ntNum * 2] - dev_offS[offNum * 2]) / idim;
+        row = -(RFLOAT)(dev_tran[ntNum * 2 + 1] - dev_offS[offNum * 2 + 1]) / idim;
         phase = PI_2 * (i * col + j * row);
 
 #ifdef SINGLE_PRECISION
@@ -2148,9 +1950,9 @@ __global__ void kernel_Translate(RFLOAT* devdatPR,
 #else
         imgTemp.set(cos(-phase), sin(-phase));
 #endif
-        datTemp.set(devdatPR[blockIdx.x * npxl + itr],
-                    devdatPI[blockIdx.x * npxl + itr]);
-        devtranP[blockIdx.x * npxl + itr] = datTemp * imgTemp;
+        datTemp.set(devdatPR[itr],
+                    devdatPI[itr]);
+        devtranP[itr] = datTemp * imgTemp;
     }
 }
 
@@ -2167,62 +1969,63 @@ __global__ void kernel_CalculateCTF(RFLOAT* devctfP,
                                     int* deviCol,
                                     int* deviRow,
                                     RFLOAT pixel,
+                                    int batch,
                                     int insertIdx,
                                     int opf,
                                     int npxl,
                                     int mReco)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int i, j;
+    int iNum, dNum;
+    RFLOAT lambda, defocus, angle, k1, k2, ki, u, w1, w2;
+
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        int i, j;
-        int quat = blockIdx.x * mReco + insertIdx;
-
-        RFLOAT lambda, defocus, angle, k1, k2, ki, u, w1, w2;
-
-#ifdef SINGLE_PRECISION
-        lambda = 12.2643247 / sqrtf(dev_ctfas[blockIdx.x].voltage
-                            * (1 + dev_ctfas[blockIdx.x].voltage * 0.978466e-6));
-
-        w1 = sqrtf(1 - dev_ctfas[blockIdx.x].amplitudeContrast * dev_ctfas[blockIdx.x].amplitudeContrast);
-#else
-        lambda = 12.2643247 / sqrt(dev_ctfas[blockIdx.x].voltage
-                            * (1 + dev_ctfas[blockIdx.x].voltage * 0.978466e-6));
-
-        w1 = sqrt(1 - dev_ctfas[blockIdx.x].amplitudeContrast * dev_ctfas[blockIdx.x].amplitudeContrast);
-#endif
-        w2 = dev_ctfas[blockIdx.x].amplitudeContrast;
-
-        k1 = PI * lambda;
-        k2 = divPI2 * dev_ctfas[blockIdx.x].Cs * lambda * lambda * lambda;
-
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        iNum = itr / npxl;
+        if (insertIdx < dev_nc[iNum])
         {
-            i = deviCol[itr] / opf;
-            j = deviRow[itr] / opf;
+            dNum = iNum * mReco + insertIdx;
+            i = deviCol[itr % npxl] / opf;
+            j = deviRow[itr % npxl] / opf;
 #ifdef SINGLE_PRECISION
+            lambda = 12.2643247 / sqrtf(dev_ctfas[iNum].voltage
+                                * (1 + dev_ctfas[iNum].voltage * 0.978466e-6));
+
+            w1 = sqrtf(1 - dev_ctfas[iNum].amplitudeContrast * dev_ctfas[iNum].amplitudeContrast);
+            w2 = dev_ctfas[iNum].amplitudeContrast;
+
+            k1 = PI * lambda;
+            k2 = DIVPI2 * dev_ctfas[iNum].Cs * lambda * lambda * lambda;
             u = sqrtf((i / pixel) * (i / pixel) + (j / pixel) * (j / pixel));
-            angle = atan2f((float)j, (float)i) - dev_ctfas[blockIdx.x].defocusTheta;
+            angle = atan2f((float)j, (float)i) - dev_ctfas[iNum].defocusTheta;
 
-            defocus = -(dev_ctfas[blockIdx.x].defocusU
-                        + dev_ctfas[blockIdx.x].defocusV
-                        + (dev_ctfas[blockIdx.x].defocusU - dev_ctfas[blockIdx.x].defocusV)
-                        * cosf(2 * angle)) * (float)dev_ramD[quat] / 2;
-                        //* cos(2 * angle)) / 2;
+            defocus = -(dev_ctfas[iNum].defocusU
+                        + dev_ctfas[iNum].defocusV
+                        + (dev_ctfas[iNum].defocusU - dev_ctfas[iNum].defocusV)
+                        * cosf(2 * angle)) * (float)dev_ramD[dNum] / 2;
 
-            ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[blockIdx.x].phaseShift;
-            devctfP[blockIdx.x * npxl + itr] = -w1 * sinf(ki) + w2 * cosf(ki);
+            ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[iNum].phaseShift;
+            devctfP[itr] = -w1 * sinf(ki) + w2 * cosf(ki);
 #else
+            lambda = 12.2643247 / sqrt(dev_ctfas[iNum].voltage
+                                * (1 + dev_ctfas[iNum].voltage * 0.978466e-6));
+
+            w1 = sqrt(1 - dev_ctfas[iNum].amplitudeContrast * dev_ctfas[iNum].amplitudeContrast);
+            w2 = dev_ctfas[iNum].amplitudeContrast;
+
+            k1 = PI * lambda;
+            k2 = DIVPI2 * dev_ctfas[iNum].Cs * lambda * lambda * lambda;
             u = sqrt((i / pixel) * (i / pixel) + (j / pixel) * (j / pixel));
-            angle = atan2((double)j, (double)i) - dev_ctfas[blockIdx.x].defocusTheta;
+            angle = atan2((double)j, (double)i) - dev_ctfas[iNum].defocusTheta;
 
-            defocus = -(dev_ctfas[blockIdx.x].defocusU
-                        + dev_ctfas[blockIdx.x].defocusV
-                        + (dev_ctfas[blockIdx.x].defocusU - dev_ctfas[blockIdx.x].defocusV)
-                        * cos(2 * angle)) * dev_ramD[quat] / 2;
-                        //* cos(2 * angle)) / 2;
+            defocus = -(dev_ctfas[iNum].defocusU
+                        + dev_ctfas[iNum].defocusV
+                        + (dev_ctfas[iNum].defocusU - dev_ctfas[iNum].defocusV)
+                        * cos(2 * angle)) * dev_ramD[dNum] / 2;
 
-            ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[blockIdx.x].phaseShift;
-            devctfP[blockIdx.x * npxl + itr] = -w1 * sin(ki) + w2 * cos(ki);
+            ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[iNum].phaseShift;
+            devctfP[itr] = -w1 * sin(ki) + w2 * cos(ki);
 #endif
         }
     }
@@ -2240,60 +2043,61 @@ __global__ void kernel_CalculateCTF(RFLOAT* devctfP,
                                     int* deviCol,
                                     int* deviRow,
                                     RFLOAT pixel,
+                                    int batch,
                                     int insertIdx,
                                     int opf,
                                     int npxl,
                                     int mReco)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int i, j;
-    int quat = blockIdx.x * mReco + insertIdx;
-
+    int iNum, dNum;
     RFLOAT lambda, defocus, angle, k1, k2, ki, u, w1, w2;
 
-#ifdef SINGLE_PRECISION
-    lambda = 12.2643247 / sqrtf(dev_ctfas[blockIdx.x].voltage
-                        * (1 + dev_ctfas[blockIdx.x].voltage * 0.978466e-6));
-
-    w1 = sqrtf(1 - dev_ctfas[blockIdx.x].amplitudeContrast * dev_ctfas[blockIdx.x].amplitudeContrast);
-#else
-    lambda = 12.2643247 / sqrt(dev_ctfas[blockIdx.x].voltage
-                        * (1 + dev_ctfas[blockIdx.x].voltage * 0.978466e-6));
-
-    w1 = sqrt(1 - dev_ctfas[blockIdx.x].amplitudeContrast * dev_ctfas[blockIdx.x].amplitudeContrast);
-#endif
-    w2 = dev_ctfas[blockIdx.x].amplitudeContrast;
-
-    k1 = PI * lambda;
-    k2 = divPI2 * dev_ctfas[blockIdx.x].Cs * lambda * lambda * lambda;
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        i = deviCol[itr] / opf;
-        j = deviRow[itr] / opf;
+        i = deviCol[itr % npxl] / opf;
+        j = deviRow[itr % npxl] / opf;
+        iNum = itr / npxl;
+        dNum = iNum * mReco + insertIdx;
 #ifdef SINGLE_PRECISION
+        lambda = 12.2643247 / sqrtf(dev_ctfas[iNum].voltage
+                            * (1 + dev_ctfas[iNum].voltage * 0.978466e-6));
+
+        w1 = sqrtf(1 - dev_ctfas[iNum].amplitudeContrast * dev_ctfas[iNum].amplitudeContrast);
+        w2 = dev_ctfas[iNum].amplitudeContrast;
+
+        k1 = PI * lambda;
+        k2 = DIVPI2 * dev_ctfas[iNum].Cs * lambda * lambda * lambda;
         u = sqrtf((i / pixel) * (i / pixel) + (j / pixel) * (j / pixel));
-        angle = atan2f((float)j, (float)i) - dev_ctfas[blockIdx.x].defocusTheta;
+        angle = atan2f((float)j, (float)i) - dev_ctfas[iNum].defocusTheta;
 
-        defocus = -(dev_ctfas[blockIdx.x].defocusU
-                    + dev_ctfas[blockIdx.x].defocusV
-                    + (dev_ctfas[blockIdx.x].defocusU - dev_ctfas[blockIdx.x].defocusV)
-                    * cosf(2 * angle)) * (float)dev_ramD[quat] / 2;
-                    //* cos(2 * angle)) / 2;
+        defocus = -(dev_ctfas[iNum].defocusU
+                    + dev_ctfas[iNum].defocusV
+                    + (dev_ctfas[iNum].defocusU - dev_ctfas[iNum].defocusV)
+                    * cosf(2 * angle)) * (float)dev_ramD[dNum] / 2;
 
-        ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[blockIdx.x].phaseShift;
-        devctfP[blockIdx.x * npxl + itr] = -w1 * sinf(ki) + w2 * cosf(ki);
+        ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[iNum].phaseShift;
+        devctfP[itr] = -w1 * sinf(ki) + w2 * cosf(ki);
 #else
+        lambda = 12.2643247 / sqrt(dev_ctfas[iNum].voltage
+                            * (1 + dev_ctfas[iNum].voltage * 0.978466e-6));
+
+        w1 = sqrt(1 - dev_ctfas[iNum].amplitudeContrast * dev_ctfas[iNum].amplitudeContrast);
+        w2 = dev_ctfas[iNum].amplitudeContrast;
+
+        k1 = PI * lambda;
+        k2 = DIVPI2 * dev_ctfas[iNum].Cs * lambda * lambda * lambda;
         u = sqrt((i / pixel) * (i / pixel) + (j / pixel) * (j / pixel));
-        angle = atan2((double)j, (double)i) - dev_ctfas[blockIdx.x].defocusTheta;
+        angle = atan2((double)j, (double)i) - dev_ctfas[iNum].defocusTheta;
 
-        defocus = -(dev_ctfas[blockIdx.x].defocusU
-                    + dev_ctfas[blockIdx.x].defocusV
-                    + (dev_ctfas[blockIdx.x].defocusU - dev_ctfas[blockIdx.x].defocusV)
-                    * cos(2 * angle)) * dev_ramD[quat] / 2;
-                    //* cos(2 * angle)) / 2;
+        defocus = -(dev_ctfas[iNum].defocusU
+                    + dev_ctfas[iNum].defocusV
+                    + (dev_ctfas[iNum].defocusU - dev_ctfas[iNum].defocusV)
+                    * cos(2 * angle)) * dev_ramD[dNum] / 2;
 
-        ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[blockIdx.x].phaseShift;
-        devctfP[blockIdx.x * npxl + itr] = -w1 * sin(ki) + w2 * cos(ki);
+        ki = k1 * defocus * u * u + k2 * u * u * u * u - dev_ctfas[iNum].phaseShift;
+        devctfP[itr] = -w1 * sin(ki) + w2 * cos(ki);
 #endif
     }
 }
@@ -2313,49 +2117,49 @@ __global__ void kernel_InsertT2D(RFLOAT* devDataT,
                                  int* deviCol,
                                  int* deviRow,
                                  int* deviSig,
-                                 int tauSize,
+                                 int batch,
                                  int insertIdx,
+                                 int tauSize,
                                  int npxl,
                                  int mReco,
                                  int vdim,
                                  int vdimSize,
                                  int smidx)
 {
-    extern __shared__ RFLOAT sData[];
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        sData[itr] = 0;
-    
-    __syncthreads();
-    
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    int tauShift;
     RFLOAT ctfTemp;
     RFLOAT tempSW = 0.0;
     double oldCor0, oldCor1;
-    int ncIdx = blockIdx.x * mReco + insertIdx;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        oldCor0 = dev_nr[ncIdx * 2] * deviCol[itr] - dev_nr[ncIdx * 2 + 1] * deviRow[itr];
-        oldCor1 = dev_nr[ncIdx * 2 + 1] * deviCol[itr] + dev_nr[ncIdx * 2] * deviRow[itr];
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
 
-        tempSW = devsigRcpP[blockIdx.x * npxl + itr]
-               * dev_ws_data[smidx][blockIdx.x];
-        atomicAdd(&sData[deviSig[itr]], tempSW);
+        oldCor0 = dev_nr[cNum * 2] * deviCol[pNum] 
+                - dev_nr[cNum * 2 + 1] * deviRow[pNum];
+        oldCor1 = dev_nr[cNum * 2 + 1] * deviCol[pNum] 
+                + dev_nr[cNum * 2] * deviRow[pNum];
 
-        ctfTemp = devctfP[blockIdx.x * npxl + itr]
-                * devctfP[blockIdx.x * npxl + itr]
+        tempSW = devsigRcpP[itr]
+               * dev_ws_data[smidx][iNum];
+
+        tauShift = dev_nc[cNum] * tauSize;
+        atomicAdd(&devTau[tauShift + deviSig[pNum]], tempSW);
+        
+        ctfTemp = devctfP[itr]
+                * devctfP[itr]
                 * tempSW;
 
-        addFTD2D(devDataT + dev_nc[ncIdx] * vdimSize,
+        addFTD2D(devDataT + dev_nc[cNum] * vdimSize,
                  ctfTemp,
                  (RFLOAT)oldCor0,
                  (RFLOAT)oldCor1,
                  vdim);
     }
-    
-    __syncthreads();
-    
-    int tauShift = dev_nc[ncIdx] * tauSize;
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        atomicAdd(&devTau[tauShift + itr], sData[itr]);
 }
 
 __global__ void kernel_InsertF2D(Complex* devDataF,
@@ -2366,6 +2170,7 @@ __global__ void kernel_InsertF2D(Complex* devDataF,
                                  int* dev_nc,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int insertIdx,
                                  int npxl,
                                  int mReco,
@@ -2373,20 +2178,28 @@ __global__ void kernel_InsertF2D(Complex* devDataF,
                                  int vdimSize,
                                  int smidx)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
     Complex tran(0.0, 0.0);
     double oldCor0, oldCor1;
-    int ncIdx = blockIdx.x * mReco + insertIdx;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        oldCor0 = dev_nr[ncIdx * 2] * deviCol[itr] - dev_nr[ncIdx * 2 + 1] * deviRow[itr];
-        oldCor1 = dev_nr[ncIdx * 2 + 1] * deviCol[itr] + dev_nr[ncIdx * 2] * deviRow[itr];
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        oldCor0 = dev_nr[cNum * 2] * deviCol[pNum] 
+                - dev_nr[cNum * 2 + 1] * deviRow[pNum];
+        oldCor1 = dev_nr[cNum * 2 + 1] * deviCol[pNum] 
+                + dev_nr[cNum * 2] * deviRow[pNum];
 
-        tran = devtranP[blockIdx.x * npxl + itr];
-        tran *= (devctfP[blockIdx.x * npxl + itr]
-                * devsigRcpP[blockIdx.x * npxl + itr]
-                * dev_ws_data[smidx][blockIdx.x]);
+        tran = devtranP[itr];
+        tran *= (devctfP[itr]
+                * devsigRcpP[itr]
+                * dev_ws_data[smidx][iNum]);
 
-        addFTC2D(devDataF + dev_nc[ncIdx] * vdimSize,
+        addFTC2D(devDataF + dev_nc[cNum] * vdimSize,
                  tran,
                  (RFLOAT)oldCor0,
                  (RFLOAT)oldCor1,
@@ -2409,46 +2222,45 @@ __global__ void kernel_InsertT2D(RFLOAT* devDataT,
                                  int* deviCol,
                                  int* deviRow,
                                  int* deviSig,
-                                 int tauSize,
+                                 int batch,
                                  int insertIdx,
+                                 int tauSize,
                                  int npxl,
                                  int mReco,
                                  int vdim,
                                  int vdimSize,
                                  int smidx)
 {
-    extern __shared__ RFLOAT sTau[];
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        sTau[itr] = 0;
-    
-    __syncthreads();
-    
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    int tauShift;
     RFLOAT ctfTemp;
     double oldCor0, oldCor1;
-    int ncIdx = blockIdx.x * mReco + insertIdx;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        oldCor0 = dev_nr[ncIdx * 2] * deviCol[itr] - dev_nr[ncIdx * 2 + 1] * deviRow[itr];
-        oldCor1 = dev_nr[ncIdx * 2 + 1] * deviCol[itr] + dev_nr[ncIdx * 2] * deviRow[itr];
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        oldCor0 = dev_nr[cNum * 2] * deviCol[pNum] 
+                - dev_nr[cNum * 2 + 1] * deviRow[pNum];
+        oldCor1 = dev_nr[cNum * 2 + 1] * deviCol[pNum] 
+                + dev_nr[cNum * 2] * deviRow[pNum];
 
-        atomicAdd(&sTau[deviSig[itr]], dev_ws_data[smidx][blockIdx.x]);
+        tauShift = dev_nc[cNum] * tauSize;
+        atomicAdd(&devTau[tauShift + deviSig[pNum]], dev_ws_data[smidx][iNum]);
+        
+        ctfTemp = devctfP[itr]
+                * devctfP[itr]
+                * dev_ws_data[smidx][iNum];
 
-        ctfTemp = devctfP[blockIdx.x * npxl + itr]
-                * devctfP[blockIdx.x * npxl + itr]
-                * dev_ws_data[smidx][blockIdx.x];
-
-        addFTD2D(devDataT + dev_nc[ncIdx] * vdimSize,
+        addFTD2D(devDataT + dev_nc[cNum] * vdimSize,
                  ctfTemp,
                  (RFLOAT)oldCor0,
                  (RFLOAT)oldCor1,
                  vdim);
     }
-
-    __syncthreads();
-    
-    int tauShift = dev_nc[ncIdx] * tauSize;
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        atomicAdd(&devTau[tauShift + itr], sTau[itr]);
 }
 
 __global__ void kernel_InsertF2D(Complex* devDataF,
@@ -2458,6 +2270,7 @@ __global__ void kernel_InsertF2D(Complex* devDataF,
                                  int* dev_nc,
                                  int* deviCol,
                                  int* deviRow,
+                                 int batch,
                                  int insertIdx,
                                  int npxl,
                                  int mReco,
@@ -2465,19 +2278,27 @@ __global__ void kernel_InsertF2D(Complex* devDataF,
                                  int vdimSize,
                                  int smidx)
 {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
     Complex tran(0.0, 0.0);
     double oldCor0, oldCor1;
-    int ncIdx = blockIdx.x * mReco + insertIdx;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        oldCor0 = dev_nr[ncIdx * 2] * deviCol[itr] - dev_nr[ncIdx * 2 + 1] * deviRow[itr];
-        oldCor1 = dev_nr[ncIdx * 2 + 1] * deviCol[itr] + dev_nr[ncIdx * 2] * deviRow[itr];
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        oldCor0 = dev_nr[cNum * 2] * deviCol[pNum] 
+                - dev_nr[cNum * 2 + 1] * deviRow[pNum];
+        oldCor1 = dev_nr[cNum * 2 + 1] * deviCol[pNum] 
+                + dev_nr[cNum * 2] * deviRow[pNum];
 
-        tran = devtranP[blockIdx.x * npxl + itr];
-        tran *= (devctfP[blockIdx.x * npxl + itr]
-                * dev_ws_data[smidx][blockIdx.x]);
+        tran = devtranP[itr];
+        tran *= (devctfP[itr]
+                * dev_ws_data[smidx][iNum]);
 
-        addFTC2D(devDataF + dev_nc[ncIdx] * vdimSize,
+        addFTC2D(devDataF + dev_nc[cNum] * vdimSize,
                  tran,
                  (RFLOAT)oldCor0,
                  (RFLOAT)oldCor1,
@@ -2568,43 +2389,45 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                                int* deviCol,
                                int* deviRow,
                                int* deviSig,
-                               int tauSize,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    RFLOAT ctfTemp;
+    RFLOAT tempSW = 0.0;
+    Mat33 mat;
+
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        extern __shared__ RFLOAT tTau[];
-        double* rotMat = (double*)tTau;
-        RFLOAT* tempTau = (RFLOAT*)&rotMat[9];
-        RFLOAT ctfTemp;
-        Mat33 mat;
-        
-        for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-            tempTau[itr] = 0;
-        
-        for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-            rotMat[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-        
-        __syncthreads();
-
-        mat.init(rotMat, 0);
-
-        RFLOAT tempSW = 0.0;
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        iNum = itr / npxl;
+        if (insertIdx < dev_nc[iNum])
         {
-            Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
-            Vec3 oldCor = mat * newCor;
-
-            tempSW = devsigRcpP[blockIdx.x * npxl + itr]
-                   * dev_ws_data[smidx][blockIdx.x];
-            atomicAdd(&tempTau[deviSig[itr]], tempSW);
+            pNum = itr % npxl;
+            cNum = iNum * mReco + insertIdx;
             
-            ctfTemp = devctfP[blockIdx.x * npxl + itr]
-                    * devctfP[blockIdx.x * npxl + itr]
+            for (int r = 0; r < 9; r++)
+                rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+            
+            mat.init(rotMat, threadIdx.x);
+        
+            Vec3 newCor((double)deviCol[pNum], 
+                        (double)deviRow[pNum], 
+                        0);
+            Vec3 oldCor = mat * newCor;
+            
+            tempSW = devsigRcpP[itr]
+                   * dev_ws_data[smidx][iNum];
+
+            atomicAdd(&devTau[deviSig[pNum]], tempSW);
+            
+            ctfTemp = devctfP[itr]
+                    * devctfP[itr]
                     * tempSW;
 
             addFTD(devDataT,
@@ -2614,11 +2437,6 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                    (RFLOAT)oldCor(2),
                    vdim);
         }
-        
-        __syncthreads();
-        
-        for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-            atomicAdd(&devTau[itr], tempTau[itr]);
     }
 }
 
@@ -2630,35 +2448,42 @@ __global__ void kernel_InsertF(Complex* devDataF,
                                int* dev_nc,
                                int* deviCol,
                                int* deviRow,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    
+    Complex tran(0.0, 0.0);
+    Mat33 mat;
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        extern __shared__ double rotF[];
-
-        Mat33 mat;
-
-        for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-            rotF[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-
-        __syncthreads();
-
-        mat.init(rotF, 0);
-
-        Complex tran(0.0, 0.0);
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        iNum = itr / npxl;
+        if (insertIdx < dev_nc[iNum])
         {
-            Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+            pNum = itr % npxl;
+            cNum = iNum * mReco + insertIdx;
+            
+            for (int r = 0; r < 9; r++)
+                rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+            
+            mat.init(rotMat, threadIdx.x);
+        
+            Vec3 newCor((double)deviCol[pNum], 
+                        (double)deviRow[pNum], 
+                        0);
             Vec3 oldCor = mat * newCor;
-
-            tran = devtranP[blockIdx.x * npxl + itr];
-            tran *= (devctfP[blockIdx.x * npxl + itr]
-                    * devsigRcpP[blockIdx.x * npxl + itr]
-                    * dev_ws_data[smidx][blockIdx.x]);
+            
+            tran = devtranP[itr];
+            tran *= (devctfP[itr]
+                    * devsigRcpP[itr]
+                    * dev_ws_data[smidx][iNum]);
 
             addFTC(devDataF,
                    tran,
@@ -2684,41 +2509,42 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                                int* deviCol,
                                int* deviRow,
                                int* deviSig,
-                               int tauSize,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    RFLOAT ctfTemp;
+    Mat33 mat;
+
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        extern __shared__ RFLOAT shareTau[];
-        double* rotMat = (double*)shareTau;
-        RFLOAT* tempTau = (RFLOAT*)&rotMat[9];
-        RFLOAT ctfTemp;
-        Mat33 mat;
-        
-        for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-            tempTau[itr] = 0;
-
-        for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-            rotMat[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-
-        __syncthreads();
-
-        mat.init(rotMat, 0);
-
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        iNum = itr / npxl;
+        if (insertIdx < dev_nc[iNum])
         {
-            Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+            pNum = itr % npxl;
+            cNum = iNum * mReco + insertIdx;
+            
+            for (int r = 0; r < 9; r++)
+                rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+            
+            mat.init(rotMat, threadIdx.x);
+        
+            Vec3 newCor((double)deviCol[pNum], 
+                        (double)deviRow[pNum], 
+                        0);
             Vec3 oldCor = mat * newCor;
-
-            atomicAdd(&tempTau[deviSig[itr]], dev_ws_data[smidx][blockIdx.x]);
-
-            ctfTemp = devctfP[blockIdx.x * npxl + itr]
-                    * devctfP[blockIdx.x * npxl + itr]
-                    * dev_ws_data[smidx][blockIdx.x];
+            
+            atomicAdd(&devTau[deviSig[pNum]], dev_ws_data[smidx][iNum]);
+            
+            ctfTemp = devctfP[itr]
+                    * devctfP[itr]
+                    * dev_ws_data[smidx][iNum];
 
             addFTD(devDataT,
                    ctfTemp,
@@ -2727,10 +2553,6 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                    (RFLOAT)oldCor(2),
                    vdim);
         }
-        __syncthreads();
-        
-        for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-            atomicAdd(&devTau[itr], tempTau[itr]);
     }
 }
 
@@ -2741,34 +2563,41 @@ __global__ void kernel_InsertF(Complex* devDataF,
                                int* dev_nc,
                                int* deviCol,
                                int* deviRow,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    if (insertIdx < dev_nc[blockIdx.x])
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    
+    Complex tran(0.0, 0.0);
+    Mat33 mat;
+    
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        extern __shared__ double shareFM[];
-
-        Mat33 mat;
-
-        for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-            shareFM[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-
-        __syncthreads();
-
-        mat.init(shareFM, 0);
-
-        Complex tran(0.0, 0.0);
-        for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+        iNum = itr / npxl;
+        if (insertIdx < dev_nc[iNum])
         {
-            Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+            pNum = itr % npxl;
+            cNum = iNum * mReco + insertIdx;
+            
+            for (int r = 0; r < 9; r++)
+                rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+            
+            mat.init(rotMat, threadIdx.x);
+        
+            Vec3 newCor((double)deviCol[pNum], 
+                        (double)deviRow[pNum], 
+                        0);
             Vec3 oldCor = mat * newCor;
-
-            tran = devtranP[blockIdx.x * npxl + itr];
-            tran *= (devctfP[blockIdx.x * npxl + itr]
-                    * dev_ws_data[smidx][blockIdx.x]);
+            
+            tran = devtranP[itr];
+            tran *= (devctfP[itr]
+                    * dev_ws_data[smidx][iNum]);
 
             addFTC(devDataF,
                    tran,
@@ -2796,70 +2625,70 @@ __global__ void kernel_InsertO3D(double* devO,
                                  int mReco,
                                  int batchSize)
 {
-        extern __shared__ double oRes[];
+    extern __shared__ double oCor[];
 
-        double* resX = oRes;
-        double* resY = &resX[blockDim.x];
-        double* resZ = &resY[blockDim.x];
-        int* resC = (int*)&resZ[blockDim.x];
+    double* resX = oCor;
+    double* resY = &resX[blockDim.x];
+    double* resZ = &resY[blockDim.x];
+    int* resC = (int*)&resZ[blockDim.x];
 
-        int ncIdx;
-        int nrIdx;
-        int tran0;
-        int tran1;
+    int ncIdx;
+    int nrIdx;
+    int tran0;
+    int tran1;
 
-        resX[threadIdx.x] = 0;
-        resY[threadIdx.x] = 0;
-        resZ[threadIdx.x] = 0;
-        resC[threadIdx.x] = 0;
+    resX[threadIdx.x] = 0;
+    resY[threadIdx.x] = 0;
+    resZ[threadIdx.x] = 0;
+    resC[threadIdx.x] = 0;
 
-        __syncthreads();
+    __syncthreads();
 
-        for (int itr = threadIdx.x; itr < batchSize; itr += blockDim.x)
+    for (int itr = threadIdx.x; itr < batchSize; itr += blockDim.x)
+    {
+        if (insertIdx < dev_nc[itr])
         {
-            if (insertIdx < dev_nc[itr])
-            {
-                ncIdx = itr * mReco + insertIdx;
-                nrIdx = ncIdx * 9;
-                tran0 = dev_nt[ncIdx * 2] - dev_offs[itr * 2];
-                tran1 = dev_nt[ncIdx * 2 + 1] - dev_offs[itr * 2 + 1];
+            ncIdx = itr * mReco + insertIdx;
+            nrIdx = ncIdx * 9;
+            tran0 = dev_nt[ncIdx * 2] - dev_offs[itr * 2];
+            tran1 = dev_nt[ncIdx * 2 + 1] - dev_offs[itr * 2 + 1];
 
-                resX[threadIdx.x] += -1 * (dev_mat[nrIdx] * tran0
-                                        + dev_mat[nrIdx + 3] * tran1);
+            resX[threadIdx.x] += -1 * (dev_mat[nrIdx] * tran0
+                                    + dev_mat[nrIdx + 3] * tran1);
 
-                resY[threadIdx.x] += -1 * (dev_mat[nrIdx + 1] * tran0
-                                        + dev_mat[nrIdx + 4] * tran1);
+            resY[threadIdx.x] += -1 * (dev_mat[nrIdx + 1] * tran0
+                                    + dev_mat[nrIdx + 4] * tran1);
 
-                resZ[threadIdx.x] += -1 * (dev_mat[nrIdx + 2] * tran0
-                                        + dev_mat[nrIdx + 5] * tran1);
+            resZ[threadIdx.x] += -1 * (dev_mat[nrIdx + 2] * tran0
+                                    + dev_mat[nrIdx + 5] * tran1);
 
-                resC[threadIdx.x] += 1;
-            }
+            resC[threadIdx.x] += 1;
+        }
 
+    }
+    __syncthreads();
+
+    int i = blockDim.x / 2;
+    while (i != 0)
+    {
+        if (threadIdx.x < i)
+        {
+            resX[threadIdx.x] += resX[threadIdx.x + i];
+            resY[threadIdx.x] += resY[threadIdx.x + i];
+            resZ[threadIdx.x] += resZ[threadIdx.x + i];
+            resC[threadIdx.x] += resC[threadIdx.x + i];
         }
         __syncthreads();
+        i /= 2;
+    }
 
-        int i = 64;
-        while (i != 0)
-        {
-            if (threadIdx.x < i)
-            {
-                resX[threadIdx.x] += resX[threadIdx.x + i];
-                resY[threadIdx.x] += resY[threadIdx.x + i];
-                resZ[threadIdx.x] += resZ[threadIdx.x + i];
-                resC[threadIdx.x] += resC[threadIdx.x + i];
-            }
-            __syncthreads();
-            i /= 2;
-        }
-
-        if (threadIdx.x == 0)
-        {
-            atomicAdd(&devO[0], resX[0]);
-            atomicAdd(&devO[1], resY[0]);
-            atomicAdd(&devO[2], resZ[0]);
-            atomicAdd(&devC[0], resC[0]);
-        }
+    if (threadIdx.x == 0)
+    {
+        atomicAdd(&devO[0], resX[0]);
+        atomicAdd(&devO[1], resY[0]);
+        atomicAdd(&devO[2], resZ[0]);
+        atomicAdd(&devC[0], resC[0]);
+    }
 }
 
 /**
@@ -2877,70 +2706,70 @@ __global__ void kernel_InsertO3D(double* devO,
                                  int mReco,
                                  int batchSize)
 {
-        extern __shared__ double oCor[];
+    extern __shared__ double oCor[];
 
-        double* resX = oCor;
-        double* resY = &resX[blockDim.x];
-        double* resZ = &resY[blockDim.x];
-        int* resC = (int*)&resZ[blockDim.x];
+    double* resX = oCor;
+    double* resY = &resX[blockDim.x];
+    double* resZ = &resY[blockDim.x];
+    int* resC = (int*)&resZ[blockDim.x];
 
-        int ncIdx;
-        int nrIdx;
-        int tran0;
-        int tran1;
+    int ncIdx;
+    int nrIdx;
+    int tran0;
+    int tran1;
 
-        resX[threadIdx.x] = 0;
-        resY[threadIdx.x] = 0;
-        resZ[threadIdx.x] = 0;
-        resC[threadIdx.x] = 0;
+    resX[threadIdx.x] = 0;
+    resY[threadIdx.x] = 0;
+    resZ[threadIdx.x] = 0;
+    resC[threadIdx.x] = 0;
 
-        __syncthreads();
+    __syncthreads();
 
-        for (int itr = threadIdx.x; itr < batchSize; itr += blockDim.x)
+    for (int itr = threadIdx.x; itr < batchSize; itr += blockDim.x)
+    {
+        if (insertIdx < dev_nc[itr])
         {
-            if (insertIdx < dev_nc[itr])
-            {
-                ncIdx = itr * mReco + insertIdx;
-                nrIdx = ncIdx * 9;
-                tran0 = dev_nt[ncIdx * 2];
-                tran1 = dev_nt[ncIdx * 2 + 1];
+            ncIdx = itr * mReco + insertIdx;
+            nrIdx = ncIdx * 9;
+            tran0 = dev_nt[ncIdx * 2];
+            tran1 = dev_nt[ncIdx * 2 + 1];
 
-                resX[threadIdx.x] += -1 * (dev_mat[nrIdx] * tran0
-                                        + dev_mat[nrIdx + 3] * tran1);
+            resX[threadIdx.x] += -1 * (dev_mat[nrIdx] * tran0
+                                    + dev_mat[nrIdx + 3] * tran1);
 
-                resY[threadIdx.x] += -1 * (dev_mat[nrIdx + 1] * tran0
-                                        + dev_mat[nrIdx + 4] * tran1);
+            resY[threadIdx.x] += -1 * (dev_mat[nrIdx + 1] * tran0
+                                    + dev_mat[nrIdx + 4] * tran1);
 
-                resZ[threadIdx.x] += -1 * (dev_mat[nrIdx + 2] * tran0
-                                        + dev_mat[nrIdx + 5] * tran1);
+            resZ[threadIdx.x] += -1 * (dev_mat[nrIdx + 2] * tran0
+                                    + dev_mat[nrIdx + 5] * tran1);
 
-                resC[threadIdx.x] += 1;
-            }
+            resC[threadIdx.x] += 1;
+        }
 
+    }
+    __syncthreads();
+
+    int i = blockDim.x / 2;
+    while (i != 0)
+    {
+        if (threadIdx.x < i)
+        {
+            resX[threadIdx.x] += resX[threadIdx.x + i];
+            resY[threadIdx.x] += resY[threadIdx.x + i];
+            resZ[threadIdx.x] += resZ[threadIdx.x + i];
+            resC[threadIdx.x] += resC[threadIdx.x + i];
         }
         __syncthreads();
+        i /= 2;
+    }
 
-        int i = 64;
-        while (i != 0)
-        {
-            if (threadIdx.x < i)
-            {
-                resX[threadIdx.x] += resX[threadIdx.x + i];
-                resY[threadIdx.x] += resY[threadIdx.x + i];
-                resZ[threadIdx.x] += resZ[threadIdx.x + i];
-                resC[threadIdx.x] += resC[threadIdx.x + i];
-            }
-            __syncthreads();
-            i /= 2;
-        }
-
-        if (threadIdx.x == 0)
-        {
-            atomicAdd(&devO[0], resX[0]);
-            atomicAdd(&devO[1], resY[0]);
-            atomicAdd(&devO[2], resZ[0]);
-            atomicAdd(&devC[0], resC[0]);
-        }
+    if (threadIdx.x == 0)
+    {
+        atomicAdd(&devO[0], resX[0]);
+        atomicAdd(&devO[1], resY[0]);
+        atomicAdd(&devO[2], resZ[0]);
+        atomicAdd(&devC[0], resC[0]);
+    }
 }
 
 /**
@@ -2957,40 +2786,43 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                                int* deviCol,
                                int* deviRow,
                                int* deviSig,
-                               int tauSize,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    extern __shared__ RFLOAT sRTau[];
-    double* rotMat = (double*)sRTau;
-    RFLOAT* tempTau = (RFLOAT*)&rotMat[9];
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+
     RFLOAT ctfTemp;
-    Mat33 mat;
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        tempTau[itr] = 0;
-
-    for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-        rotMat[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-
-    __syncthreads();
-
-    mat.init(rotMat, 0);
-
     RFLOAT tempSW = 0.0;
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    Mat33 mat;
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        for (int r = 0; r < 9; r++)
+            rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+        
+        mat.init(rotMat, threadIdx.x);
+        
+        Vec3 newCor((double)deviCol[pNum], 
+                    (double)deviRow[pNum], 
+                    0);
         Vec3 oldCor = mat * newCor;
 
-        tempSW = devsigRcpP[blockIdx.x * npxl + itr]
-               * dev_ws_data[smidx][blockIdx.x];
-        atomicAdd(&tempTau[deviSig[itr]], tempSW);
+        tempSW = devsigRcpP[itr]
+               * dev_ws_data[smidx][iNum];
 
-        ctfTemp = devctfP[blockIdx.x * npxl + itr]
-                * devctfP[blockIdx.x * npxl + itr]
+        atomicAdd(&devTau[deviSig[pNum]], tempSW);
+            
+        ctfTemp = devctfP[itr]
+                * devctfP[itr]
                 * tempSW;
 
         addFTD(devDataT,
@@ -3000,10 +2832,6 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                (RFLOAT)oldCor(2),
                vdim);
     }
-    __syncthreads();
-    
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        atomicAdd(&devTau[itr], tempTau[itr]);
 }
 
 __global__ void kernel_InsertF(Complex* devDataF,
@@ -3013,33 +2841,40 @@ __global__ void kernel_InsertF(Complex* devDataF,
                                double* dev_mat,
                                int* deviCol,
                                int* deviRow,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    extern __shared__ double sFM[];
-
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    
+    Complex tran(0.0, 0.0);
     Mat33 mat;
 
-    for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-        sFM[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-
-    __syncthreads();
-
-    mat.init(sFM, 0);
-
-    Complex tran(0.0, 0.0);
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        for (int r = 0; r < 9; r++)
+            rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+        
+        mat.init(rotMat, threadIdx.x);
+        
+        Vec3 newCor((double)deviCol[pNum], 
+                    (double)deviRow[pNum], 
+                    0);
         Vec3 oldCor = mat * newCor;
 
-        tran = devtranP[blockIdx.x * npxl + itr];
-        tran *= (devctfP[blockIdx.x * npxl + itr]
-                * devsigRcpP[blockIdx.x * npxl + itr]
-                * dev_ws_data[smidx][blockIdx.x]);
+        tran = devtranP[itr];
+        tran *= (devctfP[itr]
+                * devsigRcpP[itr]
+                * dev_ws_data[smidx][iNum]);
 
         addFTC(devDataF,
                tran,
@@ -3063,38 +2898,41 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                                int* deviCol,
                                int* deviRow,
                                int* deviSig,
-                               int tauSize,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    extern __shared__ RFLOAT shareTR[];
-    double* rotMat = (double*)shareTR;
-    RFLOAT* tempTau = (RFLOAT*)&rotMat[9];
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+
     RFLOAT ctfTemp;
     Mat33 mat;
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        tempTau[itr] = 0;
-    
-    for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-        rotMat[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
 
-    __syncthreads();
-
-    mat.init(rotMat, 0);
-
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        for (int r = 0; r < 9; r++)
+            rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+        
+        mat.init(rotMat, threadIdx.x);
+        
+        Vec3 newCor((double)deviCol[pNum], 
+                    (double)deviRow[pNum], 
+                    0);
         Vec3 oldCor = mat * newCor;
 
-        atomicAdd(&tempTau[deviSig[itr]], dev_ws_data[smidx][blockIdx.x]);
+        atomicAdd(&devTau[deviSig[pNum]], dev_ws_data[smidx][iNum]);
         
-        ctfTemp = devctfP[blockIdx.x * npxl + itr]
-                * devctfP[blockIdx.x * npxl + itr]
-                * dev_ws_data[smidx][blockIdx.x];
+        ctfTemp = devctfP[itr]
+                * devctfP[itr]
+                * dev_ws_data[smidx][iNum];
 
         addFTD(devDataT,
                ctfTemp,
@@ -3103,10 +2941,6 @@ __global__ void kernel_InsertT(RFLOAT* devDataT,
                (RFLOAT)oldCor(2),
                vdim);
     }
-    __syncthreads();
-    
-    for (int itr = threadIdx.x; itr < tauSize; itr += blockDim.x)
-        atomicAdd(&devTau[itr], tempTau[itr]);
 }
 
 __global__ void kernel_InsertF(Complex* devDataF,
@@ -3115,32 +2949,39 @@ __global__ void kernel_InsertF(Complex* devDataF,
                                double* dev_mat,
                                int* deviCol,
                                int* deviRow,
+                               int batch,
                                int insertIdx,
                                int npxl,
                                int mReco,
                                int vdim,
                                int smidx)
 {
-    extern __shared__ double resFT[];
-
+    extern __shared__ double rotMat[];
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int iNum, pNum, cNum;
+    
+    Complex tran(0.0, 0.0);
     Mat33 mat;
 
-    for (int itr = threadIdx.x; itr < 9; itr += blockDim.x)
-        resFT[itr] = dev_mat[(blockIdx.x * mReco + insertIdx) * 9 + itr];
-
-    __syncthreads();
-
-    mat.init(resFT, 0);
-
-    Complex tran(0.0, 0.0);
-    for (int itr = threadIdx.x; itr < npxl; itr += blockDim.x)
+    for (int itr = tid; itr < batch * npxl; itr += gridDim.x * blockDim.x)
     {
-        Vec3 newCor((double)deviCol[itr], (double)deviRow[itr], 0);
+        iNum = itr / npxl;
+        pNum = itr % npxl;
+        cNum = iNum * mReco + insertIdx;
+        
+        for (int r = 0; r < 9; r++)
+            rotMat[threadIdx.x * 9 + r] = dev_mat[cNum * 9 + r];
+        
+        mat.init(rotMat, threadIdx.x);
+        
+        Vec3 newCor((double)deviCol[pNum], 
+                    (double)deviRow[pNum], 
+                    0);
         Vec3 oldCor = mat * newCor;
 
-        tran = devtranP[blockIdx.x * npxl + itr];
-        tran *= (devctfP[blockIdx.x * npxl + itr]
-                * dev_ws_data[smidx][blockIdx.x]);
+        tran = devtranP[itr];
+        tran *= (devctfP[itr]
+                * dev_ws_data[smidx][iNum]);
 
         addFTC(devDataF,
                tran,
@@ -3206,7 +3047,7 @@ __global__ void kernel_InsertO3D(double* devO,
     }
     __syncthreads();
 
-    int i = 64;
+    int i = blockDim.x / 2;
     while (i != 0)
     {
         if (threadIdx.x < i)
@@ -3283,7 +3124,7 @@ __global__ void kernel_InsertO3D(double* devO,
     }
     __syncthreads();
 
-    int i = 64;
+    int i = blockDim.x / 2;
     while (i != 0)
     {
         if (threadIdx.x < i)
@@ -3307,14 +3148,27 @@ __global__ void kernel_InsertO3D(double* devO,
 }
 
 /**
+ * @brief 
+ *
+ * @param 
+ * @param 
+ * @param 
+ */
+__global__ void kernel_SetSF(RFLOAT* devDataT,
+                             RFLOAT* sf)
+{
+    sf[threadIdx.x] = 1.0 / devDataT[threadIdx.x];
+}
+
+/**
  * @brief Normalize T: T = T * sf
  *
  * @param devDataT : the pointer of T3D
  * @param length : T3D's size
  * @param sf : the coefficient to Normalize T
  */
-__global__ void kernel_SetSF2D(RFLOAT *devDataT,
-                               RFLOAT *sf,
+__global__ void kernel_SetSF2D(RFLOAT* devDataT,
+                               RFLOAT* sf,
                                int dimSize)
 {
     sf[threadIdx.x] = 1.0 / devDataT[threadIdx.x * dimSize];
@@ -3330,17 +3184,18 @@ __global__ void kernel_SetSF2D(RFLOAT *devDataT,
 __global__ void kernel_NormalizeTF2D(Complex *devDataF,
                                      RFLOAT *devDataT,
                                      RFLOAT *sf,
-                                     int kIdx)
+                                     int kIdx,
+                                     int dimSize)
 {
     int index = threadIdx.x + blockDim.x * blockIdx.x;
 
-    devDataF[index] *= sf[kIdx];
-    devDataT[index] *= sf[kIdx];
-#ifdef SINGLE_PRECISION
-    devDataT[index] = fmaxf(devDataT[index], 1e-25);
-#else
-    devDataT[index] = fmax(devDataT[index], 1e-25);
-#endif
+    while (index < dimSize)
+    {
+        devDataF[index] *= sf[kIdx];
+        devDataT[index] *= sf[kIdx];
+
+        index += blockDim.x * gridDim.x;
+    }
 }
 
 /**
@@ -3350,22 +3205,20 @@ __global__ void kernel_NormalizeTF2D(Complex *devDataF,
  * @param length : T3D's size
  * @param sf : the coefficient to Normalize T
  */
-__global__ void kernel_NormalizeTF(Complex *devDataF,
-                                   RFLOAT *devDataT,
-                                   const size_t length,
-                                   const size_t num,
-                                   const RFLOAT sf)
+__global__ void kernel_NormalizeTF(Complex* devDataF,
+                                   RFLOAT* devDataT,
+                                   RFLOAT* sf,
+                                   int batch)
 {
-    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    int index = threadIdx.x + blockDim.x * blockIdx.x;
 
-    Constructor constructor;
-    constructor.init(tid);
-
-    constructor.normalizeTF(devDataF,
-                            devDataT,
-                            length,
-                            num,
-                            sf);
+    while(index < batch)
+    {
+        devDataF[index] *= sf[0];
+        devDataT[index] *= sf[0];
+        
+        index += blockDim.x * gridDim.x;
+    }
 }
 
 /**
@@ -3409,20 +3262,59 @@ __global__ void kernel_SymmetrizeT(RFLOAT *devDataT,
                                    const size_t dimSize,
                                    cudaTextureObject_t texObject)
 {
-    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    int index = threadIdx.x + blockDim.x * blockIdx.x;
+    int i, j, k;
+    Mat33 mat;
 
-    Constructor constructor;
-    constructor.init(tid);
-
-    constructor.symmetrizeT(devDataT,
-                            devSymmat,
-                            r,
-                            numSymMat,
-                            interp,
-                            num,
-                            dim,
-                            dimSize,
-                            texObject);
+    while(index < dimSize)
+    {
+        i = (index + num) % (dim / 2 + 1);
+        j = ((index + num) / (dim / 2 + 1)) % dim;
+        k = ((index + num) / (dim / 2 + 1)) / dim;
+        if(j >= dim / 2) j = j - dim;
+        if(k >= dim / 2) k = k - dim;
+        
+        for (int m = 0 ; m < numSymMat; m++)
+        {
+            mat.init(devSymmat, m);
+            
+            RFLOAT inc = 0.0;
+            Vec3 newCor((double)i, (double)j, (double)k);
+            Vec3 oldCor = mat * newCor;
+            
+#ifdef SINGLE_PRECISION
+            if ((int)floorf(oldCor.squaredNorm3()) < r)
+            {
+                inc = getByInterpolationFT((RFLOAT)oldCor(0),
+                                           (RFLOAT)oldCor(1),
+                                           (RFLOAT)oldCor(2),
+                                           interp,
+                                           dim,
+                                           texObject);
+                
+                devDataT[index] += inc;
+            }
+#else
+            if ((int)floor(oldCor.squaredNorm3()) < r)
+            {
+                inc = getByInterpolationFT((RFLOAT)oldCor(0),
+                                           (RFLOAT)oldCor(1),
+                                           (RFLOAT)oldCor(2),
+                                           interp,
+                                           dim,
+                                           texObject);
+                
+                devDataT[index] += inc;
+            }
+#endif    
+        } 
+#ifdef SINGLE_PRECISION
+        devDataT[index] = fmaxf(devDataT[index], 1e-25);
+#else
+        devDataT[index] = fmax(devDataT[index], 1e-25);
+#endif    
+        index += blockDim.x * gridDim.x;
+    }
 }
 
 /**
@@ -3466,20 +3358,54 @@ __global__ void kernel_SymmetrizeF(Complex *devDataF,
                                    const size_t dimSize,
                                    cudaTextureObject_t texObject)
 {
-    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    int index = threadIdx.x + blockDim.x * blockIdx.x;
+    int i, j, k;
+    Mat33 mat;
 
-    Constructor constructor;
-    constructor.init(tid);
-
-    constructor.symmetrizeF(devDataF,
-                            devSymmat,
-                            r,
-                            numSymMat,
-                            interp,
-                            num,
-                            dim,
-                            dimSize,
-                            texObject);
+    while(index < dimSize)
+    {
+        i = (index + num) % (dim / 2 + 1);
+        j = ((index + num) / (dim / 2 + 1)) % dim;
+        k = ((index + num) / (dim / 2 + 1)) / dim;
+        if(j >= dim / 2) j = j - dim;
+        if(k >= dim / 2) k = k - dim;
+        
+        for (int m = 0 ; m < numSymMat; m++)
+        {
+            mat.init(devSymmat, m);
+            
+            Complex inc(0.0, 0.0);
+            
+            Vec3 newCor((double)i, (double)j, (double)k);
+            Vec3 oldCor = mat * newCor;
+#ifdef SINGLE_PRECISION
+            if ((int)floorf(oldCor.squaredNorm3()) < r)
+            {
+                inc = getByInterpolationFTC((RFLOAT)oldCor(0),
+                                            (RFLOAT)oldCor(1),
+                                            (RFLOAT)oldCor(2),
+                                            interp,
+                                            dim,
+                                            texObject);
+                
+                devDataF[index] += inc;
+            }
+#else
+            if ((int)floor(oldCor.squaredNorm3()) < r)
+            {
+                inc = getByInterpolationFTC((RFLOAT)oldCor(0),
+                                            (RFLOAT)oldCor(1),
+                                            (RFLOAT)oldCor(2),
+                                            interp,
+                                            dim,
+                                            texObject);
+                
+                devDataF[index] += inc;
+            }
+#endif    
+        }        
+        index += blockDim.x * gridDim.x;
+    }
 }
 
 /**
@@ -3533,8 +3459,10 @@ __global__ void kernel_ShellAverage2D(RFLOAT *devAvg2D,
 
     for (int itr = threadIdx.x; itr < r; itr += blockDim.x)
     {
-        devAvg2D[itr + blockIdx.x * r] = sumAvg[itr];
-        devCount2D[itr + blockIdx.x * r] = sumCount[itr];
+        //devAvg2D[itr + blockIdx.x * r] = sumAvg[itr];
+        //devCount2D[itr + blockIdx.x * r] = sumCount[itr];
+        devAvg2D[itr * gridDim.x + blockIdx.x] = sumAvg[itr];
+        devCount2D[itr * gridDim.x + blockIdx.x] = sumCount[itr];
     }
 
 }
@@ -3548,8 +3476,11 @@ __global__ void kernel_ShellAverage2D(RFLOAT *devAvg2D,
 __global__ void kernel_ShellAverage(RFLOAT *devAvg2D,
                                     int *devCount2D,
                                     RFLOAT *devDataT,
-                                    int dim,
+                                    int volumeShift,
+                                    int smidxShift,
+                                    int lineSize,
                                     int r,
+                                    int dim,
                                     size_t dimSize)
 {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -3570,9 +3501,9 @@ __global__ void kernel_ShellAverage(RFLOAT *devAvg2D,
 
     while(tid < dimSize)
     {
-        i = tid % (dim / 2 + 1);
-        j = (tid / (dim / 2 + 1)) % dim;
-        k = (tid / (dim / 2 + 1)) / dim;
+        i = (tid + volumeShift) % (dim / 2 + 1);
+        j = ((tid + volumeShift) / (dim / 2 + 1)) % dim;
+        k = ((tid + volumeShift) / (dim / 2 + 1)) / dim;
         if(j >= dim / 2) j = j - dim;
         if(k >= dim / 2) k = k - dim;
 
@@ -3598,8 +3529,8 @@ __global__ void kernel_ShellAverage(RFLOAT *devAvg2D,
 
     for (int itr = threadIdx.x; itr < r; itr+= blockDim.x)
     {
-        devAvg2D[itr + blockIdx.x * r] = sumAvg[itr];
-        devCount2D[itr + blockIdx.x * r] = sumCount[itr];
+        devAvg2D[itr * lineSize + smidxShift + blockIdx.x] += sumAvg[itr];
+        devCount2D[itr * lineSize + smidxShift + blockIdx.x] += sumCount[itr];
     }
 }
 
@@ -3624,7 +3555,7 @@ __global__ void kernel_CalculateAvg(RFLOAT *devAvg2D,
 
     __syncthreads();
 
-    for (int itr = threadIdx.x; itr < r; itr+= blockDim.x)
+    for (int itr = threadIdx.x; itr < r; itr += blockDim.x)
     {
         for (int i = 0; i < dim; i++)
         {
@@ -3647,9 +3578,176 @@ __global__ void kernel_CalculateAvg(RFLOAT *devAvg2D,
  * @param ...
  * @param ...
  */
+__global__ void kernel_CalculateAvg(RFLOAT *devAvg2D,
+                                    int *devCount2D,
+                                    RFLOAT *devAvg,
+                                    int *devCount,
+                                    int lineSize)
+{
+    extern __shared__ RFLOAT cal[];
+
+    RFLOAT *calAvg = cal;
+    int *calCount = (int*)&calAvg[blockDim.x];
+
+    calAvg[threadIdx.x] = 0.0;
+    calCount[threadIdx.x] = 0;
+    int lineShift = blockIdx.x * lineSize;
+    for (int itr = threadIdx.x; itr < lineSize; itr += blockDim.x)
+    {
+        calAvg[threadIdx.x] += devAvg2D[lineShift + itr];
+        calCount[threadIdx.x] += devCount2D[lineShift + itr];
+    }
+    
+    __syncthreads();
+    
+    int j;
+    bool flag;
+    if (blockDim.x % 2 == 0)
+    {
+        j = blockDim.x / 2;
+        flag = true;
+    }
+    else
+    {
+        j = blockDim.x / 2 + 1;
+        flag = false;
+    }
+
+    while (j != 0)
+    {
+        if (flag)
+        {
+            if (threadIdx.x < j)
+            {
+                calAvg[threadIdx.x] += calAvg[threadIdx.x + j];
+                calCount[threadIdx.x] += calCount[threadIdx.x + j];
+            }
+
+        }
+        else
+        {
+            if (threadIdx.x < j - 1)
+            {
+                calAvg[threadIdx.x] += calAvg[threadIdx.x + j];
+                calCount[threadIdx.x] += calCount[threadIdx.x + j];
+            }
+
+        }
+
+        __syncthreads();
+
+        if(j % 2 != 0 && j != 1)
+        {
+            j++;
+            flag = false;
+        }
+        else
+            flag = true;
+        j /= 2;
+    }
+
+    if (threadIdx.x == 0)
+    {
+        devAvg[blockIdx.x] = calAvg[threadIdx.x];
+        devCount[blockIdx.x] = calCount[threadIdx.x];
+    }
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_mergeAvgCount(RFLOAT *devAvg,
+                                     int *devCount,
+                                     int r)
+{
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    if (tid < r)
+        devAvg[tid] /= devCount[tid];
+    
+    if(tid == r - 1){
+        devAvg[r] = devAvg[r - 1];
+        devAvg[r + 1] = devAvg[r - 1];
+    }
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
 __global__ void kernel_CalculateFSC2D(RFLOAT *devDataT,
                                       RFLOAT *devFSC,
                                       RFLOAT *devAvg,
+                                      bool joinHalf,
+                                      int fscMatsize,
+                                      int wiener,
+                                      int dim,
+                                      int pf,
+                                      int r)
+{
+    int j = blockIdx.x;
+    int jDim = dim / 2 + 1;
+    if(j >= dim / 2) j = j - dim;
+
+    for (int itr = threadIdx.x; itr < jDim; itr += blockDim.x)
+    {
+        int quad = itr * itr + j * j;
+
+        //if (itr + blockIdx.x * jDim == 59)
+        //    printf("itr:%d, j:%d, quad:%d, wiener:%d, r:%d\n", itr, j, quad, wiener, r);
+        if(quad >= wiener && quad < r)
+        {
+#ifdef SINGLE_PRECISION
+            int u = (int)rintf(sqrtf((float)quad));
+            float FSC = (u / pf >= fscMatsize)
+                      ? 0
+                      : devFSC[u / pf];
+
+            FSC = fmaxf(1e-3, fminf(1 - 1e-3, FSC));
+#ifdef RECONSTRUCTOR_ALWAYS_JOIN_HALF
+            FSC = sqrtf(2 * FSC / (1 + FSC));
+#else
+            if (joinHalf)
+                FSC = sqrtf(2 * FSC / (1 + FSC));
+#endif
+
+#else
+            int u = (int)rint(sqrt((double)quad));
+            double FSC = (u / pf >= fscMatsize)
+                       ? 0
+                       : devFSC[u / pf];
+
+            FSC = fmax(1e-3, fmin(1 - 1e-3, FSC));
+#ifdef RECONSTRUCTOR_ALWAYS_JOIN_HALF
+            FSC = sqrt(2 * FSC / (1 + FSC));
+#else
+            if (joinHalf)
+                FSC = sqrt(2 * FSC / (1 + FSC));
+#endif
+#endif
+            devDataT[itr + blockIdx.x * jDim] += (1 - FSC) / FSC * devAvg[u];
+        }
+#ifdef SINGLE_PRECISION
+        devDataT[itr + blockIdx.x * jDim] = fmaxf(devDataT[itr + blockIdx.x * jDim], 1e-25);
+#else
+        devDataT[itr + blockIdx.x * jDim] = fmax(devDataT[itr + blockIdx.x * jDim], 1e-25);
+#endif
+    }
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_CalculateFSC2D(RFLOAT *devDataT,
+                                      RFLOAT *devFSC,
                                       bool joinHalf,
                                       int fscMatsize,
                                       int wiener,
@@ -3680,7 +3778,6 @@ __global__ void kernel_CalculateFSC2D(RFLOAT *devDataT,
             if (joinHalf)
                 FSC = sqrtf(2 * FSC / (1 + FSC));
 #endif
-
 #else
             int u = (int)rint(sqrt((double)quad));
             double FSC = (u / pf >= fscMatsize)
@@ -3694,14 +3791,8 @@ __global__ void kernel_CalculateFSC2D(RFLOAT *devDataT,
             if (joinHalf)
                 FSC = sqrt(2 * FSC / (1 + FSC));
 #endif
-
 #endif
-
-#ifdef RECONSTRUCTOR_WIENER_FILTER_FSC_FREQ_AVG
-            devDataT[itr + blockIdx.x * jDim] += (1 - FSC) / FSC * devAvg[u];
-#else
             devDataT[itr + blockIdx.x * jDim] /= FSC;
-#endif
         }
 #ifdef SINGLE_PRECISION
         devDataT[itr + blockIdx.x * jDim] = fmaxf(devDataT[itr + blockIdx.x * jDim], 1e-25);
@@ -3720,12 +3811,12 @@ __global__ void kernel_CalculateFSC2D(RFLOAT *devDataT,
 __global__ void kernel_CalculateFSC(RFLOAT *devDataT,
                                     RFLOAT *devFSC,
                                     RFLOAT *devAvg,
-                                    int fscMatsize,
+                                    size_t num,
                                     bool joinHalf,
+                                    int fscMatsize,
                                     int wiener,
                                     int r,
                                     int pf,
-                                    size_t num,
                                     int dim,
                                     size_t dimSize)
 {
@@ -3773,17 +3864,85 @@ __global__ void kernel_CalculateFSC(RFLOAT *devDataT,
 #endif
 
 #endif
-
-#ifdef RECONSTRUCTOR_WIENER_FILTER_FSC_FREQ_AVG
-            devDataT[tid + num] += (1 - FSC) / FSC * devAvg[u];
-#else
-            devDataT[tid + num] /= FSC;
-#endif
+            devDataT[tid] += (1 - FSC) / FSC * devAvg[u];
         }
 #ifdef SINGLE_PRECISION
-        devDataT[tid + num] = fmaxf(devDataT[tid + num], 1e-25);
+        devDataT[tid] = fmaxf(devDataT[tid], 1e-25);
 #else
-        devDataT[tid + num] = fmax(devDataT[tid + num], 1e-25);
+        devDataT[tid] = fmax(devDataT[tid], 1e-25);
+#endif
+        tid += blockDim.x * gridDim.x;
+    }
+
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_CalculateFSC(RFLOAT *devDataT,
+                                    RFLOAT *devFSC,
+                                    size_t num,
+                                    bool joinHalf,
+                                    int fscMatsize,
+                                    int wiener,
+                                    int r,
+                                    int pf,
+                                    int dim,
+                                    size_t dimSize)
+{
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int i, j, k;
+
+    while(tid < dimSize)
+    {
+        i = (tid + num) % (dim / 2 + 1);
+        j = ((tid + num) / (dim / 2 + 1)) % dim;
+        k = ((tid + num) / (dim / 2 + 1)) / dim;
+        if(j >= dim / 2) j = j - dim;
+        if(k >= dim / 2) k = k - dim;
+
+        int quad = i * i + j * j + k * k;
+
+        if(quad >= wiener && quad < r)
+        {
+#ifdef SINGLE_PRECISION
+            int u = (int)rintf(sqrtf((float)quad));
+            float FSC = (u / pf >= fscMatsize)
+                      ? 0
+                      : devFSC[u / pf];
+
+            FSC = fmaxf(1e-3, fminf(1 - 1e-3, FSC));
+#ifdef RECONSTRUCTOR_ALWAYS_JOIN_HALF
+            FSC = sqrtf(2 * FSC / (1 + FSC));
+#else
+            if (joinHalf)
+                FSC = sqrtf(2 * FSC / (1 + FSC));
+#endif
+
+#else
+            int u = (int)rint(sqrt((double)quad));
+            double FSC = (u / pf >= fscMatsize)
+                       ? 0
+                       : devFSC[u / pf];
+
+            FSC = fmax(1e-3, fmin(1 - 1e-3, FSC));
+#ifdef RECONSTRUCTOR_ALWAYS_JOIN_HALF
+            FSC = sqrt(2 * FSC / (1 + FSC));
+#else
+            if (joinHalf)
+                FSC = sqrt(2 * FSC / (1 + FSC));
+#endif
+
+#endif
+            devDataT[tid] /= FSC;
+        }
+#ifdef SINGLE_PRECISION
+        devDataT[tid] = fmaxf(devDataT[tid], 1e-25);
+#else
+        devDataT[tid] = fmax(devDataT[tid], 1e-25);
 #endif
         tid += blockDim.x * gridDim.x;
     }
@@ -3852,6 +4011,10 @@ __global__ void kernel_CalculateW2D(RFLOAT *devDataW,
                                                               * blockIdx.x]), 1e-6);
 #endif
         }
+        else
+        {
+            devDataW[itr + jDim * blockIdx.x] = 0.0;
+        }
     }
 }
 
@@ -3863,19 +4026,19 @@ __global__ void kernel_CalculateW2D(RFLOAT *devDataW,
  */
 __global__ void kernel_CalculateW(RFLOAT *devDataW,
                                   RFLOAT *devDataT,
-                                  const size_t length,
-                                  const size_t num,
+                                  const size_t shift,
+                                  const int r,
                                   const int dim,
-                                  const int r)
+                                  const size_t length)
 {
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     int i, j, k;
 
     while(tid < length)
     {
-        i = (tid + num) % (dim / 2 + 1);
-        j = ((tid + num) / (dim / 2 + 1)) % dim;
-        k = ((tid + num) / (dim / 2 + 1)) / dim;
+        i = (tid + shift) % (dim / 2 + 1);
+        j = ((tid + shift) / (dim / 2 + 1)) % dim;
+        k = ((tid + shift) / (dim / 2 + 1)) / dim;
         if(j >= dim / 2) j = j - dim;
         if(k >= dim / 2) k = k - dim;
 
@@ -3884,12 +4047,15 @@ __global__ void kernel_CalculateW(RFLOAT *devDataW,
         if (quad < r)
         {
 #ifdef SINGLE_PRECISION
-            devDataW[tid + num] = 1.0 / fmaxf(fabsf(devDataT[tid + num]), 1e-6);
+            devDataW[tid] = 1.0 / fmaxf(fabsf(devDataT[tid]), 1e-6);
 #else
-            devDataW[tid + num] = 1.0 / fmax(fabs(devDataT[tid + num]), 1e-6);
+            devDataW[tid] = 1.0 / fmax(fabs(devDataT[tid]), 1e-6);
 #endif
         }
-
+        else
+        {
+            devDataW[tid] = 0.0;
+        }
         tid += blockDim.x * gridDim.x;
     }
 }
@@ -4004,10 +4170,10 @@ __global__ void kernel_InitialW(RFLOAT *devDataW,
  * @param ...
  * @param ...
  */
-__global__ void kernel_DeterminingC(Complex *devDataC,
-                                    RFLOAT *devDataT,
-                                    RFLOAT *devDataW,
-                                    const size_t length)
+__global__ void kernel_DeterminingC2D(Complex *devDataC,
+                                      RFLOAT *devDataT,
+                                      RFLOAT *devDataW,
+                                      int length)
 {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -4024,7 +4190,27 @@ __global__ void kernel_DeterminingC(Complex *devDataC,
  * @param ...
  * @param ...
  */
-__global__ void kernel_convoluteC2D(RFLOAT *devDoubleC,
+__global__ void kernel_DeterminingC(RFLOAT *devDataC,
+                                    RFLOAT *devDataT,
+                                    RFLOAT *devDataW,
+                                    const size_t length)
+{
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    while(tid < length)
+    {
+        devDataC[tid] = devDataT[tid] * devDataW[tid];
+        tid += blockDim.x * gridDim.x;
+    }
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_convoluteC2D(RFLOAT* devRealC,
                                     TabFunction tabfunc,
                                     RFLOAT nf,
                                     int padSize,
@@ -4042,11 +4228,11 @@ __global__ void kernel_convoluteC2D(RFLOAT *devDoubleC,
 
         index = itr + dim * blockIdx.x;
 
-        devDoubleC[index] = devDoubleC[index]
-                          / dimSize
-                          * tabfunc((RFLOAT)(i * i + j * j)
-                                    / (padSize * padSize))
-                          / nf;
+        devRealC[index] = devRealC[index]
+                        / dimSize
+                        * tabfunc((RFLOAT)(i * i + j * j)
+                                  / (padSize * padSize))
+                        / nf;
     }
 }
 
@@ -4252,7 +4438,7 @@ __global__ void kernel_RecalculateW(Complex *devDataC,
                 }
             }
 
-            devDataW[tid] /= fmaxf(mode, 1e-6);
+            devDataW[tid + shift] /= fmaxf(mode, 1e-6);
 #else
             x = fabs(devDataC[tid].real());
             y = fabs(devDataC[tid].imag());
@@ -4277,7 +4463,7 @@ __global__ void kernel_RecalculateW(Complex *devDataC,
                 }
             }
 
-            devDataW[tid] /= fmax(mode, 1e-6);
+            devDataW[tid + shift] /= fmax(mode, 1e-6);
 #endif
         }
         tid += blockDim.x * gridDim.x;
@@ -4522,6 +4708,7 @@ __global__ void kernel_CheckCAVG2D(RFLOAT *diff,
 __global__ void kernel_CheckCAVG(RFLOAT *diff,
                                  int *counter,
                                  Complex *devDataC,
+                                 int shift,
                                  int r,
                                  int dim,
                                  size_t dimSize)
@@ -4544,9 +4731,9 @@ __global__ void kernel_CheckCAVG(RFLOAT *diff,
 
     while(tid < dimSize)
     {
-        i = tid % (dim / 2 + 1);
-        j = (tid / (dim / 2 + 1)) % dim;
-        k = (tid / (dim / 2 + 1)) / dim;
+        i = (tid + shift) % (dim / 2 + 1);
+        j = ((tid + shift) / (dim / 2 + 1)) % dim;
+        k = ((tid + shift) / (dim / 2 + 1)) / dim;
         if(j >= dim / 2) j = j - dim;
         if(k >= dim / 2) k = k - dim;
 
@@ -4658,8 +4845,8 @@ __global__ void kernel_CheckCAVG(RFLOAT *diff,
 
     if (threadIdx.x == 0)
     {
-        diff[blockIdx.x] = sumDiff[0];
-        counter[blockIdx.x] = sumCount[0];
+        diff[blockIdx.x] += sumDiff[0];
+        counter[blockIdx.x] += sumCount[0];
     }
 
 }
@@ -4816,6 +5003,7 @@ __global__ void kernel_CheckCMAX2D(RFLOAT *devMax,
  */
 __global__ void kernel_CheckCMAX(RFLOAT *devMax,
                                  Complex *devDataC,
+                                 int shift,
                                  int r,
                                  int dim,
                                  size_t dimSize)
@@ -4834,9 +5022,9 @@ __global__ void kernel_CheckCMAX(RFLOAT *devMax,
 
     while(tid < dimSize)
     {
-        i = tid % (dim / 2 + 1);
-        j = (tid / (dim / 2 + 1)) % dim;
-        k = (tid / (dim / 2 + 1)) / dim;
+        i = (tid + shift) % (dim / 2 + 1);
+        j = ((tid + shift) / (dim / 2 + 1)) % dim;
+        k = ((tid + shift) / (dim / 2 + 1)) / dim;
         if(j >= dim / 2) j = j - dim;
         if(k >= dim / 2) k = k - dim;
 
@@ -4955,9 +5143,154 @@ __global__ void kernel_CheckCMAX(RFLOAT *devMax,
 
     if (threadIdx.x == 0)
     {
-        devMax[blockIdx.x] = sMax[0];
+        if (devMax[blockIdx.x] < sMax[0])
+            devMax[blockIdx.x] = sMax[0];
+    }
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_mergeCAvg(RFLOAT *devDiff,
+                                 int *devCount,
+                                 int totalNum)
+{
+    extern __shared__ RFLOAT mC[];
+    RFLOAT *mCAvg = mC;
+    int *mCCount = (int*)&mCAvg[blockDim.x];
+
+    mCAvg[threadIdx.x] = 0.0;
+    mCCount[threadIdx.x] = 0;
+    for (int itr = threadIdx.x; itr < totalNum; itr += blockDim.x)
+    {
+        mCAvg[threadIdx.x] += devDiff[itr];
+        mCCount[threadIdx.x] += devCount[itr];
+    }
+    
+    __syncthreads();
+    
+    int j;
+    bool flag;
+    if (blockDim.x % 2 == 0)
+    {
+        j = blockDim.x / 2;
+        flag = true;
+    }
+    else
+    {
+        j = blockDim.x / 2 + 1;
+        flag = false;
     }
 
+    while (j != 0)
+    {
+        if (flag)
+        {
+            if (threadIdx.x < j)
+            {
+                mCAvg[threadIdx.x] += mCAvg[threadIdx.x + j];
+                mCCount[threadIdx.x] += mCCount[threadIdx.x + j];
+            }
+        }
+        else
+        {
+            if (threadIdx.x < j - 1)
+            {
+                mCAvg[threadIdx.x] += mCAvg[threadIdx.x + j];
+                mCCount[threadIdx.x] += mCCount[threadIdx.x + j];
+            }
+        }
+
+        __syncthreads();
+
+        if(j % 2 != 0 && j != 1)
+        {
+            j++;
+            flag = false;
+        }
+        else
+            flag = true;
+        j /= 2;
+    }
+
+    if (threadIdx.x == 0)
+    {
+        devDiff[0] = mCAvg[0];
+        devCount[0] = mCCount[0];
+    }
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_mergeCMax(RFLOAT *devMax,
+                                 int totalNum)
+{
+    extern __shared__ RFLOAT mC[];
+
+    mC[threadIdx.x] = 0.0;
+    for (int itr = threadIdx.x; itr < totalNum; itr += blockDim.x)
+    {
+        if (mC[threadIdx.x] < devMax[itr])
+            mC[threadIdx.x] = devMax[itr];
+    }
+    
+    __syncthreads();
+    
+    int j;
+    bool flag;
+    if (blockDim.x % 2 == 0)
+    {
+        j = blockDim.x / 2;
+        flag = true;
+    }
+    else
+    {
+        j = blockDim.x / 2 + 1;
+        flag = false;
+    }
+
+    while (j != 0)
+    {
+        if (flag)
+        {
+            if (threadIdx.x < j)
+            {
+                if (mC[threadIdx.x] < mC[threadIdx.x + j])
+                    mC[threadIdx.x] = mC[threadIdx.x + j];
+            }
+        }
+        else
+        {
+            if (threadIdx.x < j - 1)
+            {
+                if (mC[threadIdx.x] < mC[threadIdx.x + j])
+                    mC[threadIdx.x] = mC[threadIdx.x + j];
+            }
+        }
+
+        __syncthreads();
+
+        if(j % 2 != 0 && j != 1)
+        {
+            j++;
+            flag = false;
+        }
+        else
+            flag = true;
+        j /= 2;
+    }
+
+    if (threadIdx.x == 0)
+    {
+        devMax[0] = mC[0];
+    }
 }
 
 /**
@@ -5186,12 +5519,12 @@ __global__ void kernel_CorrectF(RFLOAT *devDst,
                  + j * (dim / 2 + 1)
                  + i;
 
-        devDst[tid + shift] = devDst[tid + shift]
-                            / devMkb[mkbIndex]
-                            * nf;
+        devDst[tid] = devDst[tid]
+                    / devMkb[mkbIndex]
+                    * nf;
 #ifdef RECONSTRUCTOR_REMOVE_NEG
-        if (devDst[tid + shift] < 0)
-            devDst[tid + shift] = 0;
+        if (devDst[tid] < 0)
+            devDst[tid] = 0;
 #endif
         tid += blockDim.x * gridDim.x;
     }
@@ -5256,11 +5589,11 @@ __global__ void kernel_CorrectF(RFLOAT *devDst,
                  + j * (dim / 2 + 1)
                  + i;
 
-        devDst[tid + shift] /= devTik[mkbIndex];
+        devDst[tid] /= devTik[mkbIndex];
 
 #ifdef RECONSTRUCTOR_REMOVE_NEG
-        if (devDst[tid + shift] < 0)
-            devDst[tid + shift] = 0;
+        if (devDst[tid] < 0)
+            devDst[tid] = 0;
 #endif
 
         tid += blockDim.x * gridDim.x;
@@ -5277,17 +5610,18 @@ __global__ void kernel_TranslateI2D(Complex* devSrc,
                                     RFLOAT ox,
                                     RFLOAT oy,
                                     int r,
-                                    int shift,
-                                    int dim)
+                                    int dim,
+                                    int dimSize)
 {
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
     int i, j;
     RFLOAT rCol;
     RFLOAT rRow;
     RFLOAT phase;
-    for (int itr = threadIdx.x; itr < dim / 2 + 1; itr += blockDim.x)
+    for (int itr = tid; itr < dimSize; itr += gridDim.x * blockDim.x)
     {
-        i = (itr + shift) % (dim / 2 + 1);
-        j = (itr + shift) / (dim / 2 + 1);
+        i = itr % (dim / 2 + 1);
+        j = itr / (dim / 2 + 1);
         if(j >= dim / 2) j = j - dim;
 
         rCol = ox / dim;
@@ -5303,7 +5637,7 @@ __global__ void kernel_TranslateI2D(Complex* devSrc,
 #else
             imgTemp.set(cos(-phase), sin(-phase));
 #endif
-            devSrc[itr + shift] *= imgTemp;
+            devSrc[itr] *= imgTemp;
         }
     }
 }
@@ -5348,7 +5682,7 @@ __global__ void kernel_TranslateI(Complex* devRef,
 #else
             imgTemp.set(cos(-phase), sin(-phase));
 #endif
-            devRef[index + shift] *= imgTemp;
+            devRef[index] *= imgTemp;
         }
 
         index += blockDim.x * gridDim.x;
@@ -5430,12 +5764,6 @@ __global__ void kernel_MulMask(RFLOAT *dev_image,
     }
 }
 
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
 __global__ void kernel_CTF(Complex *devCtf,
                            CTFAttr *ctfData,
                            RFLOAT pixelSize,
@@ -5466,7 +5794,7 @@ __global__ void kernel_CTF(Complex *devCtf,
         w2 = ctfData[blockIdx.x].amplitudeContrast;
 
         K1 = PI * lambda;
-        K2 = divPI2 * ctfData[blockIdx.x].Cs 
+        K2 = DIVPI2 * ctfData[blockIdx.x].Cs 
            * lambda * lambda * lambda;
 
         u = sqrtf((i / (pixelSize * nCol)) 
@@ -5497,7 +5825,7 @@ __global__ void kernel_CTF(Complex *devCtf,
         w2 = ctfData[blockIdx.x].amplitudeContrast;
 
         K1 = PI * lambda;
-        K2 = divPI2 * ctfData[blockIdx.x].Cs
+        K2 = DIVPI2 * ctfData[blockIdx.x].Cs
            * lambda * lambda * lambda;
 
         u = sqrt((i / (pixelSize * nCol)) 
