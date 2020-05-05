@@ -1781,6 +1781,7 @@ void Optimiser::expectationG()
 
         //gettimeofday(&start, NULL);
 
+        int nImg = _ID.size();
         RFLOAT* weightC = (RFLOAT*)malloc(_ID.size() * _para.k * sizeof(RFLOAT));
         RFLOAT* weightR = (RFLOAT*)malloc(_ID.size() * _para.k * nR * sizeof(RFLOAT));
         RFLOAT* weightT = (RFLOAT*)malloc(_ID.size() * _para.k * nT * sizeof(RFLOAT));
@@ -1808,14 +1809,20 @@ void Optimiser::expectationG()
             Complex* devrotP[_stream.size()];
             Complex* devtraP[_nGPU];
             double* devRotMat[_nGPU];
+            double* devpR[_nGPU];
+            double* devpT[_nGPU];
             
             ExpectRotran(_iGPU,
                          _stream,
                          devrotP,
                          devtraP,
+                         devRotMat,
+                         devpR,
+                         devpT,
                          trans,
                          rot,
-                         devRotMat,
+                         pr,
+                         pt,
                          deviCol,
                          deviRow,
                          nR,
@@ -1830,6 +1837,16 @@ void Optimiser::expectationG()
             Complex* rotP = (Complex*)TSFFTW_malloc((long long)nR * _nPxl * sizeof(Complex));
             Complex* vol;
 
+            RFLOAT *pglk_datPR = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_datPI = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_ctfP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_sigRcpP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+
+            hostRegister(pglk_datPR, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_datPI, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_ctfP, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_sigRcpP, IMAGE_BATCH * _nPxl);
+                
             for (size_t t = 0; t < (size_t)_para.k; t++)
             {
                 vol = &((const_cast<Volume&>(_model.proj(t).projectee3D()))[0]);
@@ -1849,34 +1866,72 @@ void Optimiser::expectationG()
                               _nPxl,
                               _nGPU);
 
-                ExpectGlobal3D(_iGPU,
-                               _stream,
-                               devrotP,
-                               devtraP,
-                               rotP,
-                               _datPR,
-                               _datPI,
-                               _ctfP,
-                               _sigRcpP,
-                               weightC,
-                               weightR,
-                               weightT,
-                               pr,
-                               pt,
-                               baseL,
-                               t,
-                               _para.k,
-                               nR,
-                               nT,
-                               _nPxl,
-                               _ID.size(),
-                               _nGPU);
+                for (int l = 0; l < nImg;)
+                {
+                    if (l >= nImg)
+                        break;
+
+                    int batch = (l + IMAGE_BATCH < nImg)
+                              ? IMAGE_BATCH : (nImg - l);
+
+                    RFLOAT *temp_datPR;
+                    RFLOAT *temp_datPI;
+                    RFLOAT *temp_ctfP;
+                    RFLOAT *temp_sigP;
+                    for (int i = 0; i < batch; i++)
+                    {
+                        temp_datPR = &_datPR[(l + i) * _nPxl];
+                        temp_datPI = &_datPI[(l + i) * _nPxl];
+                        temp_ctfP = &_ctfP[(l + i) * _nPxl];
+                        temp_sigP = &_sigRcpP[(l + i) * _nPxl];
+                        
+                        for (int p = 0; p < _nPxl; p++)
+                        {
+                            pglk_datPR[p + i * _nPxl] = temp_datPR[p];
+                            pglk_datPI[p + i * _nPxl] = temp_datPI[p];
+                            pglk_ctfP[p + i * _nPxl] = temp_ctfP[p];
+                            pglk_sigRcpP[p + i * _nPxl] = temp_sigP[p];
+                        }
+                    }
+
+                    ExpectGlobal3D(_iGPU,
+                                   _stream,
+                                   devrotP,
+                                   devtraP,
+                                   rotP,
+                                   devpR,
+                                   devpT,
+                                   pglk_datPR,
+                                   pglk_datPI,
+                                   pglk_ctfP,
+                                   pglk_sigRcpP,
+                                   weightC + l * _para.k,
+                                   weightR + (long long)l * _para.k * nR,
+                                   weightT + (long long)l * _para.k * nT,
+                                   baseL + l,
+                                   t,
+                                   _para.k,
+                                   nR,
+                                   nT,
+                                   _nPxl,
+                                   batch,
+                                   _nGPU);
+                    
+                    l += batch;
+                }
             }
+
+            hostFree(pglk_datPR);
+            hostFree(pglk_datPI);
+            hostFree(pglk_ctfP);
+            hostFree(pglk_sigRcpP);
 
             freeRotran(_iGPU,
                        devrotP,
                        devtraP,
                        devRotMat,
+                       devpR,
+                       devpT,
                        _nGPU);
 
             delete[] baseL;
@@ -1908,36 +1963,123 @@ void Optimiser::expectationG()
 
             }
 
-            ExpectGlobal2D(_iGPU,
+            Complex* devtraP[_nGPU];
+            double* devnR[_nGPU];
+            double* devpR[_nGPU];
+            double* devpT[_nGPU];
+            std::vector<void*> symArray;
+            std::vector<void*> texObject;
+            
+            ExpectRotran2D(_iGPU,
                            _stream,
+                           symArray,
+                           texObject,
                            vol,
-                           _datPR,
-                           _datPI,
-                           _ctfP,
-                           _sigRcpP,
+                           devtraP,
+                           devnR,
+                           devpR,
+                           devpT,
                            trans,
-                           weightC,
-                           weightR,
-                           weightT,
+                           rot,
                            pr,
                            pt,
-                           rot,
                            deviCol,
                            deviRow,
                            _para.k,
                            nR,
                            nT,
-                           _model.proj(0).pf(),
-                           _model.proj(0).interp(),
                            _para.size,
                            _model.proj(0).projectee2D().nRowFT(),
                            _nPxl,
-                           _ID.size(),
                            _nGPU);
 
             delete[] vol;
             delete[] trans;
             delete[] rot;
+            
+            RFLOAT *pglk_datPR = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_datPI = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_ctfP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_sigRcpP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+
+            hostRegister(pglk_datPR, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_datPI, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_ctfP, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_sigRcpP, IMAGE_BATCH * _nPxl);
+                
+            for (int l = 0; l < nImg;)
+            {
+                if (l >= nImg)
+                    break;
+
+                int batch = (l + IMAGE_BATCH < nImg)
+                          ? IMAGE_BATCH : (nImg - l);
+
+                RFLOAT *temp_datPR;
+                RFLOAT *temp_datPI;
+                RFLOAT *temp_ctfP;
+                RFLOAT *temp_sigP;
+                for (int i = 0; i < batch; i++)
+                {
+                    temp_datPR = &_datPR[(l + i) * _nPxl];
+                    temp_datPI = &_datPI[(l + i) * _nPxl];
+                    temp_ctfP = &_ctfP[(l + i) * _nPxl];
+                    temp_sigP = &_sigRcpP[(l + i) * _nPxl];
+                    
+                    for (int p = 0; p < _nPxl; p++)
+                    {
+                        pglk_datPR[p + i * _nPxl] = temp_datPR[p];
+                        pglk_datPI[p + i * _nPxl] = temp_datPI[p];
+                        pglk_ctfP[p + i * _nPxl] = temp_ctfP[p];
+                        pglk_sigRcpP[p + i * _nPxl] = temp_sigP[p];
+                    }
+                }
+
+                ExpectGlobal2D(_iGPU,
+                               _stream,
+                               texObject,
+                               devtraP,
+                               devnR,
+                               devpR,
+                               devpT,
+                               pglk_datPR,
+                               pglk_datPI,
+                               pglk_ctfP,
+                               pglk_sigRcpP,
+                               weightC + l * _para.k,
+                               weightR + (long long)l * _para.k * nR,
+                               weightT + (long long)l * _para.k * nT,
+                               deviCol,
+                               deviRow,
+                               _para.k,
+                               nR,
+                               nT,
+                               _model.proj(0).pf(),
+                               _model.proj(0).interp(),
+                               _para.size,
+                               _model.proj(0).projectee2D().nRowFT(),
+                               _nPxl,
+                               batch,
+                               _nGPU);
+
+                l += batch;
+            }
+
+            hostFree(pglk_datPR);
+            hostFree(pglk_datPI);
+            hostFree(pglk_ctfP);
+            hostFree(pglk_sigRcpP);
+
+            freeRotran2D(_iGPU,
+                         symArray,
+                         texObject,
+                         devtraP,
+                         devnR,
+                         devpR,
+                         devpT,
+                         _para.k,
+                         _nGPU);
+
         }
 
         delete[] pr;
@@ -6950,6 +7092,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
         int vdim = _model.reco(0).getModelDim(_para.mode);
         int modelSize = _model.reco(0).getModelSize(_para.mode);
         int tauSize = _model.reco(0).getTauSize();
+        int nImg = _ID.size();
 
         if (_para.mode == MODE_2D)
         {
@@ -7075,12 +7218,78 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 }
             }
 
-            InsertI2D(_iGPU, _stream, modelF, dev_F, modelT, dev_T, arrayTau,
-                      devTau, arrayO, dev_O, arrayC, dev_C, _datPR, _datPI, 
-                      _ctfP, _sigP, w, offS, nr, nt, nd, nc, ctfaData, deviCol, 
-                      deviRow, deviSig, _para.pixelSize, cSearch, _para.k, _para.pf, _nPxl, 
-                      _para.mReco, tauSize, _para.size, vdim, _ID.size(), _nGPU);
+            volumeCopy2D(_iGPU,
+                         modelF,
+                         dev_F,
+                         modelT,
+                         dev_T,
+                         _para.k,
+                         vdim,
+                         _nGPU);
 
+            RFLOAT *pglk_datPR = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_datPI = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_ctfP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+            RFLOAT *pglk_sigRcpP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+
+            hostRegister(pglk_sigRcpP, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_datPR, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_datPI, IMAGE_BATCH * _nPxl);
+            hostRegister(pglk_ctfP, IMAGE_BATCH * _nPxl);
+            
+            for (int l = 0; l < nImg;)
+            {
+                if (l >= nImg)
+                    break;
+
+                int batch = (l + IMAGE_BATCH < nImg)
+                          ? IMAGE_BATCH : (nImg - l);
+
+                RFLOAT *temp_datPR;
+                RFLOAT *temp_datPI;
+                RFLOAT *temp_ctfP;
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+                RFLOAT *temp_sigP;
+#endif
+                for (int i = 0; i < batch; i++)
+                {
+                    temp_datPR = &_datPR[(l + i) * _nPxl];
+                    temp_datPI = &_datPI[(l + i) * _nPxl];
+                    memcpy((void*)(pglk_datPR + i * _nPxl),
+                           (void*)temp_datPR,
+                           _nPxl * sizeof(RFLOAT));
+                    memcpy((void*)(pglk_datPI + i * _nPxl),
+                           (void*)temp_datPI,
+                           _nPxl * sizeof(RFLOAT));
+                    
+                    if (!cSearch)
+                    {
+                        temp_ctfP = &_ctfP[(l + i) * _nPxl];
+                        memcpy((void*)(pglk_ctfP + i * _nPxl),
+                               (void*)temp_ctfP,
+                               _nPxl * sizeof(RFLOAT));
+                    }
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+                    temp_sigP = &_sigP[(l + i) * _nPxl];
+                    memcpy((void*)(pglk_sigRcpP + i * _nPxl),
+                           (void*)temp_sigP,
+                           _nPxl * sizeof(RFLOAT));
+#endif
+                }
+
+                InsertI2D(_iGPU, _stream, dev_F, dev_T, devTau, dev_O, dev_C, pglk_datPR, pglk_datPI, pglk_ctfP, pglk_sigRcpP, 
+                          w + l, offS + l * 2, nr + l * _para.mReco * 2, nt + l * _para.mReco * 2, nd + l * _para.mReco, 
+                          nc + l * _para.mReco, ctfaData + l, deviCol, deviRow, deviSig, _para.pixelSize, cSearch, _para.k, 
+                          _para.pf, _nPxl,  _para.mReco, tauSize, _para.size, vdim, batch, _nGPU);
+                
+                l += batch;
+            }
+
+            hostFree(pglk_datPR);
+            hostFree(pglk_datPI);
+            hostFree(pglk_ctfP);
+            hostFree(pglk_sigRcpP);
+            
             allReduceFTO(_iGPU,
                          _stream,
                          modelF,
@@ -7173,6 +7382,16 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 double *nt;
                 double *nd;
 
+                RFLOAT *pglk_datPR = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+                RFLOAT *pglk_datPI = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+                RFLOAT *pglk_ctfP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+                RFLOAT *pglk_sigRcpP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+
+                hostRegister(pglk_sigRcpP, IMAGE_BATCH * _nPxl);
+                hostRegister(pglk_datPR, IMAGE_BATCH * _nPxl);
+                hostRegister(pglk_datPI, IMAGE_BATCH * _nPxl);
+                hostRegister(pglk_ctfP, IMAGE_BATCH * _nPxl);
+                
                 int temp = 0;
                 for (int t = 0; t < _para.k; t++)
                 {
@@ -7222,14 +7441,63 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         _model.reco(t).getT(modelT,
                                             _para.mode,
                                             _para.nThreadsPerProcess);
-                        _model.reco(t).getTau(arrayTau + t * tauSize,
-                                              _para.nThreadsPerProcess);
             
-            
-                        InsertFT(_iGPU, _stream, modelF, dev_F, modelT, dev_T, arrayTau, devTau,
-                                 arrayO, dev_O, arrayC, dev_C, _datPR, _datPI, _ctfP, _sigP, w, 
-                                 offS, nr, nt, nd, nc + shiftc, ctfaData, deviCol, deviRow, deviSig, _para.pixelSize, 
-                                 cSearch, t, _para.pf, _nPxl, temp, tauSize, _ID.size(), _para.size, vdim, _nGPU);
+                        volumeCopy3D(_iGPU,
+                                     modelF,
+                                     dev_F,
+                                     modelT,
+                                     dev_T,
+                                     vdim,
+                                     _nGPU);
+
+                        for (int l = 0; l < nImg;)
+                        {
+                            if (l >= nImg)
+                                break;
+
+                            int batch = (l + IMAGE_BATCH < nImg)
+                                      ? IMAGE_BATCH : (nImg - l);
+
+                            RFLOAT *temp_datPR;
+                            RFLOAT *temp_datPI;
+                            RFLOAT *temp_ctfP;
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+                            RFLOAT *temp_sigP;
+#endif
+                            for (int i = 0; i < batch; i++)
+                            {
+                                temp_datPR = &_datPR[(l + i) * _nPxl];
+                                temp_datPI = &_datPI[(l + i) * _nPxl];
+                                memcpy((void*)(pglk_datPR + i * _nPxl),
+                                       (void*)temp_datPR,
+                                       _nPxl * sizeof(RFLOAT));
+                                memcpy((void*)(pglk_datPI + i * _nPxl),
+                                       (void*)temp_datPI,
+                                       _nPxl * sizeof(RFLOAT));
+                                
+                                if (!cSearch)
+                                {
+                                    temp_ctfP = &_ctfP[(l + i) * _nPxl];
+                                    memcpy((void*)(pglk_ctfP + i * _nPxl),
+                                           (void*)temp_ctfP,
+                                           _nPxl * sizeof(RFLOAT));
+                                }
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+                                temp_sigP = &_sigP[(l + i) * _nPxl];
+                                memcpy((void*)(pglk_sigRcpP + i * _nPxl),
+                                       (void*)temp_sigP,
+                                       _nPxl * sizeof(RFLOAT));
+#endif
+                            }
+
+                            InsertFT(_iGPU, _stream,dev_F, dev_T, devTau, dev_O, dev_C, pglk_datPR, 
+                                     pglk_datPI, pglk_ctfP, pglk_sigRcpP, w + l, offS + l * 2, 
+                                     nr + l * temp * 4, nt + l * temp * 2, nd + l * temp, nc + shiftc + l, 
+                                     ctfaData + l, deviCol, deviRow, deviSig, _para.pixelSize, cSearch, t, 
+                                     _para.pf, _nPxl, temp, tauSize, batch, _para.size, vdim, _nGPU);
+                            
+                            l += batch;
+                        }
 
                         allReduceFTO(_iGPU,
                                      _stream,
@@ -7269,6 +7537,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         delete[]nd;
                     }
                 }
+
+                hostFree(pglk_datPR);
+                hostFree(pglk_datPI);
+                hostFree(pglk_ctfP);
+                hostFree(pglk_sigRcpP);
 
                 delete[]w;
                 delete[]offS;
@@ -7337,14 +7610,78 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 _model.reco(0).getT(modelT,
                                     _para.mode,
                                     _para.nThreadsPerProcess);
-                _model.reco(0).getTau(arrayTau,
-                                      _para.nThreadsPerProcess);
             
-                InsertFT(_iGPU, _stream, modelF, dev_F, modelT, dev_T, arrayTau, devTau,
-                         arrayO, dev_O, arrayC, dev_C, _datPR, _datPI, _ctfP, _sigP, w, 
-                         offS, nr, nt, nd, ctfaData, deviCol, deviRow, deviSig, _para.pixelSize, 
-                         cSearch, _para.pf, _nPxl, _para.mReco, tauSize, _ID.size(), 
-                         _para.size, vdim, _nGPU);
+                volumeCopy3D(_iGPU,
+                             modelF,
+                             dev_F,
+                             modelT,
+                             dev_T,
+                             vdim,
+                             _nGPU);
+
+                RFLOAT *pglk_datPR = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+                RFLOAT *pglk_datPI = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+                RFLOAT *pglk_ctfP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+                RFLOAT *pglk_sigRcpP = (RFLOAT*)malloc(IMAGE_BATCH * _nPxl * sizeof(RFLOAT));
+
+                hostRegister(pglk_sigRcpP, IMAGE_BATCH * _nPxl);
+                hostRegister(pglk_datPR, IMAGE_BATCH * _nPxl);
+                hostRegister(pglk_datPI, IMAGE_BATCH * _nPxl);
+                hostRegister(pglk_ctfP, IMAGE_BATCH * _nPxl);
+                
+                for (int l = 0; l < nImg;)
+                {
+                    if (l >= nImg)
+                        break;
+
+                    int batch = (l + IMAGE_BATCH < nImg)
+                              ? IMAGE_BATCH : (nImg - l);
+
+                    RFLOAT *temp_datPR;
+                    RFLOAT *temp_datPI;
+                    RFLOAT *temp_ctfP;
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+                    RFLOAT *temp_sigP;
+#endif
+                    for (int i = 0; i < batch; i++)
+                    {
+                        temp_datPR = &_datPR[(l + i) * _nPxl];
+                        temp_datPI = &_datPI[(l + i) * _nPxl];
+                        memcpy((void*)(pglk_datPR + i * _nPxl),
+                               (void*)temp_datPR,
+                               _nPxl * sizeof(RFLOAT));
+                        memcpy((void*)(pglk_datPI + i * _nPxl),
+                               (void*)temp_datPI,
+                               _nPxl * sizeof(RFLOAT));
+                        
+                        if (!cSearch)
+                        {
+                            temp_ctfP = &_ctfP[(l + i) * _nPxl];
+                            memcpy((void*)(pglk_ctfP + i * _nPxl),
+                                   (void*)temp_ctfP,
+                                   _nPxl * sizeof(RFLOAT));
+                        }
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+                        temp_sigP = &_sigP[(l + i) * _nPxl];
+                        memcpy((void*)(pglk_sigRcpP + i * _nPxl),
+                               (void*)temp_sigP,
+                               _nPxl * sizeof(RFLOAT));
+#endif
+                    }
+
+                    InsertFT(_iGPU, _stream, dev_F, dev_T, devTau, dev_O, dev_C, pglk_datPR, pglk_datPI, 
+                             pglk_ctfP, pglk_sigRcpP, w + l, offS + l * 2, nr + l * _para.mReco * 4, 
+                             nt + l * _para.mReco * 2, nd + l * _para.mReco, ctfaData + l, deviCol, deviRow, 
+                             deviSig, _para.pixelSize, cSearch, _para.pf, _nPxl, _para.mReco, tauSize, batch, 
+                             _para.size, vdim, _nGPU);
+                    
+                    l += batch;
+                }
+
+                hostFree(pglk_datPR);
+                hostFree(pglk_datPI);
+                hostFree(pglk_ctfP);
+                hostFree(pglk_sigRcpP);
 
                 allReduceFTO(_iGPU,
                              _stream,

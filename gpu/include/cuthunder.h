@@ -15,10 +15,10 @@
 #include "Config.h"
 #include "Macro.h"
 #include "Precision.h"
+#include "MemoryBazaar.h"
 
 #include "ManagedArrayTexture.h"
 #include "ManagedCalPoint.h"
-#include "MemoryBazaar.h"
 
 #include <mpi.h>
 #include <vector>
@@ -340,39 +340,6 @@ void expectPrecal(vector<CTFAttr*>& ctfaData,
                   int imgNum);
 
 /**
- * @brief  Expectation GLobal.
- *
- * @param
- * @param
- */
-void expectGlobal2D(vector<int>& iGPU,
-                    vector<void*>& stream,
-                    Complex* volume,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-                    double* trans,
-                    RFLOAT* wC,
-                    RFLOAT* wR,
-                    RFLOAT* wT,
-                    double* pR,
-                    double* pT,
-                    double* rot,
-                    int** deviCol,
-                    int** deviRow,
-                    int nK,
-                    int nR,
-                    int nT,
-                    int pf,
-                    int interp,
-                    int idim,
-                    int vdim,
-                    int npxl,
-                    int imgNum,
-                    int nGPU);
-
-/**
  * @brief  Expectation Rotran.
  *
  * @param
@@ -382,9 +349,13 @@ void expectRotran(vector<int>& iGPU,
                   vector<void*>& stream,
                   Complex** devrotP,
                   Complex** devtraP,
+                  double** devRotMat,
+                  double** devpR,
+                  double** devpT,
                   double* trans,
                   double* rot,
-                  double** devRotMat,
+                  double* pR,
+                  double* pT,
                   int** deviCol,
                   int** deviRow,
                   int nR,
@@ -392,6 +363,35 @@ void expectRotran(vector<int>& iGPU,
                   int idim,
                   int npxl,
                   int nGPU);
+
+/**
+ * @brief  Expectation Rotran.
+ *
+ * @param
+ * @param
+ */
+void expectRotran2D(vector<int>& iGPU,
+                    vector<void*>& stream,
+                    vector<void*>& symArray,
+                    vector<void*>& texObject,
+                    Complex* volume,
+                    Complex** devtraP,
+                    double** devnR,
+                    double** devpR,
+                    double** devpT,
+                    double* trans,
+                    double* rot,
+                    double* pR,
+                    double* pT,
+                    int** deviCol,
+                    int** deviRow,
+                    int nK,
+                    int nR,
+                    int nT,
+                    int idim,
+                    int vdim,
+                    int npxl,
+                    int nGPU);
 
 /**
  * @brief  Expectation GLobal.
@@ -420,20 +420,90 @@ void expectProject(vector<int>& iGPU,
  * @param
  * @param
  */
+void expectGlobal2D(vector<int>& iGPU,
+                    vector<void*>& stream,
+                    vector<void*>& texObject,
+                    Complex** devtraP,
+                    double** devnR,
+                    double** devpR,
+                    double** devpT,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+                    RFLOAT* pglk_datPR,
+                    RFLOAT* pglk_datPI,
+                    RFLOAT* pglk_ctfP,
+                    RFLOAT* pglk_sigRcpP,
+                    RFLOAT* wC,
+                    RFLOAT* wR,
+                    RFLOAT* wT,
+                    int** deviCol,
+                    int** deviRow,
+                    int nK,
+                    int nR,
+                    int nT,
+                    int pf,
+                    int interp,
+                    int idim,
+                    int vdim,
+                    int npxl,
+                    int imgNum,
+                    int nGPU);
+
+///**
+// * @brief  Expectation GLobal.
+// *
+// * @param
+// * @param
+// */
+//void expectGlobal2D(vector<int>& iGPU,
+//                    vector<void*>& stream,
+//                    vector<void*>& texObject,
+//                    Complex** devtraP,
+//                    double** devnR,
+//                    double** devpR,
+//                    double** devpT,
+//                    RFLOAT* pglk_datPR,
+//                    RFLOAT* pglk_datPI,
+//                    RFLOAT* pglk_ctfP,
+//                    RFLOAT* pglk_sigRcpP,
+//                    RFLOAT* wC,
+//                    RFLOAT* wR,
+//                    RFLOAT* wT,
+//                    int** deviCol,
+//                    int** deviRow,
+//                    int nK,
+//                    int nR,
+//                    int nT,
+//                    int pf,
+//                    int interp,
+//                    int idim,
+//                    int vdim,
+//                    int npxl,
+//                    int imgNum,
+//                    int nGPU);
+
+/**
+ * @brief  Expectation GLobal.
+ *
+ * @param
+ * @param
+ */
 void expectGlobal3D(vector<int>& iGPU,
                     vector<void*>& stream,
                     Complex** devrotP,
                     Complex** devtraP,
                     Complex* rotP,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+                    double** devpR,
+                    double** devpT,
+                    RFLOAT* pglk_datPR,
+                    RFLOAT* pglk_datPI,
+                    RFLOAT* pglk_ctfP,
+                    RFLOAT* pglk_sigRcpP,
                     RFLOAT* wC,
                     RFLOAT* wR,
                     RFLOAT* wT,
-                    double* pR,
-                    double* pT,
                     RFLOAT* baseL,
                     int kIdx,
                     int nK,
@@ -442,6 +512,22 @@ void expectGlobal3D(vector<int>& iGPU,
                     int npxl,
                     int imgNum,
                     int nGPU);
+
+/**
+ * @brief  Expectation GLobal.
+ *
+ * @param
+ * @param
+ */
+void freeRotran2D(vector<int>& iGPU,
+                  vector<void*>& symArray,
+                  vector<void*>& texObject,
+                  Complex** devtraP,
+                  double** devnR,
+                  double** devpR,
+                  double** devpT,
+                  int nK,
+                  int nGPU);
 
 /**
  * @brief  free Rotran space.
@@ -453,6 +539,8 @@ void freeRotran(vector<int>& iGPU,
                 Complex** devrotP,
                 Complex** devtraP,
                 double** devRotMat,
+                double** devpR,
+                double** devpT,
                 int nGPU);
 
 /**
@@ -487,6 +575,35 @@ void allocFTO(vector<int>& iGPU,
               int nGPU);
 
 /**
+ * @brief Copy images' volume to Device.
+ *
+ * @param
+ * @param
+ */
+void volumeCopy2D(vector<int>& iGPU,
+                  Complex* volumeF,
+                  Complex** dev_F,
+                  RFLOAT* volumeT,
+                  RFLOAT** dev_T,
+                  int nk,
+                  int vdim,
+                  int nGPU);
+
+/**
+ * @brief Copy images' volume to Device.
+ *
+ * @param
+ * @param
+ */
+void volumeCopy3D(vector<int>& iGPU,
+                  Complex* volumeF,
+                  Complex** dev_F,
+                  RFLOAT* volumeT,
+                  RFLOAT** dev_T,
+                  int vdim,
+                  int nGPU);
+
+/**
  * @brief Insert images into volume.
  *
  * @param
@@ -494,20 +611,15 @@ void allocFTO(vector<int>& iGPU,
  */
 void InsertI2D(vector<int>& iGPU,
                vector<void*>& stream,
-               Complex* volumeF,
                Complex** dev_F,
-               RFLOAT* volumeT,
                RFLOAT** dev_T,
-               RFLOAT* arrayTau,
                RFLOAT** devTau,
-               double* arrayO,
                double** dev_O,
-               int* arrayC,
                int** dev_C,
-               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+               RFLOAT* pglk_datPR,
+               RFLOAT* pglk_datPI,
+               RFLOAT* pglk_ctfP,
+               RFLOAT* pglk_sigRcpP,
                RFLOAT* w,
                double* offS,
                double *nR,
@@ -538,20 +650,15 @@ void InsertI2D(vector<int>& iGPU,
  */
 void InsertFT(vector<int>& iGPU,
               vector<void*>& stream,
-              Complex* volumeF,
               Complex** dev_F,
-              RFLOAT* volumeT,
               RFLOAT** dev_T,
-              RFLOAT* arrayTau,
               RFLOAT** devTau,
-              double* arrayO,
               double** dev_O,
-              int* arrayC,
               int** dev_C,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+              RFLOAT* pglk_datPR,
+              RFLOAT* pglk_datPI,
+              RFLOAT* pglk_ctfP,
+              RFLOAT* pglk_sigRcpP,
               RFLOAT* w,
               double* offS,
               double* nR,
@@ -582,20 +689,15 @@ void InsertFT(vector<int>& iGPU,
  */
 void InsertFT(vector<int>& iGPU,
               vector<void*>& stream,
-              Complex* volumeF,
               Complex** dev_F,
-              RFLOAT* volumeT,
               RFLOAT** dev_T,
-              RFLOAT* arrayTau,
               RFLOAT** devTau,
-              double* arrayO,
               double** dev_O,
-              int* arrayC,
               int** dev_C,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+              RFLOAT* pglk_datPR,
+              RFLOAT* pglk_datPI,
+              RFLOAT* pglk_ctfP,
+              RFLOAT* pglk_sigRcpP,
               RFLOAT* w,
               double* offS,
               double* nR,
@@ -1155,7 +1257,24 @@ void hostRegister(Complex* img,
  * @param
  * @param
  */
+void hostRegister(RFLOAT* data,
+                  int totalNum);
+
+/**
+ * @brief .
+ *
+ * @param
+ * @param
+ */
 void hostFree(Complex* img);
+
+/**
+ * @brief .
+ *
+ * @param
+ * @param
+ */
+void hostFree(RFLOAT* data);
 
 /**
  * @brief ReMask.

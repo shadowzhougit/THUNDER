@@ -1027,592 +1027,17 @@ void expectPrecal(vector<CTFAttr*>& ctfaData,
  * @param
  * @param
  */
-void expectGlobal2D(vector<int>& iGPU,
-                    vector<void*>& stream,
-                    Complex* volume,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
-                    double* trans,
-                    RFLOAT* wC,
-                    RFLOAT* wR,
-                    RFLOAT* wT,
-                    double* pR,
-                    double* pT,
-                    double* rot,
-                    int** deviCol,
-                    int** deviRow,
-                    int nK,
-                    int nR,
-                    int nT,
-                    int pf,
-                    int interp,
-                    int idim,
-                    int vdim,
-                    int npxl,
-                    int imgNum,
-                    int nGPU)
-{
-    LOG(INFO) << "expectation Global begin.";
-
-    const int BATCH_SIZE = IMAGE_BUFF;
-    int dimSize = (vdim / 2 + 1) * vdim;
-    int nStream = nGPU * NUM_STREAM_PER_DEVICE;
-
-    cudaHostRegister(volume, 
-                     nK * dimSize * sizeof(Complex), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register volume data.");
-
-    cudaHostRegister(rot, 
-                     nR * 2 * sizeof(double), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register rot data.");
-
-    cudaHostRegister(wC, 
-                     imgNum * nK * sizeof(RFLOAT), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register wC data.");
-
-    cudaHostRegister(wR, 
-                     imgNum * nK * nR * sizeof(RFLOAT), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register wR data.");
-
-    cudaHostRegister(wT, 
-                     imgNum * nK * nT * sizeof(RFLOAT), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register wT data.");
-
-    RFLOAT *pglk_datPR_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_datPI_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_ctfP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_sigRcpP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    
-    cudaHostRegister(pglk_datPR_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_datPI_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_ctfP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register ctfP data.");
-
-    cudaHostRegister(pglk_sigRcpP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register sigRcpP data.");
-    
-#ifdef SINGLE_PRECISION
-    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 32, 0, 0,cudaChannelFormatKindFloat);
-#else
-    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 32, 32, 32,cudaChannelFormatKindSigned);
-#endif
-    cudaArray *symArray[nGPU * nK];
-    struct cudaResourceDesc resDesc[nGPU * nK];
-    cudaTextureObject_t texObject[nGPU * nK];
-
-    Complex* devtraP[nGPU];
-    double* dev_trans[nGPU];
-    double* devpR[nGPU];
-    double* devpT[nGPU];
-    double* devnR[nGPU];
-
-    RFLOAT* devdatPR[nStream];
-    RFLOAT* devdatPI[nStream];
-    Complex* priRotP[nStream];
-    RFLOAT* devctfP[nStream];
-    RFLOAT* devsigP[nStream];
-    RFLOAT* devDvp[nStream];
-    RFLOAT* devbaseL[nStream];
-    RFLOAT* devwC[nStream];
-    RFLOAT* devwR[nStream];
-    RFLOAT* devwT[nStream];
-    RFLOAT* devcomP[nStream];
-
-    int baseS;
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        for (int k = 0; k < nK; k++)
-        {
-            cudaMallocArray(&symArray[k + n * nK], 
-                            &channelDesc, 
-                            vdim / 2 + 1, 
-                            vdim);
-            cudaCheckErrors("Allocate symArray data.");
-        }
-
-        cudaMalloc((void**)&devtraP[n], 
-                   nT * npxl * sizeof(Complex));
-        cudaCheckErrors("Allocate traP data.");
-
-        cudaMalloc((void**)&dev_trans[n], 
-                   nT * 2 * sizeof(double));
-        cudaCheckErrors("Allocate trans data.");
-
-        cudaMalloc((void**)&devnR[n], 
-                   nR * 2 * sizeof(double));
-        cudaCheckErrors("Allocate nR data.");
-
-        cudaMalloc((void**)&devpR[n], 
-                   nR * sizeof(double));
-        cudaCheckErrors("Allocate pR data.");
-
-        cudaMalloc((void**)&devpT[n], 
-                   nT * sizeof(double));
-        cudaCheckErrors("Allocate pT data.");
-        
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-        {
-            allocDeviceComplexBuffer(&priRotP[i + baseS], BATCH_SIZE * npxl);
-            allocDeviceParamBuffer(&devdatPR[i + baseS], BATCH_SIZE * npxl);
-            allocDeviceParamBuffer(&devdatPI[i + baseS], BATCH_SIZE * npxl);
-            allocDeviceParamBuffer(&devctfP[i + baseS], BATCH_SIZE * npxl);
-            allocDeviceParamBuffer(&devsigP[i + baseS], BATCH_SIZE * npxl);
-            allocDeviceParamBuffer(&devDvp[i + baseS], BATCH_SIZE * nR * nT);
-            allocDeviceParamBuffer(&devbaseL[i + baseS], BATCH_SIZE);
-            allocDeviceParamBuffer(&devwC[i + baseS], BATCH_SIZE * nK);
-            allocDeviceParamBuffer(&devwR[i + baseS], BATCH_SIZE * nK * nR);
-            allocDeviceParamBuffer(&devwT[i + baseS], BATCH_SIZE * nK * nT);
-
-            if (nK != 1)
-            {
-                allocDeviceParamBuffer(&devcomP[i + baseS], BATCH_SIZE);
-            }
-        }
-    }
-
-    for (int n = 0; n < nGPU; ++n)
-    {
-        cudaSetDevice(iGPU[n]);
-
-        cudaMemcpy(dev_trans[n],
-                   trans,
-                   nT * 2 * sizeof(double),
-                   cudaMemcpyHostToDevice);
-        cudaCheckErrors("for memcpy trans.");
-
-        cudaMemcpy(devpR[n],
-                   pR,
-                   nR * sizeof(double),
-                   cudaMemcpyHostToDevice);
-        cudaCheckErrors("for memcpy pR.");
-
-        cudaMemcpy(devpT[n],
-                   pT,
-                   nT * sizeof(double),
-                   cudaMemcpyHostToDevice);
-        cudaCheckErrors("for memcpy pT.");
-
-    }
-
-    int thread = THREAD_PER_BLOCK;
-    //TODO: 49152 change to special GPU device & threadS should not be 0
-    int threadS = (49152 / (sizeof(RFLOAT)) / (nT + 1));
-    int block = ((nT * npxl) % thread == 0)
-              ? (nT * npxl) / thread
-              : (nT * npxl) / thread + 1;
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        cudaMemcpyAsync(devnR[n],
-                        rot,
-                        nR * 2 * sizeof(double),
-                        cudaMemcpyHostToDevice,
-                        *((cudaStream_t*)stream[0 + baseS]));
-        cudaCheckErrors("memcpy rot to device.");
-
-        for (int k = 0; k < nK; k++)
-        {
-            cudaMemcpyToArrayAsync(symArray[k + n * nK],
-                                   0,
-                                   0,
-                                   (void*)(volume + k * dimSize),
-                                   sizeof(Complex) * dimSize,
-                                   cudaMemcpyHostToDevice,
-                                   *((cudaStream_t*)stream[1 + baseS]));
-            cudaCheckErrors("memcpy array error");
-        }
-        
-        kernel_Translate<<<block,
-                           thread,
-                           0,
-                           *((cudaStream_t*)stream[2 + baseS])>>>(devtraP[n],
-                                                                  dev_trans[n],
-                                                                  deviCol[n],
-                                                                  deviRow[n],
-                                                                  idim,
-                                                                  nT,
-                                                                  npxl);
-        cudaCheckErrors("kernel trans.");
-    }
-
-    cudaTextureDesc td;
-    memset(&td, 0, sizeof(td));
-    td.normalizedCoords = 0;
-    td.addressMode[0] = cudaAddressModeClamp;
-    td.addressMode[1] = cudaAddressModeClamp;
-    td.addressMode[2] = cudaAddressModeClamp;
-    td.readMode = cudaReadModeElementType;
-
-    for (int n = 0; n < nGPU; ++n)
-    {
-        for (int k = 0; k < nK; k++)
-        {
-            memset(&resDesc[k + n * nK], 0, sizeof(resDesc[0]));
-            resDesc[k + n * nK].resType = cudaResourceTypeArray;
-            resDesc[k + n * nK].res.array.array = symArray[k + n * nK];
-
-            cudaSetDevice(iGPU[n]);
-            cudaCreateTextureObject(&texObject[k + n * nK], 
-                                    &resDesc[k + n * nK], 
-                                    &td, 
-                                    NULL);
-            cudaCheckErrors("create TexObject.");
-        }
-    }
-
-    //synchronizing on CUDA streams to wait for completion of NCCL operation
-    for (int n = 0; n < nGPU; ++n)
-    {
-        cudaSetDevice(iGPU[n]);
-
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-        {
-            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-            cudaCheckErrors("device synchronize.");
-        }
-
-        cudaFree(dev_trans[n]);
-        cudaCheckErrors("Free tran.");
-    }
-
-    cudaHostUnregister(volume);
-    cudaCheckErrors("Unregister vol.");
-    cudaHostUnregister(rot);
-    cudaCheckErrors("Unregister rot.");
-
-    int batch = 0, rbatch = 0, smidx = 0;
-    int imgBatch = 0;
-    for (int l = 0; l < imgNum;)
-    {
-        if (l >= imgNum)
-            break;
-
-        imgBatch = (l + IMAGE_BATCH < imgNum)
-                 ? IMAGE_BATCH : (imgNum - l);
-
-        RFLOAT *temp_datPR;
-        RFLOAT *temp_datPI;
-        RFLOAT *temp_ctfP;
-        RFLOAT *temp_sigP;
-        
-        for (int i = 0; i < imgBatch; i++) 
-        {
-            temp_datPR = &datPR[(l + i) * npxl];
-            temp_datPI = &datPI[(l + i) * npxl];
-            temp_ctfP = &ctfP[(l + i) * npxl];
-            temp_sigP = &sigRcpP[(l + i) * npxl];
-            memcpy((void*)(pglk_datPR_buf + i * npxl),
-                   (void*)temp_datPR,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_datPI_buf + i * npxl),
-                   (void*)temp_datPI,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_ctfP_buf + i * npxl),
-                   (void*)temp_ctfP,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_sigRcpP_buf + i * npxl),
-                   (void*)temp_sigP,
-                   npxl * sizeof(RFLOAT));
-        }
-
-        smidx = 0;
-        for (int i = 0; i < imgBatch;)
-        {
-            for (int n = 0; n < nGPU; ++n)
-            {
-                if (i >= imgBatch)
-                    break;
-
-                baseS = n * NUM_STREAM_PER_DEVICE;
-                batch = (i + BATCH_SIZE < imgBatch) 
-                      ? BATCH_SIZE : (imgBatch - i);
-
-                cudaSetDevice(iGPU[n]);
-
-                cudaMemcpyAsync(devdatPR[smidx + baseS],
-                                pglk_datPR_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy datP to device.");
-
-                cudaMemcpyAsync(devdatPI[smidx + baseS],
-                                pglk_datPI_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy datP to device.");
-
-                cudaMemcpyAsync(devctfP[smidx + baseS],
-                                pglk_ctfP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy ctfP to device.");
-
-                cudaMemcpyAsync(devsigP[smidx + baseS],
-                                pglk_sigRcpP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy sigP to device.");
-
-                cudaMemsetAsync(devwC[smidx + baseS],
-                                0.0,
-                                batch * nK * sizeof(RFLOAT),
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wC.");
-
-                cudaMemsetAsync(devwR[smidx + baseS],
-                                0.0,
-                                batch * nK * nR * sizeof(RFLOAT),
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wR.");
-
-                cudaMemsetAsync(devwT[smidx + baseS],
-                                0.0,
-                                batch * nK * nT * sizeof(RFLOAT),
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wT.");
-
-                for (int k = 0; k < nK; k++)
-                {
-                    for (int r = 0; r < nR;)
-                    {
-                        rbatch = (r + ROT_BATCH < nR) ? ROT_BATCH : (nR - r);
-
-                        block = ((rbatch * npxl) % thread == 0)
-                              ? (rbatch * npxl) / thread
-                              : (rbatch * npxl) / thread + 1;
-                        
-                        kernel_Project2D<<<block,
-                                           thread,
-                                           0,
-                                           *((cudaStream_t*)stream[smidx + baseS])>>>(priRotP[smidx + baseS],
-                                                                                      devnR[n] + r * 2,
-                                                                                      deviCol[n],
-                                                                                      deviRow[n],
-                                                                                      rbatch,
-                                                                                      pf,
-                                                                                      vdim,
-                                                                                      npxl,
-                                                                                      interp,
-                                                                                      texObject[k + n * nK]);
-                        cudaCheckErrors("Project2D error.");
-
-                        kernel_logDataVS<<<rbatch * batch * nT,
-                                           64,
-                                           64 * sizeof(RFLOAT),
-                                           *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                      devdatPI[smidx + baseS],
-                                                                                      priRotP[smidx + baseS],
-                                                                                      devtraP[n],
-                                                                                      devctfP[smidx + baseS],
-                                                                                      devsigP[smidx + baseS],
-                                                                                      devDvp[smidx + baseS],
-                                                                                      r,
-                                                                                      nR,
-                                                                                      nT,
-                                                                                      rbatch,
-                                                                                      npxl);
-                        cudaCheckErrors("logDataVS error.");
-
-                        r += rbatch;
-                    }
-
-                    if (k == 0)
-                    {
-                        kernel_getMaxBase<<<batch,
-                                            thread,
-                                            thread * sizeof(RFLOAT),
-                                            *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
-                                                                                       devDvp[smidx + baseS],
-                                                                                       nR * nT);
-                        cudaCheckErrors("getMaxBase error.");
-                    }
-                    else
-                    {
-                        kernel_getMaxBase<<<batch,
-                                            thread,
-                                            thread * sizeof(RFLOAT),
-                                            *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                       devDvp[smidx + baseS],
-                                                                                       nR * nT);
-                        cudaCheckErrors("getMaxBase error.");
-
-                        kernel_setBaseLine<<<batch,
-                                             thread,
-                                             0,
-                                             *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                        devbaseL[smidx + baseS],
-                                                                                        devwC[smidx + baseS],
-                                                                                        devwR[smidx + baseS],
-                                                                                        devwT[smidx + baseS],
-                                                                                        nK,
-                                                                                        nR,
-                                                                                        nT,
-                                                                                        nK * (1 + nR + nT));
-                        cudaCheckErrors("setBaseLine error.");
-                    }
-
-                    //printf("batch:%d, threadS:%d, nT:%d, share:%d\n", batch, threadS, nT, (nT + 1) * threadS);
-                    kernel_UpdateW<<<batch,
-                                     threadS,
-                                     (nT + 1) * threadS * sizeof(RFLOAT),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
-                                                                                devbaseL[smidx + baseS],
-                                                                                devwC[smidx + baseS],
-                                                                                devwR[smidx + baseS],
-                                                                                devwT[smidx + baseS],
-                                                                                devpR[n],
-                                                                                devpT[n],
-                                                                                k,
-                                                                                nK,
-                                                                                nR,
-                                                                                nT,
-                                                                                nR * nT);
-                    cudaCheckErrors("Update error.");
-
-                }
-
-                cudaMemcpyAsync(wC + (l + i) * nK,
-                                devwC[smidx + baseS],
-                                batch * nK * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy wC to host.");
-
-                cudaMemcpyAsync(wR + (long long)(l + i) * nK * nR,
-                                devwR[smidx + baseS],
-                                batch * nR  * nK * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy wR to host.");
-
-                cudaMemcpyAsync(wT + (long long)(l + i) * nK * nT,
-                                devwT[smidx + baseS],
-                                batch * nT * nK * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy wT to host.");
-
-                i += batch;
-            }
-
-            smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
-        }
-        
-        //synchronizing on CUDA streams
-        for (int n = 0; n < nGPU; ++n)
-        {
-            baseS = n * NUM_STREAM_PER_DEVICE;
-            cudaSetDevice(iGPU[n]);
-
-            for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            {
-                cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-                cudaCheckErrors("Stream synchronize after.");
-            }
-        }
-
-        l += imgBatch;
-    }
-
-    //synchronizing on CUDA streams
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-        {
-            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-            cudaCheckErrors("Stream synchronize after.");
-
-            cudaFree(devdatPR[i + baseS]);
-            cudaFree(devdatPI[i + baseS]);
-            cudaFree(devctfP[i + baseS]);
-            cudaFree(devsigP[i + baseS]);
-            cudaFree(priRotP[i + baseS]);
-            cudaFree(devDvp[i + baseS]);
-            cudaFree(devbaseL[i + baseS]);
-            cudaFree(devwC[i + baseS]);
-            cudaFree(devwR[i + baseS]);
-            cudaFree(devwT[i + baseS]);
-            if (nK != 1)
-            {
-                cudaFree(devcomP[i + baseS]);
-            }
-            cudaCheckErrors("cuda Free error.");
-        }
-    }
-
-    //free device buffers
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        cudaFree(devnR[n]);
-        cudaFree(devpR[n]);
-        cudaFree(devpT[n]);
-        cudaFree(devtraP[n]);
-        cudaCheckErrors("cuda Free error.");
-
-        for (int k = 0; k < nK; k++)
-        {
-            cudaFreeArray(symArray[k + n * nK]);
-            cudaDestroyTextureObject(texObject[k + n * nK]);
-            cudaCheckErrors("cuda Destory texobject error.");
-        }
-    }
-
-    //unregister pglk_memory
-    cudaHostUnregister(pglk_datPR_buf);
-    cudaHostUnregister(pglk_datPI_buf);
-    cudaHostUnregister(pglk_ctfP_buf);
-    cudaHostUnregister(pglk_sigRcpP_buf);
-    free(pglk_datPR_buf);
-    free(pglk_datPI_buf);
-    free(pglk_ctfP_buf);
-    free(pglk_sigRcpP_buf);
-    cudaHostUnregister(wC);
-    cudaHostUnregister(wR);
-    cudaHostUnregister(wT);
-    cudaCheckErrors("cuda Host Unregister error.");
-
-    LOG(INFO) << "expectation Global done.";
-}
-
-/**
- * @brief  Expectation GLobal.
- *
- * @param
- * @param
- */
 void expectRotran(vector<int>& iGPU,
                   vector<void*>& stream,
                   Complex** devrotP,
                   Complex** devtraP,
+                  double** devRotMat,
+                  double** devpR,
+                  double** devpT,
                   double* trans,
                   double* rot,
-                  double** devRotMat,
+                  double* pR,
+                  double* pT,
                   int** deviCol,
                   int** deviRow,
                   int nR,
@@ -1641,6 +1066,26 @@ void expectRotran(vector<int>& iGPU,
                    nR * 9 * sizeof(double));
         cudaCheckErrors("Allocate rot data.");
 
+        cudaMalloc((void**)&devpR[n], 
+                   nR * sizeof(double));
+        cudaCheckErrors("Allocate pR data.");
+
+        cudaMalloc((void**)&devpT[n], 
+                   nR * sizeof(double));
+        cudaCheckErrors("Allocate pT data.");
+
+        cudaMemcpy(devpR[n],
+                   pR,
+                   nR * sizeof(double),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy pR.");
+
+        cudaMemcpy(devpT[n],
+                   pT,
+                   nT * sizeof(double),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy pT.");
+        
         baseS = n * NUM_STREAM_PER_DEVICE;
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
         {
@@ -1873,6 +1318,211 @@ void expectRotran(vector<int>& iGPU,
 }
 
 /**
+ * @brief  Expectation Rotran.
+ *
+ * @param
+ * @param
+ */
+void expectRotran2D(vector<int>& iGPU,
+                    vector<void*>& stream,
+                    vector<void*>& symArray,
+                    vector<void*>& texObject,
+                    Complex* volume,
+                    Complex** devtraP,
+                    double** devnR,
+                    double** devpR,
+                    double** devpT,
+                    double* trans,
+                    double* rot,
+                    double* pR,
+                    double* pT,
+                    int** deviCol,
+                    int** deviRow,
+                    int nK,
+                    int nR,
+                    int nT,
+                    int idim,
+                    int vdim,
+                    int npxl,
+                    int nGPU)
+{
+    LOG(INFO) << "expectation Rotation and Translate begin.";
+
+    int dimSize = (vdim / 2 + 1) * vdim;
+    cudaHostRegister(volume, 
+                     nK * dimSize * sizeof(Complex), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register volume data.");
+
+    cudaHostRegister(rot, 
+                     nR * 2 * sizeof(double), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register rot data.");
+
+#ifdef SINGLE_PRECISION
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 32, 0, 0,cudaChannelFormatKindFloat);
+#else
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 32, 32, 32,cudaChannelFormatKindSigned);
+#endif
+    struct cudaResourceDesc resDesc[nGPU * nK];
+    void* symVoid[nGPU * nK];
+    void* texVoid[nGPU * nK];
+
+    double* dev_trans[nGPU];
+
+    for (int n = 0; n < nGPU; ++n)
+    {
+        cudaSetDevice(iGPU[n]);
+
+        for (int k = 0; k < nK; k++)
+        {
+            symVoid[k + n * nK] = (cudaArray**)malloc(sizeof(cudaArray*));
+            cudaMallocArray((cudaArray**)symVoid[k + n * nK], 
+                            &channelDesc, 
+                            vdim / 2 + 1, 
+                            vdim);
+            cudaCheckErrors("Allocate symArray data.");
+            symArray.push_back(symVoid[k + n * nK]);
+        }
+
+        cudaMalloc((void**)&devtraP[n], 
+                   nT * npxl * sizeof(Complex));
+        cudaCheckErrors("Allocate traP data.");
+
+        cudaMalloc((void**)&dev_trans[n], 
+                   nT * 2 * sizeof(double));
+        cudaCheckErrors("Allocate trans data.");
+
+        cudaMalloc((void**)&devnR[n], 
+                   nR * 2 * sizeof(double));
+        cudaCheckErrors("Allocate nR data.");
+
+        cudaMalloc((void**)&devpR[n], 
+                   nR * sizeof(double));
+        cudaCheckErrors("Allocate pR data.");
+
+        cudaMalloc((void**)&devpT[n], 
+                   nT * sizeof(double));
+        cudaCheckErrors("Allocate pT data.");
+    }
+     
+    for (int n = 0; n < nGPU; ++n)
+    {
+        cudaSetDevice(iGPU[n]);
+
+        cudaMemcpy(dev_trans[n],
+                   trans,
+                   nT * 2 * sizeof(double),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy trans.");
+
+        cudaMemcpy(devpR[n],
+                   pR,
+                   nR * sizeof(double),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy pR.");
+
+        cudaMemcpy(devpT[n],
+                   pT,
+                   nT * sizeof(double),
+                   cudaMemcpyHostToDevice);
+        cudaCheckErrors("for memcpy pT.");
+
+    }
+
+    int thread = THREAD_PER_BLOCK;
+    int block = ((nT * npxl) % thread == 0)
+              ? (nT * npxl) / thread
+              : (nT * npxl) / thread + 1;
+    int baseS;
+    for (int n = 0; n < nGPU; ++n)
+    {
+        baseS = n * NUM_STREAM_PER_DEVICE;
+        cudaSetDevice(iGPU[n]);
+
+        cudaMemcpyAsync(devnR[n],
+                        rot,
+                        nR * 2 * sizeof(double),
+                        cudaMemcpyHostToDevice,
+                        *((cudaStream_t*)stream[0 + baseS]));
+        cudaCheckErrors("memcpy rot to device.");
+
+        for (int k = 0; k < nK; k++)
+        {
+            cudaMemcpyToArrayAsync(*((cudaArray**)symVoid[k + n * nK]),
+                                   0,
+                                   0,
+                                   (void*)(volume + k * dimSize),
+                                   sizeof(Complex) * dimSize,
+                                   cudaMemcpyHostToDevice,
+                                   *((cudaStream_t*)stream[1 + baseS]));
+            cudaCheckErrors("memcpy array error");
+        }
+        
+        kernel_Translate<<<block,
+                           thread,
+                           0,
+                           *((cudaStream_t*)stream[2 + baseS])>>>(devtraP[n],
+                                                                  dev_trans[n],
+                                                                  deviCol[n],
+                                                                  deviRow[n],
+                                                                  idim,
+                                                                  nT,
+                                                                  npxl);
+        cudaCheckErrors("kernel trans.");
+    }
+
+    cudaTextureDesc td;
+    memset(&td, 0, sizeof(td));
+    td.normalizedCoords = 0;
+    td.addressMode[0] = cudaAddressModeClamp;
+    td.addressMode[1] = cudaAddressModeClamp;
+    td.addressMode[2] = cudaAddressModeClamp;
+    td.readMode = cudaReadModeElementType;
+
+    for (int n = 0; n < nGPU; ++n)
+    {
+        for (int k = 0; k < nK; k++)
+        {
+            memset(&resDesc[k + n * nK], 0, sizeof(resDesc[0]));
+            resDesc[k + n * nK].resType = cudaResourceTypeArray;
+            resDesc[k + n * nK].res.array.array = *((cudaArray**)symVoid[k + n * nK]);
+
+            cudaSetDevice(iGPU[n]);
+            texVoid[k + n * nK] = (cudaTextureObject_t*)malloc(sizeof(cudaTextureObject_t));
+            cudaCreateTextureObject((cudaTextureObject_t*)texVoid[k + n * nK], 
+                                    &resDesc[k + n * nK], 
+                                    &td, 
+                                    NULL);
+            cudaCheckErrors("create TexObject.");
+            texObject.push_back(texVoid[k + n * nK]);
+        }
+    }
+
+    //synchronizing on CUDA streams to wait for completion of NCCL operation
+    for (int n = 0; n < nGPU; ++n)
+    {
+        cudaSetDevice(iGPU[n]);
+
+        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
+        {
+            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
+            cudaCheckErrors("device synchronize.");
+        }
+
+        cudaFree(dev_trans[n]);
+        cudaCheckErrors("Free tran.");
+    }
+
+    cudaHostUnregister(volume);
+    cudaCheckErrors("Unregister vol.");
+    cudaHostUnregister(rot);
+    cudaCheckErrors("Unregister rot.");
+
+    LOG(INFO) << "expect Rotation and Translate done.";
+}
+
+/**
  * @brief  Expectation GLobal.
  *
  * @param
@@ -2074,20 +1724,422 @@ void expectProject(vector<int>& iGPU,
  * @param
  * @param
  */
+void expectGlobal2D(vector<int>& iGPU,
+                    vector<void*>& stream,
+                    vector<void*>& texObject,
+                    Complex** devtraP,
+                    double** devnR,
+                    double** devpR,
+                    double** devpT,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
+                    //MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+                    RFLOAT* pglk_datPR,
+                    RFLOAT* pglk_datPI,
+                    RFLOAT* pglk_ctfP,
+                    RFLOAT* pglk_sigRcpP,
+                    RFLOAT* wC,
+                    RFLOAT* wR,
+                    RFLOAT* wT,
+                    int** deviCol,
+                    int** deviRow,
+                    int nK,
+                    int nR,
+                    int nT,
+                    int pf,
+                    int interp,
+                    int idim,
+                    int vdim,
+                    int npxl,
+                    int imgNum,
+                    int nGPU)
+{
+    LOG(INFO) << "expectation Global begin.";
+
+    const int BATCH_SIZE = IMAGE_BUFF;
+    int nStream = nGPU * NUM_STREAM_PER_DEVICE;
+
+    cudaHostRegister(wC, 
+                     imgNum * nK * sizeof(RFLOAT), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register wC data.");
+
+    cudaHostRegister(wR, 
+                     imgNum * nK * nR * sizeof(RFLOAT), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register wR data.");
+
+    cudaHostRegister(wT, 
+                     imgNum * nK * nT * sizeof(RFLOAT), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register wT data.");
+
+    RFLOAT* devdatPR[nStream];
+    RFLOAT* devdatPI[nStream];
+    Complex* priRotP[nStream];
+    RFLOAT* devctfP[nStream];
+    RFLOAT* devsigP[nStream];
+    RFLOAT* devDvp[nStream];
+    RFLOAT* devbaseL[nStream];
+    RFLOAT* devwC[nStream];
+    RFLOAT* devwR[nStream];
+    RFLOAT* devwT[nStream];
+    RFLOAT* devcomP[nStream];
+
+    int baseS;
+    for (int n = 0; n < nGPU; ++n)
+    {
+        baseS = n * NUM_STREAM_PER_DEVICE;
+        cudaSetDevice(iGPU[n]);
+
+        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
+        {
+            allocDeviceComplexBuffer(&priRotP[i + baseS], BATCH_SIZE * npxl);
+            allocDeviceParamBuffer(&devdatPR[i + baseS], BATCH_SIZE * npxl);
+            allocDeviceParamBuffer(&devdatPI[i + baseS], BATCH_SIZE * npxl);
+            allocDeviceParamBuffer(&devctfP[i + baseS], BATCH_SIZE * npxl);
+            allocDeviceParamBuffer(&devsigP[i + baseS], BATCH_SIZE * npxl);
+            allocDeviceParamBuffer(&devDvp[i + baseS], BATCH_SIZE * nR * nT);
+            allocDeviceParamBuffer(&devbaseL[i + baseS], BATCH_SIZE);
+            allocDeviceParamBuffer(&devwC[i + baseS], BATCH_SIZE * nK);
+            allocDeviceParamBuffer(&devwR[i + baseS], BATCH_SIZE * nK * nR);
+            allocDeviceParamBuffer(&devwT[i + baseS], BATCH_SIZE * nK * nT);
+
+            if (nK != 1)
+            {
+                allocDeviceParamBuffer(&devcomP[i + baseS], BATCH_SIZE);
+            }
+        }
+    }
+
+    //RFLOAT *pglk_datPR = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
+    //RFLOAT *pglk_datPI = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
+    //RFLOAT *pglk_ctfP = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
+    //RFLOAT *pglk_sigRcpP = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
+    //
+    //cudaHostRegister(pglk_datPR, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
+    //cudaCheckErrors("Register datP data.");
+
+    //cudaHostRegister(pglk_datPI, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
+    //cudaCheckErrors("Register datP data.");
+
+    //cudaHostRegister(pglk_ctfP, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
+    //cudaCheckErrors("Register ctfP data.");
+
+    //cudaHostRegister(pglk_sigRcpP, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
+    //cudaCheckErrors("Register sigRcpP data.");
+    
+    int thread = THREAD_PER_BLOCK;
+    //TODO: 49152 change to special GPU device & threadS should not be 0
+    int threadS = (49152 / (sizeof(RFLOAT)) / (nT + 1));
+    int block = ((nT * npxl) % thread == 0)
+              ? (nT * npxl) / thread
+              : (nT * npxl) / thread + 1;
+    int batch = 0, rbatch = 0, smidx = 0;
+    //int imgBatch = 0;
+    //for (int l = 0; l < imgNum;)
+    //{
+    //    if (l >= imgNum)
+    //        break;
+
+    //    imgBatch = (l + IMAGE_BATCH < imgNum)
+    //             ? IMAGE_BATCH : (imgNum - l);
+
+    //    RFLOAT *temp_datPR;
+    //    RFLOAT *temp_datPI;
+    //    RFLOAT *temp_ctfP;
+    //    RFLOAT *temp_sigP;
+    //    
+    //    for (int i = 0; i < imgBatch; i++) 
+    //    {
+    //        temp_datPR = &datPR[(l + i) * npxl];
+    //        temp_datPI = &datPI[(l + i) * npxl];
+    //        temp_ctfP = &ctfP[(l + i) * npxl];
+    //        temp_sigP = &sigRcpP[(l + i) * npxl];
+    //        memcpy((void*)(pglk_datPR + i * npxl),
+    //               (void*)temp_datPR,
+    //               npxl * sizeof(RFLOAT));
+    //        memcpy((void*)(pglk_datPI + i * npxl),
+    //               (void*)temp_datPI,
+    //               npxl * sizeof(RFLOAT));
+    //        memcpy((void*)(pglk_ctfP + i * npxl),
+    //               (void*)temp_ctfP,
+    //               npxl * sizeof(RFLOAT));
+    //        memcpy((void*)(pglk_sigRcpP + i * npxl),
+    //               (void*)temp_sigP,
+    //               npxl * sizeof(RFLOAT));
+    //    }
+
+        smidx = 0;
+        for (int i = 0; i < imgNum;)
+        {
+            for (int n = 0; n < nGPU; ++n)
+            {
+                if (i >= imgNum)
+                    break;
+
+                baseS = n * NUM_STREAM_PER_DEVICE;
+                batch = (i + BATCH_SIZE < imgNum) 
+                      ? BATCH_SIZE : (imgNum - i);
+
+                cudaSetDevice(iGPU[n]);
+
+                cudaMemcpyAsync(devdatPR[smidx + baseS],
+                                pglk_datPR + i * npxl,
+                                batch * npxl * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy datP to device.");
+
+                cudaMemcpyAsync(devdatPI[smidx + baseS],
+                                pglk_datPI + i * npxl,
+                                batch * npxl * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy datP to device.");
+
+                cudaMemcpyAsync(devctfP[smidx + baseS],
+                                pglk_ctfP + i * npxl,
+                                batch * npxl * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy ctfP to device.");
+
+                cudaMemcpyAsync(devsigP[smidx + baseS],
+                                pglk_sigRcpP + i * npxl,
+                                batch * npxl * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy sigP to device.");
+
+                cudaMemsetAsync(devwC[smidx + baseS],
+                                0.0,
+                                batch * nK * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wC.");
+
+                cudaMemsetAsync(devwR[smidx + baseS],
+                                0.0,
+                                batch * nK * nR * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wR.");
+
+                cudaMemsetAsync(devwT[smidx + baseS],
+                                0.0,
+                                batch * nK * nT * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wT.");
+
+                for (int k = 0; k < nK; k++)
+                {
+                    for (int r = 0; r < nR;)
+                    {
+                        rbatch = (r + ROT_BATCH < nR) ? ROT_BATCH : (nR - r);
+
+                        block = ((rbatch * npxl) % thread == 0)
+                              ? (rbatch * npxl) / thread
+                              : (rbatch * npxl) / thread + 1;
+                        
+                        kernel_Project2D<<<block,
+                                           thread,
+                                           0,
+                                           *((cudaStream_t*)stream[smidx + baseS])>>>(priRotP[smidx + baseS],
+                                                                                      devnR[n] + r * 2,
+                                                                                      deviCol[n],
+                                                                                      deviRow[n],
+                                                                                      rbatch,
+                                                                                      pf,
+                                                                                      vdim,
+                                                                                      npxl,
+                                                                                      interp,
+                                                                                      *((cudaTextureObject_t*)texObject[k + n * nK]));
+                        cudaCheckErrors("Project2D error.");
+
+                        kernel_logDataVS<<<rbatch * batch * nT,
+                                           64,
+                                           64 * sizeof(RFLOAT),
+                                           *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                                      devdatPI[smidx + baseS],
+                                                                                      priRotP[smidx + baseS],
+                                                                                      devtraP[n],
+                                                                                      devctfP[smidx + baseS],
+                                                                                      devsigP[smidx + baseS],
+                                                                                      devDvp[smidx + baseS],
+                                                                                      r,
+                                                                                      nR,
+                                                                                      nT,
+                                                                                      rbatch,
+                                                                                      npxl);
+                        cudaCheckErrors("logDataVS error.");
+
+                        r += rbatch;
+                    }
+
+                    if (k == 0)
+                    {
+                        kernel_getMaxBase<<<batch,
+                                            thread,
+                                            thread * sizeof(RFLOAT),
+                                            *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
+                                                                                       devDvp[smidx + baseS],
+                                                                                       nR * nT);
+                        cudaCheckErrors("getMaxBase error.");
+                    }
+                    else
+                    {
+                        kernel_getMaxBase<<<batch,
+                                            thread,
+                                            thread * sizeof(RFLOAT),
+                                            *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
+                                                                                       devDvp[smidx + baseS],
+                                                                                       nR * nT);
+                        cudaCheckErrors("getMaxBase error.");
+
+                        kernel_setBaseLine<<<batch,
+                                             thread,
+                                             0,
+                                             *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
+                                                                                        devbaseL[smidx + baseS],
+                                                                                        devwC[smidx + baseS],
+                                                                                        devwR[smidx + baseS],
+                                                                                        devwT[smidx + baseS],
+                                                                                        nK,
+                                                                                        nR,
+                                                                                        nT,
+                                                                                        nK * (1 + nR + nT));
+                        cudaCheckErrors("setBaseLine error.");
+                    }
+
+                    //printf("batch:%d, threadS:%d, nT:%d, share:%d\n", batch, threadS, nT, (nT + 1) * threadS);
+                    kernel_UpdateW<<<batch,
+                                     threadS,
+                                     (nT + 1) * threadS * sizeof(RFLOAT),
+                                     *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
+                                                                                devbaseL[smidx + baseS],
+                                                                                devwC[smidx + baseS],
+                                                                                devwR[smidx + baseS],
+                                                                                devwT[smidx + baseS],
+                                                                                devpR[n],
+                                                                                devpT[n],
+                                                                                k,
+                                                                                nK,
+                                                                                nR,
+                                                                                nT,
+                                                                                nR * nT);
+                    cudaCheckErrors("Update error.");
+
+                }
+
+                cudaMemcpyAsync(wC + i * nK,
+                                devwC[smidx + baseS],
+                                batch * nK * sizeof(RFLOAT),
+                                cudaMemcpyDeviceToHost,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy wC to host.");
+
+                cudaMemcpyAsync(wR + (long long)i * nK * nR,
+                                devwR[smidx + baseS],
+                                batch * nR  * nK * sizeof(RFLOAT),
+                                cudaMemcpyDeviceToHost,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy wR to host.");
+
+                cudaMemcpyAsync(wT + (long long)i * nK * nT,
+                                devwT[smidx + baseS],
+                                batch * nT * nK * sizeof(RFLOAT),
+                                cudaMemcpyDeviceToHost,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy wT to host.");
+
+                i += batch;
+            }
+
+            smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
+        }
+    
+    //    //synchronizing on CUDA streams
+    //    for (int n = 0; n < nGPU; ++n)
+    //    {
+    //        baseS = n * NUM_STREAM_PER_DEVICE;
+    //        cudaSetDevice(iGPU[n]);
+
+    //        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
+    //        {
+    //            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
+    //            cudaCheckErrors("Stream synchronize after.");
+    //        }
+    //    }
+
+    //    l += imgBatch;
+    //}
+
+    //synchronizing on CUDA streams
+    for (int n = 0; n < nGPU; ++n)
+    {
+        baseS = n * NUM_STREAM_PER_DEVICE;
+        cudaSetDevice(iGPU[n]);
+
+        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
+        {
+            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
+            cudaCheckErrors("Stream synchronize after.");
+
+            cudaFree(devdatPR[i + baseS]);
+            cudaFree(devdatPI[i + baseS]);
+            cudaFree(devctfP[i + baseS]);
+            cudaFree(devsigP[i + baseS]);
+            cudaFree(priRotP[i + baseS]);
+            cudaFree(devDvp[i + baseS]);
+            cudaFree(devbaseL[i + baseS]);
+            cudaFree(devwC[i + baseS]);
+            cudaFree(devwR[i + baseS]);
+            cudaFree(devwT[i + baseS]);
+            if (nK != 1)
+            {
+                cudaFree(devcomP[i + baseS]);
+            }
+            cudaCheckErrors("cuda Free error.");
+        }
+    }
+
+    //unregister pglk_memory
+    //cudaHostUnregister(pglk_datPR);
+    //cudaHostUnregister(pglk_datPI);
+    //cudaHostUnregister(pglk_ctfP);
+    //cudaHostUnregister(pglk_sigRcpP);
+    //free(pglk_datPR);
+    //free(pglk_datPI);
+    //free(pglk_ctfP);
+    //free(pglk_sigRcpP);
+    cudaHostUnregister(wC);
+    cudaHostUnregister(wR);
+    cudaHostUnregister(wT);
+    cudaCheckErrors("cuda Host Unregister error.");
+
+    LOG(INFO) << "expectation Global done.";
+}
+
+/**
+ * @brief  Expectation GLobal.
+ *
+ * @param
+ * @param
+ */
 void expectGlobal3D(vector<int>& iGPU,
                     vector<void*>& stream,
                     Complex** devrotP,
                     Complex** devtraP,
                     Complex* rotP,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                    MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+                    double** devpR,
+                    double** devpT,
+                    RFLOAT* pglk_datPR,
+                    RFLOAT* pglk_datPI,
+                    RFLOAT* pglk_ctfP,
+                    RFLOAT* pglk_sigRcpP,
                     RFLOAT* wC,
                     RFLOAT* wR,
                     RFLOAT* wT,
-                    double* pR,
-                    double* pT,
                     RFLOAT* baseL,
                     int kIdx,
                     int nK,
@@ -2101,23 +2153,6 @@ void expectGlobal3D(vector<int>& iGPU,
 
     const int BATCH_SIZE = IMAGE_BUFF;
 
-    RFLOAT *pglk_datPR_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_datPI_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_ctfP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_sigRcpP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    
-    cudaHostRegister(pglk_datPR_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_datPI_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_ctfP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register ctfP data.");
-
-    cudaHostRegister(pglk_sigRcpP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register sigRcpP data.");
-    
     cudaHostRegister(rotP, 
                      (long long)nR * npxl * sizeof(Complex), 
                      cudaHostRegisterDefault);
@@ -2155,22 +2190,12 @@ void expectGlobal3D(vector<int>& iGPU,
     RFLOAT* devwR[nStream];
     RFLOAT* devwT[nStream];
     RFLOAT* devcomP[nStream];
-    double* devpR[nGPU];
-    double* devpT[nGPU];
 
     int baseS;
     for (int n = 0; n < nGPU; ++n)
     {
         baseS = n * NUM_STREAM_PER_DEVICE;
         cudaSetDevice(iGPU[n]);
-
-        cudaMalloc((void**)&devpR[n], 
-                   nR * sizeof(double));
-        cudaCheckErrors("Allocate pR data.");
-
-        cudaMalloc((void**)&devpT[n], 
-                   nR * sizeof(double));
-        cudaCheckErrors("Allocate pT data.");
 
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
         {
@@ -2191,302 +2216,219 @@ void expectGlobal3D(vector<int>& iGPU,
         }
     }
 
-    for (int n = 0; n < nGPU; ++n)
-    {
-        cudaSetDevice(iGPU[n]);
-
-        cudaMemcpyAsync(devpR[n],
-                        pR,
-                        nR * sizeof(double),
-                        cudaMemcpyHostToDevice,
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memcpy pR.");
-
-        cudaMemcpyAsync(devpT[n],
-                        pT,
-                        nT * sizeof(double),
-                        cudaMemcpyHostToDevice,
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memcpy pT.");
-    }
-
-    //synchronizing on CUDA streams
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-        {
-            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-            cudaCheckErrors("Stream synchronize before expect.");
-        }
-    }
-
     int batch = 0, rbatch = 0, smidx = 0;
     int thread = THREAD_PER_BLOCK;
     //int threadS = SHARE_LIMIT;
     int threadS = (49152 / (sizeof(RFLOAT)) / (nT + 1));
-    int imgBatch = 0;
-    for (int l = 0; l < imgNum;)
+    for (int i = 0; i < imgNum;)
     {
-        if (l >= imgNum)
-            break;
-
-        imgBatch = (l + IMAGE_BATCH < imgNum)
-                 ? IMAGE_BATCH : (imgNum - l);
-
-        RFLOAT *temp_datPR;
-        RFLOAT *temp_datPI;
-        RFLOAT *temp_ctfP;
-        RFLOAT *temp_sigP;
-        
-        for (int i = 0; i < imgBatch; i++) 
-        {
-            temp_datPR = &datPR[(l + i) * npxl];
-            temp_datPI = &datPI[(l + i) * npxl];
-            temp_ctfP = &ctfP[(l + i) * npxl];
-            temp_sigP = &sigRcpP[(l + i) * npxl];
-            memcpy((void*)(pglk_datPR_buf + i * npxl),
-                   (void*)temp_datPR,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_datPI_buf + i * npxl),
-                   (void*)temp_datPI,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_ctfP_buf + i * npxl),
-                   (void*)temp_ctfP,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_sigRcpP_buf + i * npxl),
-                   (void*)temp_sigP,
-                   npxl * sizeof(RFLOAT));
-        }
-
-        smidx = 0;
-        for (int i = 0; i < imgBatch;)
-        {
-            for (int n = 0; n < nGPU; ++n)
-            {
-                if (i >= imgBatch)
-                    break;
-
-                baseS = n * NUM_STREAM_PER_DEVICE;
-                batch = (i + BATCH_SIZE < imgBatch) 
-                      ? BATCH_SIZE : (imgBatch - i);
-
-                cudaSetDevice(iGPU[n]);
-
-                cudaMemcpyAsync(devdatPR[smidx + baseS],
-                                pglk_datPR_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy datP to device.");
-
-                cudaMemcpyAsync(devdatPI[smidx + baseS],
-                                pglk_datPI_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy datP to device.");
-                
-                cudaMemcpyAsync(devctfP[smidx + baseS],
-                                pglk_ctfP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy ctfP to device.");
-
-                cudaMemcpyAsync(devsigP[smidx + baseS],
-                                pglk_sigRcpP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy sigP to device.");
-
-                if (kIdx == 0)
-                {
-                    cudaMemsetAsync(devwC[smidx + baseS],
-                                    0.0,
-                                    batch * nK * sizeof(RFLOAT),
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset wC.");
-
-                    cudaMemsetAsync(devwR[smidx + baseS],
-                                    0.0,
-                                    batch * nK * nR * sizeof(RFLOAT),
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset wR.");
-
-                    cudaMemsetAsync(devwT[smidx + baseS],
-                                    0.0,
-                                    batch * nK * nT * sizeof(RFLOAT),
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset wT.");
-                }
-                else
-                {
-                    cudaMemcpyAsync(devbaseL[smidx + baseS],
-                                    baseL + (l + i),
-                                    batch * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset baseL.");
-
-                    cudaMemcpyAsync(devwC[smidx + baseS],
-                                    wC + (l + i) * nK,
-                                    batch * nK * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset wC.");
-
-                    cudaMemcpyAsync(devwR[smidx + baseS],
-                                    wR + (long long)(l + i) * nR,
-                                    batch * nK * nR * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset wR.");
-
-                    cudaMemcpyAsync(devwT[smidx + baseS],
-                                    wT + (long long)(l + i) * nT,
-                                    batch * nK * nT * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("for memset wT.");
-                }
-
-                for (int r = 0; r < nR;)
-                {
-                    rbatch = (r + ROT_BATCH < nR) ? ROT_BATCH : (nR - r);
-
-                    cudaMemcpyAsync(devrotP[smidx + baseS],
-                                    rotP + (long long)r * npxl,
-                                    rbatch * npxl * sizeof(Complex),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy datP to device.");
-
-                    kernel_logDataVS<<<rbatch * batch * nT,
-                                       64,
-                                       64 * sizeof(RFLOAT),
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devrotP[smidx + baseS],
-                                                                                  devtraP[n],
-                                                                                  devctfP[smidx + baseS],
-                                                                                  devsigP[smidx + baseS],
-                                                                                  devDvp[smidx + baseS],
-                                                                                  r,
-                                                                                  nR,
-                                                                                  nT,
-                                                                                  rbatch,
-                                                                                  npxl);
-                    cudaCheckErrors("logDataVS error.");
-
-                    r += rbatch;
-                }
-
-                if (kIdx == 0)
-                {
-                    kernel_getMaxBase<<<batch,
-                                        thread,
-                                        thread * sizeof(RFLOAT),
-                                        *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
-                                                                                   devDvp[smidx + baseS],
-                                                                                   nR * nT);
-                    cudaCheckErrors("getMaxBase error.");
-                }
-                else
-                {
-                    kernel_getMaxBase<<<batch,
-                                        thread,
-                                        thread * sizeof(RFLOAT),
-                                        *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                   devDvp[smidx + baseS],
-                                                                                   nR * nT);
-                    cudaCheckErrors("getMaxBase error.");
-
-                    kernel_setBaseLine<<<batch,
-                                         thread,
-                                         0,
-                                         *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                    devbaseL[smidx + baseS],
-                                                                                    devwC[smidx + baseS],
-                                                                                    devwR[smidx + baseS],
-                                                                                    devwT[smidx + baseS],
-                                                                                    nK,
-                                                                                    nR,
-                                                                                    nT,
-                                                                                    nK * (1 + nR + nT));
-                    cudaCheckErrors("setBaseLine error.");
-                }
-
-                kernel_UpdateW<<<batch,
-                                 threadS,
-                                 (nT + 1) * threadS * sizeof(RFLOAT),
-                                 *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
-                                                                            devbaseL[smidx + baseS],
-                                                                            devwC[smidx + baseS],
-                                                                            devwR[smidx + baseS],
-                                                                            devwT[smidx + baseS],
-                                                                            devpR[n],
-                                                                            devpT[n],
-                                                                            kIdx,
-                                                                            nK,
-                                                                            nR,
-                                                                            nT,
-                                                                            nR * nT);
-                cudaCheckErrors("UpdateW error.");
-
-                cudaMemcpyAsync(baseL + (l + i),
-                                devbaseL[smidx + baseS],
-                                batch * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy baseL to host.");
-
-                cudaMemcpyAsync(wC + (l + i) * nK,
-                                devwC[smidx + baseS],
-                                batch * nK * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy wC to host.");
-
-                cudaMemcpyAsync(wR + (long long)(l + i) * nK * nR,
-                                devwR[smidx + baseS],
-                                batch * nK * nR * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy wR to host.");
-
-                cudaMemcpyAsync(wT + (long long)(l + i) * nK * nT,
-                                devwT[smidx + baseS],
-                                batch * nK * nT * sizeof(RFLOAT),
-                                cudaMemcpyDeviceToHost,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy wT to host.");
-
-                i += batch;
-            }
-
-            smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
-        }
-        
-        //synchronizing on CUDA streams
         for (int n = 0; n < nGPU; ++n)
         {
+            if (i >= imgNum)
+                break;
+
             baseS = n * NUM_STREAM_PER_DEVICE;
+            batch = (i + BATCH_SIZE < imgNum) 
+                  ? BATCH_SIZE : (imgNum - i);
+
             cudaSetDevice(iGPU[n]);
 
-            for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            {
-                cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-                cudaCheckErrors("Stream synchronize after.");
-            }
-        }
-        
-        l += imgBatch;
-    }
+            cudaMemcpyAsync(devdatPR[smidx + baseS],
+                            pglk_datPR + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy datP to device.");
 
+            cudaMemcpyAsync(devdatPI[smidx + baseS],
+                            pglk_datPI + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy datP to device.");
+            
+            cudaMemcpyAsync(devctfP[smidx + baseS],
+                            pglk_ctfP + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy ctfP to device.");
+
+            cudaMemcpyAsync(devsigP[smidx + baseS],
+                            pglk_sigRcpP + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy sigP to device.");
+
+            if (kIdx == 0)
+            {
+                cudaMemsetAsync(devwC[smidx + baseS],
+                                0.0,
+                                batch * nK * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wC.");
+
+                cudaMemsetAsync(devwR[smidx + baseS],
+                                0.0,
+                                batch * nK * nR * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wR.");
+
+                cudaMemsetAsync(devwT[smidx + baseS],
+                                0.0,
+                                batch * nK * nT * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wT.");
+            }
+            else
+            {
+                cudaMemcpyAsync(devbaseL[smidx + baseS],
+                                baseL + i,
+                                batch * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset baseL.");
+
+                cudaMemcpyAsync(devwC[smidx + baseS],
+                                wC + i * nK,
+                                batch * nK * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wC.");
+
+                cudaMemcpyAsync(devwR[smidx + baseS],
+                                wR + (long long)i * nR,
+                                batch * nK * nR * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wR.");
+
+                cudaMemcpyAsync(devwT[smidx + baseS],
+                                wT + (long long)i * nT,
+                                batch * nK * nT * sizeof(RFLOAT),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("for memset wT.");
+            }
+
+            for (int r = 0; r < nR;)
+            {
+                rbatch = (r + ROT_BATCH < nR) ? ROT_BATCH : (nR - r);
+
+                cudaMemcpyAsync(devrotP[smidx + baseS],
+                                rotP + (long long)r * npxl,
+                                rbatch * npxl * sizeof(Complex),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy datP to device.");
+
+                kernel_logDataVS<<<rbatch * batch * nT,
+                                   64,
+                                   64 * sizeof(RFLOAT),
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                              devdatPI[smidx + baseS],
+                                                                              devrotP[smidx + baseS],
+                                                                              devtraP[n],
+                                                                              devctfP[smidx + baseS],
+                                                                              devsigP[smidx + baseS],
+                                                                              devDvp[smidx + baseS],
+                                                                              r,
+                                                                              nR,
+                                                                              nT,
+                                                                              rbatch,
+                                                                              npxl);
+                cudaCheckErrors("logDataVS error.");
+
+                r += rbatch;
+            }
+
+            if (kIdx == 0)
+            {
+                kernel_getMaxBase<<<batch,
+                                    thread,
+                                    thread * sizeof(RFLOAT),
+                                    *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
+                                                                               devDvp[smidx + baseS],
+                                                                               nR * nT);
+                cudaCheckErrors("getMaxBase error.");
+            }
+            else
+            {
+                kernel_getMaxBase<<<batch,
+                                    thread,
+                                    thread * sizeof(RFLOAT),
+                                    *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
+                                                                               devDvp[smidx + baseS],
+                                                                               nR * nT);
+                cudaCheckErrors("getMaxBase error.");
+
+                kernel_setBaseLine<<<batch,
+                                     thread,
+                                     0,
+                                     *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
+                                                                                devbaseL[smidx + baseS],
+                                                                                devwC[smidx + baseS],
+                                                                                devwR[smidx + baseS],
+                                                                                devwT[smidx + baseS],
+                                                                                nK,
+                                                                                nR,
+                                                                                nT,
+                                                                                nK * (1 + nR + nT));
+                cudaCheckErrors("setBaseLine error.");
+            }
+
+            kernel_UpdateW<<<batch,
+                             threadS,
+                             (nT + 1) * threadS * sizeof(RFLOAT),
+                             *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
+                                                                        devbaseL[smidx + baseS],
+                                                                        devwC[smidx + baseS],
+                                                                        devwR[smidx + baseS],
+                                                                        devwT[smidx + baseS],
+                                                                        devpR[n],
+                                                                        devpT[n],
+                                                                        kIdx,
+                                                                        nK,
+                                                                        nR,
+                                                                        nT,
+                                                                        nR * nT);
+            cudaCheckErrors("UpdateW error.");
+
+            cudaMemcpyAsync(baseL + i,
+                            devbaseL[smidx + baseS],
+                            batch * sizeof(RFLOAT),
+                            cudaMemcpyDeviceToHost,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy baseL to host.");
+
+            cudaMemcpyAsync(wC + i * nK,
+                            devwC[smidx + baseS],
+                            batch * nK * sizeof(RFLOAT),
+                            cudaMemcpyDeviceToHost,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy wC to host.");
+
+            cudaMemcpyAsync(wR + (long long)i * nK * nR,
+                            devwR[smidx + baseS],
+                            batch * nK * nR * sizeof(RFLOAT),
+                            cudaMemcpyDeviceToHost,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy wR to host.");
+
+            cudaMemcpyAsync(wT + (long long)i * nK * nT,
+                            devwT[smidx + baseS],
+                            batch * nK * nT * sizeof(RFLOAT),
+                            cudaMemcpyDeviceToHost,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy wT to host.");
+
+            i += batch;
+        }
+
+        smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
+    }
+    
     //synchronizing on CUDA streams
     for (int n = 0; n < nGPU; ++n)
     {
@@ -2514,27 +2456,7 @@ void expectGlobal3D(vector<int>& iGPU,
         }
     }
 
-    //free device buffers
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-        cudaCheckErrors("set device.");
-
-        cudaFree(devpR[n]);
-        cudaFree(devpT[n]);
-        cudaCheckErrors("free pR.");
-    }
-
     //unregister pglk_memory
-    cudaHostUnregister(pglk_datPR_buf);
-    cudaHostUnregister(pglk_datPI_buf);
-    cudaHostUnregister(pglk_ctfP_buf);
-    cudaHostUnregister(pglk_sigRcpP_buf);
-    free(pglk_datPR_buf);
-    free(pglk_datPI_buf);
-    free(pglk_ctfP_buf);
-    free(pglk_sigRcpP_buf);
     cudaHostUnregister(rotP);
     cudaHostUnregister(baseL);
     cudaHostUnregister(wC);
@@ -2551,10 +2473,59 @@ void expectGlobal3D(vector<int>& iGPU,
  * @param
  * @param
  */
+void freeRotran2D(vector<int>& iGPU,
+                  vector<void*>& symArray,
+                  vector<void*>& texObject,
+                  Complex** devtraP,
+                  double** devnR,
+                  double** devpR,
+                  double** devpT,
+                  int nK,
+                  int nGPU)
+{
+    LOG(INFO) << "expectation Rotation and Translate begin.";
+
+    for (int n = 0; n < nGPU; n++)
+    { 
+        cudaSetDevice(iGPU[n]);
+        cudaCheckErrors("stream create.");
+        
+        cudaFree(devtraP[n]);
+        cudaCheckErrors("free traP data.");
+
+        cudaFree(devnR[n]);
+        cudaCheckErrors("free RotMat data.");
+
+        cudaFree(devpR[n]);
+        cudaCheckErrors("free pR.");
+        
+        cudaFree(devpT[n]);
+        cudaCheckErrors("free pT.");
+        
+        for (int k = 0; k < nK; k++)
+        {
+            cudaFreeArray(*((cudaArray**)symArray[k + n * nK]));
+            cudaDestroyTextureObject(*((cudaTextureObject_t*)texObject[k + n * nK]));
+            cudaCheckErrors("cuda Destory texobject error.");
+        }
+    }
+
+    symArray.clear();
+    texObject.clear();
+}
+
+/**
+ * @brief  Expectation GLobal.
+ *
+ * @param
+ * @param
+ */
 void freeRotran(vector<int>& iGPU,
                 Complex** devrotP,
                 Complex** devtraP,
                 double** devRotMat,
+                double** devpR,
+                double** devpT,
                 int nGPU)
 {
     LOG(INFO) << "expectation Rotation and Translate begin.";
@@ -2571,6 +2542,12 @@ void freeRotran(vector<int>& iGPU,
         cudaFree(devRotMat[n]);
         cudaCheckErrors("free RotMat data.");
 
+        cudaFree(devpR[n]);
+        cudaCheckErrors("free pR.");
+        
+        cudaFree(devpT[n]);
+        cudaCheckErrors("free pT.");
+        
         baseS = n * NUM_STREAM_PER_DEVICE;
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
         {
@@ -3508,17 +3485,13 @@ void allocFTO(vector<int>& iGPU,
                    nk * tauSize * sizeof(RFLOAT));
         cudaCheckErrors("Allocate __device__Tau data.");
 
-        cudaMalloc((void**)&dev_T[n], 
-                   volumeSize * sizeof(RFLOAT));
-        cudaCheckErrors("Allocate __device__T data.");
-
         cudaMalloc((void**)&dev_O[n], 
                    oSize * sizeof(double));
-        cudaCheckErrors("Allocate __device__T data.");
+        cudaCheckErrors("Allocate __device__O data.");
 
         cudaMalloc((void**)&dev_C[n], 
                    cSize * sizeof(int));
-        cudaCheckErrors("Allocate __device__T data.");
+        cudaCheckErrors("Allocate __device__C data.");
 
         cudaMalloc((void**)&deviCol[n], 
                    npxl * sizeof(int));
@@ -3550,6 +3523,138 @@ void allocFTO(vector<int>& iGPU,
                    cudaMemcpyHostToDevice);
         cudaCheckErrors("for memcpy iSig.");
     }
+    
+    cudaSetDevice(iGPU[0]);
+
+    cudaMemcpy(devTau[0],
+               arrayTau,
+               nk * tauSize * sizeof(RFLOAT),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy Tau.");
+
+    cudaMemcpy(dev_O[0],
+               arrayO,
+               oSize * sizeof(double),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy O2D.");
+
+    cudaMemcpy(dev_C[0],
+               arrayC,
+               cSize * sizeof(int),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy O2D.");
+
+    for (int n = 1; n < nGPU; ++n)
+    {
+        cudaSetDevice(iGPU[n]);
+
+        cudaMemset(devTau[n],
+                   0.0,
+                   nk * tauSize * sizeof(RFLOAT));
+        cudaCheckErrors("for memset Tau.");
+
+        cudaMemset(dev_O[n],
+                   0.0,
+                   oSize * sizeof(double));
+        cudaCheckErrors("for memset O2D.");
+
+        cudaMemset(dev_C[n],
+                   0.0,
+                   cSize * sizeof(int));
+        cudaCheckErrors("for memset O2D.");
+    }
+
+}
+
+/**
+ * @brief Copy images' volume to Device.
+ *
+ * @param
+ * @param
+ */
+void volumeCopy2D(vector<int>& iGPU,
+                  Complex* volumeF,
+                  Complex** dev_F,
+                  RFLOAT* volumeT,
+                  RFLOAT** dev_T,
+                  int nk,
+                  int vdim,
+                  int nGPU)
+{
+    int volumeSize = (vdim / 2 + 1) * vdim * nk;
+    
+    cudaSetDevice(iGPU[0]);
+
+    cudaMemcpy(dev_F[0],
+               volumeF,
+               volumeSize * sizeof(Complex),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy F2D.");
+
+    cudaMemcpy(dev_T[0],
+               volumeT,
+               volumeSize * sizeof(RFLOAT),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy T2D.");
+    
+    for (int n = 1; n < nGPU; ++n)
+    {
+        cudaSetDevice(iGPU[n]);
+        cudaMemset(dev_F[n],
+                   0.0,
+                   volumeSize * sizeof(Complex));
+        cudaCheckErrors("for memset F2D.");
+
+        cudaMemset(dev_T[n],
+                   0.0,
+                   volumeSize * sizeof(RFLOAT));
+        cudaCheckErrors("for memset T2D."); 
+    }
+}
+
+/**
+ * @brief Copy images' volume to Device.
+ *
+ * @param
+ * @param
+ */
+void volumeCopy3D(vector<int>& iGPU,
+                  Complex* volumeF,
+                  Complex** dev_F,
+                  RFLOAT* volumeT,
+                  RFLOAT** dev_T,
+                  int vdim,
+                  int nGPU)
+{
+    int volumeSize = (vdim / 2 + 1) * vdim * vdim;
+    
+    cudaSetDevice(iGPU[0]);
+
+    cudaMemcpy(dev_F[0],
+               volumeF,
+               volumeSize * sizeof(Complex),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy F3D.");
+
+    cudaMemcpy(dev_T[0],
+               volumeT,
+               volumeSize * sizeof(RFLOAT),
+               cudaMemcpyHostToDevice);
+    cudaCheckErrors("for memcpy T3D.");
+    
+    for (int n = 1; n < nGPU; ++n)
+    {
+        cudaSetDevice(iGPU[n]);
+        cudaMemset(dev_F[n],
+                   0.0,
+                   volumeSize * sizeof(Complex));
+        cudaCheckErrors("for memset F3D.");
+
+        cudaMemset(dev_T[n],
+                   0.0,
+                   volumeSize * sizeof(RFLOAT));
+        cudaCheckErrors("for memset T3D."); 
+    }
 }
 
 /**
@@ -3560,20 +3665,15 @@ void allocFTO(vector<int>& iGPU,
  */
 void InsertI2D(vector<int>& iGPU,
                vector<void*>& stream,
-               Complex* volumeF,
                Complex** dev_F,
-               RFLOAT* volumeT,
                RFLOAT** dev_T,
-               RFLOAT* arrayTau,
                RFLOAT** devTau,
-               double* arrayO,
                double** dev_O,
-               int* arrayC,
                int** dev_C,
-               MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-               MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-               MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-               MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+               RFLOAT* pglk_datPR,
+               RFLOAT* pglk_datPI,
+               RFLOAT* pglk_ctfP,
+               RFLOAT* pglk_sigRcpP,
                RFLOAT* w,
                double* offS,
                double *nR,
@@ -3615,7 +3715,7 @@ void InsertI2D(vector<int>& iGPU,
     double *dev_offs_buf[nStream];
     int *devnC[nStream];
 
-    LOG(INFO) << ": Step1: Insert Image.";
+    LOG(INFO) << "Step1: Insert Image.";
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
     cudaHostRegister(offS, 
@@ -3690,447 +3790,290 @@ void InsertI2D(vector<int>& iGPU,
         }
     }
 
-    cudaSetDevice(iGPU[0]);
-
-    cudaMemcpyAsync(dev_F[0],
-                    volumeF,
-                    nk * dimSize * sizeof(Complex),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy F2D.");
-
-    cudaMemcpyAsync(dev_T[0],
-                    volumeT,
-                    nk * dimSize * sizeof(RFLOAT),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy T2D.");
-
-    cudaMemcpyAsync(devTau[0],
-                    arrayTau,
-                    nk * tauSize * sizeof(RFLOAT),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy Tau.");
-
-    cudaMemcpyAsync(dev_O[0],
-                    arrayO,
-                    nk * 2 * sizeof(double),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy O2D.");
-
-    cudaMemcpyAsync(dev_C[0],
-                    arrayC,
-                    nk * sizeof(int),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy O2D.");
-
-    for (int n = 1; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        cudaMemsetAsync(dev_F[n],
-                        0.0,
-                        nk * dimSize * sizeof(Complex),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset F2D.");
-
-        cudaMemsetAsync(dev_T[n],
-                        0.0,
-                        nk * dimSize * sizeof(RFLOAT),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset T2D.");
-        
-        cudaMemsetAsync(devTau[n],
-                        0.0,
-                        nk * tauSize * sizeof(RFLOAT),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset Tau.");
-
-        cudaMemsetAsync(dev_O[n],
-                        0.0,
-                        nk * 2 * sizeof(double),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset O2D.");
-
-        cudaMemsetAsync(dev_C[n],
-                        0.0,
-                        nk * sizeof(int),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset O2D.");
-    }
-
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-    }
-
-    RFLOAT *pglk_datPR_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_datPI_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_ctfP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    RFLOAT *pglk_sigRcpP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-#endif    
-    
-    cudaHostRegister(pglk_datPR_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_datPI_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_ctfP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register ctfP data.");
-
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    cudaHostRegister(pglk_sigRcpP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register sigRcpP data.");
-#endif    
-    
     int thread = THREAD_PER_BLOCK;
     int block;
     int batch = 0, smidx = 0;
-    int imgBatch = 0;
-    for (int l = 0; l < imgNum;)
-    {
-        if (l >= imgNum)
-            break;
+   for (int i = 0; i < imgNum;)
+   {
+       for (int n = 0; n < nGPU; ++n)
+       {
+           if (i >= imgNum)
+               break;
 
-        imgBatch = (l + IMAGE_BATCH < imgNum)
-                 ? IMAGE_BATCH : (imgNum - l);
+           baseS = n * NUM_STREAM_PER_DEVICE;
+           batch = (i + BATCH_SIZE < imgNum) 
+                 ? BATCH_SIZE : (imgNum - i);
 
-        RFLOAT *temp_datPR;
-        RFLOAT *temp_datPI;
-        RFLOAT *temp_ctfP;
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-        RFLOAT *temp_sigP;
-#endif
+           cudaSetDevice(iGPU[n]);
 
-        for (int i = 0; i < imgBatch; i++) 
-        {
-            temp_datPR = &datPR[(l + i) * npxl];
-            temp_datPI = &datPI[(l + i) * npxl];
-            temp_ctfP = &ctfP[(l + i) * npxl];
-            memcpy((void*)(pglk_datPR_buf + i * npxl),
-                   (void*)temp_datPR,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_datPI_buf + i * npxl),
-                   (void*)temp_datPI,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_ctfP_buf + i * npxl),
-                   (void*)temp_ctfP,
-                   npxl * sizeof(RFLOAT));
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-            temp_sigP = &sigRcpP[(l + i) * npxl];
-            memcpy((void*)(pglk_sigRcpP_buf + i * npxl),
-                   (void*)temp_sigP,
-                   npxl * sizeof(RFLOAT));
-#endif
-        }
+           cudaMemcpyAsync(devnR[smidx + baseS],
+                           nR + i * mReco * 2,
+                           batch * mReco * 2 * sizeof(double),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy nr to device.");
 
-        smidx = 0;
-        for (int i = 0; i < imgBatch;)
-        {
-            for (int n = 0; n < nGPU; ++n)
-            {
-                if (i >= imgBatch)
-                    break;
+           cudaMemcpyAsync(devnT[smidx + baseS],
+                           nT + i * mReco * 2,
+                           batch * mReco * 2 * sizeof(double),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy nt to device.");
 
-                baseS = n * NUM_STREAM_PER_DEVICE;
-                batch = (i + BATCH_SIZE < imgBatch) 
-                      ? BATCH_SIZE : (imgBatch - i);
+           cudaMemcpyAsync(devdatPR[smidx + baseS],
+                           pglk_datPR + i * npxl,
+                           batch * npxl * sizeof(RFLOAT),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy reale to device.");
 
-                cudaSetDevice(iGPU[n]);
+           cudaMemcpyAsync(devdatPI[smidx + baseS],
+                           pglk_datPI + i * npxl,
+                           batch * npxl * sizeof(RFLOAT),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy reale to device.");
+           
+           if (cSearch)
+           {
+               cudaMemcpyAsync(dev_nd_buf[smidx + baseS],
+                               nD + i * mReco,
+                               batch * mReco * sizeof(double),
+                               cudaMemcpyHostToDevice,
+                               *((cudaStream_t*)stream[smidx + baseS]));
+               cudaCheckErrors("memcpy nt to device.");
 
-                cudaMemcpyAsync(devnR[smidx + baseS],
-                                nR + (l + i) * mReco * 2,
-                                batch * mReco * 2 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy nr to device.");
-
-                cudaMemcpyAsync(devnT[smidx + baseS],
-                                nT + (l + i) * mReco * 2,
-                                batch * mReco * 2 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy nt to device.");
-
-                cudaMemcpyAsync(devdatPR[smidx + baseS],
-                                pglk_datPR_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy reale to device.");
-
-                cudaMemcpyAsync(devdatPI[smidx + baseS],
-                                pglk_datPI_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy reale to device.");
-                
-                if (cSearch)
-                {
-                    cudaMemcpyAsync(dev_nd_buf[smidx + baseS],
-                                    nD + (l + i) * mReco,
-                                    batch * mReco * sizeof(double),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy nt to device.");
-
-                    cudaMemcpyAsync(dev_ctfas_buf[smidx + baseS],
-                                    ctfaData + (l + i),
-                                    batch * sizeof(CTFAttr),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy CTFAttr to device.");
-                }
-                else
-                {
-                    cudaMemcpyAsync(devctfP[smidx + baseS],
-                                    pglk_ctfP_buf + i * npxl,
-                                    batch * npxl * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy ctf to device.");
-                }
+               cudaMemcpyAsync(dev_ctfas_buf[smidx + baseS],
+                               ctfaData + i,
+                               batch * sizeof(CTFAttr),
+                               cudaMemcpyHostToDevice,
+                               *((cudaStream_t*)stream[smidx + baseS]));
+               cudaCheckErrors("memcpy CTFAttr to device.");
+           }
+           else
+           {
+               cudaMemcpyAsync(devctfP[smidx + baseS],
+                               pglk_ctfP + i * npxl,
+                               batch * npxl * sizeof(RFLOAT),
+                               cudaMemcpyHostToDevice,
+                               *((cudaStream_t*)stream[smidx + baseS]));
+               cudaCheckErrors("memcpy ctf to device.");
+           }
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-                cudaMemcpyAsync(devsigRcpP[smidx + baseS],
-                                pglk_sigRcpP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memcpy sigRcp.");
+           cudaMemcpyAsync(devsigRcpP[smidx + baseS],
+                           pglk_sigRcpP + i * npxl,
+                           batch * npxl * sizeof(RFLOAT),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("for memcpy sigRcp.");
 #endif
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                cudaMemcpyAsync(dev_offs_buf[smidx + baseS],
-                                offS + 2 * (l + i),
-                                batch * 2 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy offset to device.");
+           cudaMemcpyAsync(dev_offs_buf[smidx + baseS],
+                           offS + 2 * i,
+                           batch * 2 * sizeof(double),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy offset to device.");
 #endif
 
-                cudaMemcpyToSymbolAsync(dev_ws_data,
-                                        w + (l + i),
-                                        batch * sizeof(RFLOAT),
-                                        smidx * batch * sizeof(RFLOAT),
-                                        cudaMemcpyHostToDevice,
-                                        *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy w to device constant memory.");
+           cudaMemcpyToSymbolAsync(dev_ws_data,
+                                   w + i,
+                                   batch * sizeof(RFLOAT),
+                                   smidx * batch * sizeof(RFLOAT),
+                                   cudaMemcpyHostToDevice,
+                                   *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy w to device constant memory.");
 
-                cudaMemcpyAsync(devnC[smidx + baseS],
-                                nC + (l + i) * mReco,
-                                batch * mReco * sizeof(int),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy nr to device.");
+           cudaMemcpyAsync(devnC[smidx + baseS],
+                           nC + i * mReco,
+                           batch * mReco * sizeof(int),
+                           cudaMemcpyHostToDevice,
+                           *((cudaStream_t*)stream[smidx + baseS]));
+           cudaCheckErrors("memcpy nr to device.");
 
-                    //cudaEventRecord(start[smidx + baseS], stream[smidx + baseS]);
+               //cudaEventRecord(start[smidx + baseS], stream[smidx + baseS]);
 
-                for (int m = 0; m < mReco; m++)
-                {
-                    block = ((batch * npxl) % thread == 0) 
-                          ? (batch * npxl) / thread 
-                          : (batch * npxl) / thread + 1; 
+           for (int m = 0; m < mReco; m++)
+           {
+               block = ((batch * npxl) % thread == 0) 
+                     ? (batch * npxl) / thread 
+                     : (batch * npxl) / thread + 1; 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                    kernel_Translate<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  dev_offs_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  opf,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  idim);
+               kernel_Translate<<<block,
+                                  thread,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                             devdatPI[smidx + baseS],
+                                                                             devtranP[smidx + baseS],
+                                                                             dev_offs_buf[smidx + baseS],
+                                                                             devnT[smidx + baseS],
+                                                                             deviCol[n],
+                                                                             deviRow[n],
+                                                                             batch,
+                                                                             m,
+                                                                             opf,
+                                                                             npxl,
+                                                                             mReco,
+                                                                             idim);
 
-                    cudaCheckErrors("translate kernel.");
+               cudaCheckErrors("translate kernel.");
 
-                    kernel_InsertO2D<<<1,
-                                       batch,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
-                                                                                  dev_C[n],
-                                                                                  devnR[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  dev_offs_buf[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  m,
-                                                                                  mReco);
+               kernel_InsertO2D<<<1,
+                                  batch,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
+                                                                             dev_C[n],
+                                                                             devnR[smidx + baseS],
+                                                                             devnT[smidx + baseS],
+                                                                             dev_offs_buf[smidx + baseS],
+                                                                             devnC[smidx + baseS],
+                                                                             m,
+                                                                             mReco);
 
-                    cudaCheckErrors("InsertO kernel.");
+               cudaCheckErrors("InsertO kernel.");
 #else
-                    kernel_Translate<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  opf,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  idim);
+               kernel_Translate<<<block,
+                                  thread,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                             devdatPI[smidx + baseS],
+                                                                             devtranP[smidx + baseS],
+                                                                             devnT[smidx + baseS],
+                                                                             deviCol[n],
+                                                                             deviRow[n],
+                                                                             batch,
+                                                                             m,
+                                                                             opf,
+                                                                             npxl,
+                                                                             mReco,
+                                                                             idim);
 
-                    cudaCheckErrors("translate kernel.");
+               cudaCheckErrors("translate kernel.");
 
-                    kernel_InsertO2D<<<1,
-                                       batch,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
-                                                                                  dev_C[n],
-                                                                                  devnR[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  m,
-                                                                                  mReco);
+               kernel_InsertO2D<<<1,
+                                  batch,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
+                                                                             dev_C[n],
+                                                                             devnR[smidx + baseS],
+                                                                             devnT[smidx + baseS],
+                                                                             devnC[smidx + baseS],
+                                                                             m,
+                                                                             mReco);
 
-                    cudaCheckErrors("InsertO kernel.");
+               cudaCheckErrors("InsertO kernel.");
 #endif
 
-                    if (cSearch)
-                    {
-                        kernel_CalculateCTF<<<block,
-                                              thread,
-                                              0,
-                                              *((cudaStream_t*)stream[smidx + baseS])>>>(devctfP[smidx + baseS],
-                                                                                         dev_ctfas_buf[smidx + baseS],
-                                                                                         dev_nd_buf[smidx + baseS],
-                                                                                         deviCol[n],
-                                                                                         deviRow[n],
-                                                                                         pixel,
-                                                                                         batch,
-                                                                                         m,
-                                                                                         opf,
-                                                                                         npxl,
-                                                                                         mReco);
+               if (cSearch)
+               {
+                   kernel_CalculateCTF<<<block,
+                                         thread,
+                                         0,
+                                         *((cudaStream_t*)stream[smidx + baseS])>>>(devctfP[smidx + baseS],
+                                                                                    dev_ctfas_buf[smidx + baseS],
+                                                                                    dev_nd_buf[smidx + baseS],
+                                                                                    deviCol[n],
+                                                                                    deviRow[n],
+                                                                                    pixel,
+                                                                                    batch,
+                                                                                    m,
+                                                                                    opf,
+                                                                                    npxl,
+                                                                                    mReco);
 
-                        cudaCheckErrors("calculateCTF kernel.");
-                    }
+                   cudaCheckErrors("calculateCTF kernel.");
+               }
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-                    kernel_InsertT2D<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
-                                                                                  devctfP[smidx + baseS],
-                                                                                  devsigRcpP[smidx + baseS],
-                                                                                  devTau[n],
-                                                                                  devnR[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  tauSize,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  vdim,
-                                                                                  dimSize,
-                                                                                  smidx);
-                    cudaCheckErrors("InsertT error.");
+               kernel_InsertT2D<<<block,
+                                  thread,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
+                                                                             devctfP[smidx + baseS],
+                                                                             devsigRcpP[smidx + baseS],
+                                                                             devTau[n],
+                                                                             devnR[smidx + baseS],
+                                                                             devnC[smidx + baseS],
+                                                                             deviCol[n],
+                                                                             deviRow[n],
+                                                                             batch,
+                                                                             m,
+                                                                             tauSize,
+                                                                             npxl,
+                                                                             mReco,
+                                                                             vdim,
+                                                                             dimSize,
+                                                                             smidx);
+               cudaCheckErrors("InsertT error.");
 
-                    kernel_InsertF2D<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  devctfP[smidx + baseS],
-                                                                                  devsigRcpP[smidx + baseS],
-                                                                                  devnR[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  deviSig[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  vdim,
-                                                                                  dimSize,
-                                                                                  smidx);
-                    cudaCheckErrors("InsertF error.");
+               kernel_InsertF2D<<<block,
+                                  thread,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
+                                                                             devtranP[smidx + baseS],
+                                                                             devctfP[smidx + baseS],
+                                                                             devsigRcpP[smidx + baseS],
+                                                                             devnR[smidx + baseS],
+                                                                             devnC[smidx + baseS],
+                                                                             deviCol[n],
+                                                                             deviRow[n],
+                                                                             deviSig[n],
+                                                                             batch,
+                                                                             m,
+                                                                             npxl,
+                                                                             mReco,
+                                                                             vdim,
+                                                                             dimSize,
+                                                                             smidx);
+               cudaCheckErrors("InsertF error.");
 #else
-                    kernel_InsertT2D<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
-                                                                                  devctfP[smidx + baseS],
-                                                                                  devTau[n],
-                                                                                  devnR[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  deviSig[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  tauSize,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  vdim,
-                                                                                  dimSize,
-                                                                                  smidx);
-                    cudaCheckErrors("InsertT error.");
+               kernel_InsertT2D<<<block,
+                                  thread,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
+                                                                             devctfP[smidx + baseS],
+                                                                             devTau[n],
+                                                                             devnR[smidx + baseS],
+                                                                             devnC[smidx + baseS],
+                                                                             deviCol[n],
+                                                                             deviRow[n],
+                                                                             deviSig[n],
+                                                                             batch,
+                                                                             m,
+                                                                             tauSize,
+                                                                             npxl,
+                                                                             mReco,
+                                                                             vdim,
+                                                                             dimSize,
+                                                                             smidx);
+               cudaCheckErrors("InsertT error.");
 
-                    kernel_InsertF2D<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  devctfP[smidx + baseS],
-                                                                                  devnR[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  vdim,
-                                                                                  dimSize,
-                                                                                  smidx);
-                    cudaCheckErrors("InsertF error.");
+               kernel_InsertF2D<<<block,
+                                  thread,
+                                  0,
+                                  *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
+                                                                             devtranP[smidx + baseS],
+                                                                             devctfP[smidx + baseS],
+                                                                             devnR[smidx + baseS],
+                                                                             devnC[smidx + baseS],
+                                                                             deviCol[n],
+                                                                             deviRow[n],
+                                                                             batch,
+                                                                             m,
+                                                                             npxl,
+                                                                             mReco,
+                                                                             vdim,
+                                                                             dimSize,
+                                                                             smidx);
+               cudaCheckErrors("InsertF error.");
 #endif
-                }
-                i += batch;
             }
-
-            smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
+            i += batch;
         }
 
-        //synchronizing on CUDA streams
-        for (int n = 0; n < nGPU; ++n)
-        {
-            baseS = n * NUM_STREAM_PER_DEVICE;
-            cudaSetDevice(iGPU[n]);
-
-            for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            {
-                cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-                cudaCheckErrors("Stream synchronize after.");
-            }
-        }
-        
-        l += imgBatch;
+        smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
     }
 
     //synchronizing on CUDA streams to wait for start of NCCL operation
@@ -4171,16 +4114,6 @@ void InsertI2D(vector<int>& iGPU,
     cudaHostUnregister(nC);
     cudaHostUnregister(nR);
     cudaHostUnregister(nT);
-    cudaHostUnregister(pglk_datPR_buf);
-    cudaHostUnregister(pglk_datPI_buf);
-    cudaHostUnregister(pglk_ctfP_buf);
-    free(pglk_datPR_buf);
-    free(pglk_datPI_buf);
-    free(pglk_ctfP_buf);
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    cudaHostUnregister(pglk_sigRcpP_buf);
-    free(pglk_sigRcpP_buf);
-#endif
     if (cSearch)
     {
         cudaHostUnregister(nD);
@@ -4204,20 +4137,15 @@ void InsertI2D(vector<int>& iGPU,
  */
 void InsertFT(vector<int>& iGPU,
               vector<void*>& stream,
-              Complex* volumeF,
               Complex** dev_F,
-              RFLOAT* volumeT,
               RFLOAT** dev_T,
-              RFLOAT* arrayTau,
               RFLOAT** devTau,
-              double* arrayO,
               double** dev_O,
-              int* arrayC,
               int** dev_C,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+              RFLOAT* pglk_datPR,
+              RFLOAT* pglk_datPI,
+              RFLOAT* pglk_ctfP,
+              RFLOAT* pglk_sigRcpP,
               RFLOAT* w,
               double* offS,
               double* nR,
@@ -4242,7 +4170,6 @@ void InsertFT(vector<int>& iGPU,
 {
     const int BATCH_SIZE = IMAGE_BUFF;
     RFLOAT pixel = pixelSize * idim; // boxsize of image in Angstrom
-    size_t dimSize = (vdim / 2 + 1) * vdim * vdim;
 
     int nStream = nGPU * NUM_STREAM_PER_DEVICE;
     Complex *devtranP[nStream];
@@ -4348,458 +4275,298 @@ void InsertFT(vector<int>& iGPU,
         }
     }
 
-    cudaSetDevice(iGPU[0]);
-
-    cudaMemcpyAsync(dev_F[0],
-                    volumeF,
-                    dimSize * sizeof(Complex),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy F2D.");
-
-    cudaMemcpyAsync(dev_T[0],
-                    volumeT,
-                    dimSize * sizeof(RFLOAT),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy T2D.");
-
-    cudaMemcpyAsync(devTau[0] + kIdx * tauSize,
-                    arrayTau + kIdx * tauSize,
-                    tauSize * sizeof(RFLOAT),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy Tau.");
-
-    cudaMemcpyAsync(dev_O[0],
-                    arrayO + kIdx * 3,
-                    3 * sizeof(double),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy O2D.");
-
-    cudaMemcpyAsync(dev_C[0],
-                    arrayC + kIdx,
-                    sizeof(int),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy O2D.");
-
-    for (int n = 1; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        cudaMemsetAsync(dev_F[n],
-                        0.0,
-                        dimSize * sizeof(Complex),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset F2D.");
-
-        cudaMemsetAsync(dev_T[n],
-                        0.0,
-                        dimSize * sizeof(RFLOAT),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset T2D.");
-        
-        cudaMemsetAsync(devTau[n] + kIdx * tauSize,
-                        0.0,
-                        tauSize * sizeof(RFLOAT),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset Tau.");
-        
-        cudaMemsetAsync(dev_O[n],
-                        0.0,
-                        3 * sizeof(double),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset O2D.");
-
-        cudaMemsetAsync(dev_C[n],
-                        0.0,
-                        sizeof(int),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset O2D.");
-    }
-
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-    }
-
-    RFLOAT *pglk_datPR_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_datPI_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_ctfP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    RFLOAT *pglk_sigRcpP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-#endif
-    
-    cudaHostRegister(pglk_datPR_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_datPI_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_ctfP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register ctfP data.");
-
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    cudaHostRegister(pglk_sigRcpP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register sigRcpP data.");
-#endif
-
     int batch = 0;
     int smidx = 0;
-    int imgBatch = 0;
     int thread = (npxl > THREAD_PER_BLOCK) 
                ? THREAD_PER_BLOCK : npxl; 
-    for (int l = 0; l < imgNum;)
+    for (int i = 0; i < imgNum;)
     {
-        if (l >= imgNum)
-            break;
-
-        imgBatch = (l + IMAGE_BATCH < imgNum)
-                 ? IMAGE_BATCH : (imgNum - l);
-
-        RFLOAT *temp_datPR;
-        RFLOAT *temp_datPI;
-        RFLOAT *temp_ctfP;
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-        RFLOAT *temp_sigP;
-#endif
-        
-        for (int i = 0; i < imgBatch; i++) 
+        for (int n = 0; n < nGPU; n++)
         {
-            temp_datPR = &datPR[(l + i) * npxl];
-            temp_datPI = &datPI[(l + i) * npxl];
-            memcpy((void*)(pglk_datPR_buf + i * npxl),
-                   (void*)temp_datPR,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_datPI_buf + i * npxl),
-                   (void*)temp_datPI,
-                   npxl * sizeof(RFLOAT));
-            if (!cSearch)
+            if (i >= imgNum) 
+                break;
+
+            baseS = n * NUM_STREAM_PER_DEVICE;
+            batch = (i + BATCH_SIZE < imgNum) 
+                  ? BATCH_SIZE : (imgNum - i);
+
+            cudaSetDevice(iGPU[n]);
+
+            cudaMemcpyAsync(devnC[smidx + baseS],
+                            nC + i,
+                            batch * sizeof(int),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("FAIL TO COPY A BATCH OF NC FROM HOST TO DEVICE");
+
+            cudaMemcpyAsync(devnR[smidx + baseS],
+                            nR + i * mReco * 4,
+                            batch * mReco * 4 * sizeof(double),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("FAIL TO COPY A BATCH OF NR FROM HOST TO DEVICE");
+
+            kernel_getRandomR<<<batch,
+                                mReco,
+                                mReco * 18 * sizeof(double),
+                                *((cudaStream_t*)stream[smidx + baseS])>>>(dev_mat_buf[smidx + baseS],
+                                                                           devnR[smidx + baseS],
+                                                                           devnC[smidx + baseS]);
+            cudaCheckErrors("FAIL TO CALCULATE ROTATION MARTICES FROM NR");
+
+            cudaMemcpyAsync(devnT[smidx + baseS],
+                            nT + i * mReco * 2,
+                            batch * mReco * 2 * sizeof(double),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("FAIL TO COPY A BATCH OF NT FROM HOST TO DEVICE");
+
+            cudaMemcpyAsync(devdatPR[smidx + baseS],
+                            pglk_datPR + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("FAIL TO COPY A BATCH OF IMAGES FROM HOST TO DEVICE");
+
+            cudaMemcpyAsync(devdatPI[smidx + baseS],
+                            pglk_datPI + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("FAIL TO COPY A BATCH OF IMAGES FROM HOST TO DEVICE");
+
+            if (cSearch)
             {
-                temp_ctfP = &ctfP[(l + i) * npxl];
-                memcpy((void*)(pglk_ctfP_buf + i * npxl),
-                       (void*)temp_ctfP,
-                       npxl * sizeof(RFLOAT));
+                cudaMemcpyAsync(dev_nd_buf[smidx + baseS],
+                                nD + i * mReco,
+                                batch * mReco * sizeof(double),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy nt to device.");
+
+                cudaMemcpyAsync(dev_ctfas_buf[smidx + baseS],
+                                ctfaData + i,
+                                batch * sizeof(CTFAttr),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy CTFAttr to device.");
             }
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-            temp_sigP = &sigRcpP[(l + i) * npxl];
-            memcpy((void*)(pglk_sigRcpP_buf + i * npxl),
-                   (void*)temp_sigP,
-                   npxl * sizeof(RFLOAT));
-#endif
-        }
-
-        smidx = 0;
-        for (int i = 0; i < imgBatch;)
-        {
-            for (int n = 0; n < nGPU; n++)
+            else
             {
-                if (i >= imgBatch) 
-                    break;
-
-                baseS = n * NUM_STREAM_PER_DEVICE;
-                batch = (i + BATCH_SIZE < imgBatch) 
-                      ? BATCH_SIZE : (imgBatch - i);
-
-                cudaSetDevice(iGPU[n]);
-
-                cudaMemcpyAsync(devnC[smidx + baseS],
-                                nC + (l + i),
-                                batch * sizeof(int),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("FAIL TO COPY A BATCH OF NC FROM HOST TO DEVICE");
-
-                cudaMemcpyAsync(devnR[smidx + baseS],
-                                nR + (l + i) * mReco * 4,
-                                batch * mReco * 4 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("FAIL TO COPY A BATCH OF NR FROM HOST TO DEVICE");
-
-                kernel_getRandomR<<<batch,
-                                    mReco,
-                                    mReco * 18 * sizeof(double),
-                                    *((cudaStream_t*)stream[smidx + baseS])>>>(dev_mat_buf[smidx + baseS],
-                                                                               devnR[smidx + baseS],
-                                                                               devnC[smidx + baseS]);
-                cudaCheckErrors("FAIL TO CALCULATE ROTATION MARTICES FROM NR");
-
-                cudaMemcpyAsync(devnT[smidx + baseS],
-                                nT + (l + i) * mReco * 2,
-                                batch * mReco * 2 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("FAIL TO COPY A BATCH OF NT FROM HOST TO DEVICE");
-
-                cudaMemcpyAsync(devdatPR[smidx + baseS],
-                                pglk_datPR_buf + i * npxl,
+                cudaMemcpyAsync(devctfP[smidx + baseS],
+                                pglk_ctfP + i * npxl,
                                 batch * npxl * sizeof(RFLOAT),
                                 cudaMemcpyHostToDevice,
                                 *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("FAIL TO COPY A BATCH OF IMAGES FROM HOST TO DEVICE");
+                cudaCheckErrors("memcpy ctf to device.");
+            }
 
-                cudaMemcpyAsync(devdatPI[smidx + baseS],
-                                pglk_datPI_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("FAIL TO COPY A BATCH OF IMAGES FROM HOST TO DEVICE");
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+            cudaMemcpyAsync(devsigRcpP[smidx + baseS],
+                            pglk_sigRcpP + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("for memcpy sigRcp.");
+#endif
+#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
+            cudaMemcpyAsync(dev_offs_buf[smidx + baseS],
+                            offS + 2 * i,
+                            batch * 2 * sizeof(double),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy offset to device.");
+#endif
+
+            cudaMemcpyToSymbolAsync(dev_ws_data,
+                                    w + i,
+                                    batch * sizeof(RFLOAT),
+                                    smidx * batch * sizeof(RFLOAT),
+                                    cudaMemcpyHostToDevice,
+                                    *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy w to device constant memory.");
+
+            //cudaEventRecord(start[smidx + baseS], stream[smidx + baseS]);
+
+            for (int m = 0; m < mReco; m++)
+            {
+#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
+                kernel_Translate<<<batch,
+                                   thread,
+                                   0,
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                              devdatPI[smidx + baseS],
+                                                                              devtranP[smidx + baseS],
+                                                                              dev_offs_buf[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              devnC[smidx + baseS],
+                                                                              deviCol[n],
+                                                                              deviRow[n],
+                                                                              batch,
+                                                                              m,
+                                                                              opf,
+                                                                              npxl,
+                                                                              mReco,
+                                                                              idim);
+
+                cudaCheckErrors("translate kernel.");
+
+                kernel_InsertO3D<<<1,
+                                   thread,
+                                   3 * thread * sizeof(double)
+                                     + thread * sizeof(int),
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n] + kIdx * 3,
+                                                                              dev_C[n] + kIdx,
+                                                                              dev_mat_buf[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              dev_offs_buf[smidx + baseS],
+                                                                              devnC[smidx + baseS],
+                                                                              m,
+                                                                              mReco,
+                                                                              batch);
+
+                cudaCheckErrors("InsertO kernel.");
+#else
+                kernel_Translate<<<batch,
+                                   thread,
+                                   0,
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                              devdatPI[smidx + baseS],
+                                                                              devtranP[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              devnC[smidx + baseS],
+                                                                              deviCol[n],
+                                                                              deviRow[n],
+                                                                              batch,
+                                                                              m,
+                                                                              opf,
+                                                                              npxl,
+                                                                              mReco,
+                                                                              idim);
+
+                cudaCheckErrors("translate kernel.");
+
+                kernel_InsertO3D<<<1,
+                                   thread,
+                                   3 * thread * sizeof(double)
+                                     + thread * sizeof(int),
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n] + kIdx * 3,
+                                                                              dev_C[n] + kIdx,
+                                                                              dev_mat_buf[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              devnC[smidx + baseS],
+                                                                              m,
+                                                                              mReco,
+                                                                              batch);
+
+                cudaCheckErrors("InsertO kernel.");
+#endif
 
                 if (cSearch)
                 {
-                    cudaMemcpyAsync(dev_nd_buf[smidx + baseS],
-                                    nD + (l + i) * mReco,
-                                    batch * mReco * sizeof(double),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy nt to device.");
+                    kernel_CalculateCTF<<<batch,
+                                          thread,
+                                          0,
+                                          *((cudaStream_t*)stream[smidx + baseS])>>>(devctfP[smidx + baseS],
+                                                                                     dev_ctfas_buf[smidx + baseS],
+                                                                                     dev_nd_buf[smidx + baseS],
+                                                                                     devnC[smidx + baseS],
+                                                                                     deviCol[n],
+                                                                                     deviRow[n],
+                                                                                     pixel,
+                                                                                     batch,
+                                                                                     m,
+                                                                                     opf,
+                                                                                     npxl,
+                                                                                     mReco);
 
-                    cudaMemcpyAsync(dev_ctfas_buf[smidx + baseS],
-                                    ctfaData + (l + i),
-                                    batch * sizeof(CTFAttr),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy CTFAttr to device.");
-                }
-                else
-                {
-                    cudaMemcpyAsync(devctfP[smidx + baseS],
-                                    pglk_ctfP_buf + i * npxl,
-                                    batch * npxl * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy ctf to device.");
+                    cudaCheckErrors("calculateCTF kernel.");
                 }
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-                cudaMemcpyAsync(devsigRcpP[smidx + baseS],
-                                pglk_sigRcpP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memcpy sigRcp.");
-#endif
-#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                cudaMemcpyAsync(dev_offs_buf[smidx + baseS],
-                                offS + 2 * (l + i),
-                                batch * 2 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy offset to device.");
-#endif
+                kernel_InsertT<<<batch,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
+                                                                            devctfP[smidx + baseS],
+                                                                            devsigRcpP[smidx + baseS],
+                                                                            devTau[n] + kIdx * tauSize,
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            devnC[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            deviSig[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertT error.");
 
-                cudaMemcpyToSymbolAsync(dev_ws_data,
-                                        w + (l + i),
-                                        batch * sizeof(RFLOAT),
-                                        smidx * batch * sizeof(RFLOAT),
-                                        cudaMemcpyHostToDevice,
-                                        *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy w to device constant memory.");
-
-                //cudaEventRecord(start[smidx + baseS], stream[smidx + baseS]);
-
-                for (int m = 0; m < mReco; m++)
-                {
-#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                    kernel_Translate<<<batch,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  dev_offs_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  opf,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  idim);
-
-                    cudaCheckErrors("translate kernel.");
-
-                    kernel_InsertO3D<<<1,
-                                       thread,
-                                       3 * thread * sizeof(double)
-                                         + thread * sizeof(int),
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n] + kIdx * 3,
-                                                                                  dev_C[n] + kIdx,
-                                                                                  dev_mat_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  dev_offs_buf[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  m,
-                                                                                  mReco,
-                                                                                  batch);
-
-                    cudaCheckErrors("InsertO kernel.");
+                kernel_InsertF<<<batch,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
+                                                                            devtranP[smidx + baseS],
+                                                                            //__device__batch__datP[smidx + baseS],
+                                                                            devctfP[smidx + baseS],
+                                                                            devsigRcpP[smidx + baseS],
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            devnC[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertF error.");
 #else
-                    kernel_Translate<<<batch,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  opf,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  idim);
+                kernel_InsertT<<<batch,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
+                                                                            devctfP[smidx + baseS],
+                                                                            devTau[n] + kIdx * tauSize,
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            devnC[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            deviSig[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertT error.");
 
-                    cudaCheckErrors("translate kernel.");
-
-                    kernel_InsertO3D<<<1,
-                                       thread,
-                                       3 * thread * sizeof(double)
-                                         + thread * sizeof(int),
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n] + kIdx * 3,
-                                                                                  dev_C[n] + kIdx,
-                                                                                  dev_mat_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  devnC[smidx + baseS],
-                                                                                  m,
-                                                                                  mReco,
-                                                                                  batch);
-
-                    cudaCheckErrors("InsertO kernel.");
-#endif
-
-                    if (cSearch)
-                    {
-                        kernel_CalculateCTF<<<batch,
-                                              thread,
-                                              0,
-                                              *((cudaStream_t*)stream[smidx + baseS])>>>(devctfP[smidx + baseS],
-                                                                                         dev_ctfas_buf[smidx + baseS],
-                                                                                         dev_nd_buf[smidx + baseS],
-                                                                                         devnC[smidx + baseS],
-                                                                                         deviCol[n],
-                                                                                         deviRow[n],
-                                                                                         pixel,
-                                                                                         batch,
-                                                                                         m,
-                                                                                         opf,
-                                                                                         npxl,
-                                                                                         mReco);
-
-                        cudaCheckErrors("calculateCTF kernel.");
-                    }
-
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-                    kernel_InsertT<<<batch,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
-                                                                                devctfP[smidx + baseS],
-                                                                                devsigRcpP[smidx + baseS],
-                                                                                devTau[n] + kIdx * tauSize,
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                devnC[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                deviSig[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertT error.");
-
-                    kernel_InsertF<<<batch,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
-                                                                                devtranP[smidx + baseS],
-                                                                                //__device__batch__datP[smidx + baseS],
-                                                                                devctfP[smidx + baseS],
-                                                                                devsigRcpP[smidx + baseS],
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                devnC[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertF error.");
-#else
-                    kernel_InsertT<<<batch,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
-                                                                                devctfP[smidx + baseS],
-                                                                                devTau[n] + kIdx * tauSize,
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                devnC[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                deviSig[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertT error.");
-
-                    kernel_InsertF<<<batch,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
-                                                                                devtranP[smidx + baseS],
-                                                                                //__device__batch__datP[smidx + baseS],
-                                                                                devctfP[smidx + baseS],
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                devnC[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertF error.");
+                kernel_InsertF<<<batch,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
+                                                                            devtranP[smidx + baseS],
+                                                                            //__device__batch__datP[smidx + baseS],
+                                                                            devctfP[smidx + baseS],
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            devnC[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertF error.");
 
 #endif
-                }
-                i += batch;
             }
-            smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
+            i += batch;
         }
-        
-        //synchronizing on CUDA streams
-        for (int n = 0; n < nGPU; ++n)
-        {
-            baseS = n * NUM_STREAM_PER_DEVICE;
-            cudaSetDevice(iGPU[n]);
-
-            for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            {
-                cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-                cudaCheckErrors("Stream synchronize after.");
-            }
-        }
-        
-        l += imgBatch;
+        smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
     }
 
     //synchronizing on CUDA streams to wait for start of NCCL operation
@@ -4842,16 +4609,6 @@ void InsertFT(vector<int>& iGPU,
     cudaHostUnregister(nC);
     cudaHostUnregister(nR);
     cudaHostUnregister(nT);
-    cudaHostUnregister(pglk_datPR_buf);
-    cudaHostUnregister(pglk_datPI_buf);
-    cudaHostUnregister(pglk_ctfP_buf);
-    free(pglk_datPR_buf);
-    free(pglk_datPI_buf);
-    free(pglk_ctfP_buf);
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    cudaHostUnregister(pglk_sigRcpP_buf);
-    free(pglk_sigRcpP_buf);
-#endif
 
     if (cSearch)
     {
@@ -4874,20 +4631,15 @@ void InsertFT(vector<int>& iGPU,
  */
 void InsertFT(vector<int>& iGPU,
               vector<void*>& stream,
-              Complex* volumeF,
               Complex** dev_F,
-              RFLOAT* volumeT,
               RFLOAT** dev_T,
-              RFLOAT* arrayTau,
               RFLOAT** devTau,
-              double* arrayO,
               double** dev_O,
-              int* arrayC,
               int** dev_C,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-              MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-              MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-              MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
+              RFLOAT* pglk_datPR,
+              RFLOAT* pglk_datPI,
+              RFLOAT* pglk_ctfP,
+              RFLOAT* pglk_sigRcpP,
               RFLOAT* w,
               double* offS,
               double* nR,
@@ -4911,7 +4663,6 @@ void InsertFT(vector<int>& iGPU,
     const int BATCH_SIZE = IMAGE_BUFF;
     RFLOAT pixel = pixelSize * idim;
     int nStream = nGPU * NUM_STREAM_PER_DEVICE;
-    size_t dimSize = (vdim / 2 + 1) * vdim * vdim;
 
     Complex *devtranP[nStream];
     RFLOAT *devdatPR[nStream];
@@ -4999,445 +4750,282 @@ void InsertFT(vector<int>& iGPU,
         }
     }
 
-    cudaSetDevice(iGPU[0]);
-
-    cudaMemcpyAsync(dev_F[0],
-                    volumeF,
-                    dimSize * sizeof(Complex),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy F2D.");
-
-    cudaMemcpyAsync(dev_T[0],
-                    volumeT,
-                    dimSize * sizeof(RFLOAT),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy T2D.");
-
-    cudaMemcpyAsync(devTau[0],
-                    arrayTau,
-                    tauSize * sizeof(RFLOAT),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy Tau.");
-
-    cudaMemcpyAsync(dev_O[0],
-                    arrayO,
-                    3 * sizeof(double),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy O2D.");
-
-    cudaMemcpyAsync(dev_C[0],
-                    arrayC,
-                    sizeof(int),
-                    cudaMemcpyHostToDevice,
-                    *((cudaStream_t*)stream[0]));
-    cudaCheckErrors("for memcpy O2D.");
-
-    for (int n = 1; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-
-        cudaMemsetAsync(dev_F[n],
-                        0.0,
-                        dimSize * sizeof(Complex),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset F2D.");
-
-        cudaMemsetAsync(dev_T[n],
-                        0.0,
-                        dimSize * sizeof(RFLOAT),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset T2D.");
-        
-        cudaMemsetAsync(devTau[n],
-                        0.0,
-                        tauSize * sizeof(RFLOAT),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset Tau.");
-        
-        cudaMemsetAsync(dev_O[n],
-                        0.0,
-                        3 * sizeof(double),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset O2D.");
-
-        cudaMemsetAsync(dev_C[n],
-                        0.0,
-                        sizeof(int),
-                        *((cudaStream_t*)stream[baseS]));
-        cudaCheckErrors("for memset O2D.");
-    }
-
-    for (int n = 0; n < nGPU; ++n)
-    {
-        baseS = n * NUM_STREAM_PER_DEVICE;
-        cudaSetDevice(iGPU[n]);
-        for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-    }
-
-    RFLOAT *pglk_datPR_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_datPI_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-    RFLOAT *pglk_ctfP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    RFLOAT *pglk_sigRcpP_buf = (RFLOAT*)malloc(IMAGE_BATCH * npxl * sizeof(RFLOAT));
-#endif
-
-    cudaHostRegister(pglk_datPR_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_datPI_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register datP data.");
-
-    cudaHostRegister(pglk_ctfP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register ctfP data.");
-
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    cudaHostRegister(pglk_sigRcpP_buf, IMAGE_BATCH * npxl * sizeof(RFLOAT), cudaHostRegisterDefault);
-    cudaCheckErrors("Register sigRcpP data.");
-#endif
-    
     int thread = THREAD_PER_BLOCK;
     int block;
     int batch = 0, smidx = 0;
-    int imgBatch = 0;
-    for (int l = 0; l < imgNum;)
+    for (int i = 0; i < imgNum;)
     {
-        if (l >= imgNum)
-            break;
-
-        imgBatch = (l + IMAGE_BATCH < imgNum)
-                 ? IMAGE_BATCH : (imgNum - l);
-
-        RFLOAT *temp_datPR;
-        RFLOAT *temp_datPI;
-        RFLOAT *temp_ctfP;
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-        RFLOAT *temp_sigP;
-#endif
-        
-        for (int i = 0; i < imgBatch; i++) 
+        for (int n = 0; n < nGPU; ++n)
         {
-            temp_datPR = &datPR[(l + i) * npxl];
-            temp_datPI = &datPI[(l + i) * npxl];
+            if (i >= imgNum)
+                break;
 
-            memcpy((void*)(pglk_datPR_buf + i * npxl),
-                   (void*)temp_datPR,
-                   npxl * sizeof(RFLOAT));
-            memcpy((void*)(pglk_datPI_buf + i * npxl),
-                   (void*)temp_datPI,
-                   npxl * sizeof(RFLOAT));
+            baseS = n * NUM_STREAM_PER_DEVICE;
+            batch = (i + BATCH_SIZE < imgNum) 
+                  ? BATCH_SIZE : (imgNum - i);
 
-            if (!cSearch)
+            cudaSetDevice(iGPU[n]);
+
+            long long mrShift  = (long long)i * mReco;
+
+            cudaMemcpyAsync(devnR[smidx + baseS],
+                            nR + mrShift * 4,
+                            batch * mReco * 4 * sizeof(double),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy nr to device.");
+
+            kernel_getRandomR<<<batch,
+                                mReco,
+                                mReco * 18 * sizeof(double),
+                                *((cudaStream_t*)stream[smidx + baseS])>>>(dev_mat_buf[smidx + baseS],
+                                                                           devnR[smidx + baseS]);
+            cudaCheckErrors("getrandomR kernel.");
+
+            cudaMemcpyAsync(devnT[smidx + baseS],
+                            nT + mrShift * 2,
+                            batch * mReco * 2 * sizeof(double),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy nt to device.");
+
+            cudaMemcpyAsync(devdatPR[smidx + baseS],
+                            pglk_datPR + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy image to device.");
+
+            cudaMemcpyAsync(devdatPI[smidx + baseS],
+                            pglk_datPI + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy image to device.");
+
+            if (cSearch)
             {
-                temp_ctfP = &ctfP[(l + i) * npxl];
-                memcpy((void*)(pglk_ctfP_buf + i * npxl),
-                       (void*)temp_ctfP,
-                       npxl * sizeof(RFLOAT));
-            }
-
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-            temp_sigP = &sigRcpP[(l + i) * npxl];
-            memcpy((void*)(pglk_sigRcpP_buf + i * npxl),
-                   (void*)temp_sigP,
-                   npxl * sizeof(RFLOAT));
-#endif
-        }
-
-        smidx = 0;
-        for (int i = 0; i < imgBatch;)
-        {
-            for (int n = 0; n < nGPU; ++n)
-            {
-                if (i >= imgBatch)
-                    break;
-
-                baseS = n * NUM_STREAM_PER_DEVICE;
-                batch = (i + BATCH_SIZE < imgBatch) 
-                      ? BATCH_SIZE : (imgBatch - i);
-
-                cudaSetDevice(iGPU[n]);
-
-                long long mrShift  = (long long)(l + i) * mReco;
-
-                cudaMemcpyAsync(devnR[smidx + baseS],
-                                nR + mrShift * 4,
-                                batch * mReco * 4 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy nr to device.");
-
-                kernel_getRandomR<<<batch,
-                                    mReco,
-                                    mReco * 18 * sizeof(double),
-                                    *((cudaStream_t*)stream[smidx + baseS])>>>(dev_mat_buf[smidx + baseS],
-                                                                               devnR[smidx + baseS]);
-                cudaCheckErrors("getrandomR kernel.");
-
-                cudaMemcpyAsync(devnT[smidx + baseS],
-                                nT + mrShift * 2,
-                                batch * mReco * 2 * sizeof(double),
+                cudaMemcpyAsync(dev_nd_buf[smidx + baseS],
+                                nD + mrShift,
+                                batch * mReco * sizeof(double),
                                 cudaMemcpyHostToDevice,
                                 *((cudaStream_t*)stream[smidx + baseS]));
                 cudaCheckErrors("memcpy nt to device.");
 
-                cudaMemcpyAsync(devdatPR[smidx + baseS],
-                                pglk_datPR_buf + i * npxl,
+                cudaMemcpyAsync(dev_ctfas_buf[smidx + baseS],
+                                ctfaData + i,
+                                batch * sizeof(CTFAttr),
+                                cudaMemcpyHostToDevice,
+                                *((cudaStream_t*)stream[smidx + baseS]));
+                cudaCheckErrors("memcpy CTFAttr to device.");
+            }
+            else
+            {
+                cudaMemcpyAsync(devctfP[smidx + baseS],
+                                pglk_ctfP + i * npxl,
                                 batch * npxl * sizeof(RFLOAT),
                                 cudaMemcpyHostToDevice,
                                 *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy image to device.");
+                cudaCheckErrors("memcpy ctf to device.");
+            }
 
-                cudaMemcpyAsync(devdatPI[smidx + baseS],
-                                pglk_datPI_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy image to device.");
+#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
+            cudaMemcpyAsync(devsigRcpP[smidx + baseS],
+                            pglk_sigRcpP + i * npxl,
+                            batch * npxl * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("for memcpy sigRcp.");
+#endif
+#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
+            cudaMemcpyAsync(dev_offs_buf[smidx + baseS],
+                            offS + 2 * i,
+                            batch * 2 * sizeof(double),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy offset to device.");
+#endif
 
+            cudaMemcpyToSymbolAsync(dev_ws_data,
+                                    w + i,
+                                    batch * sizeof(RFLOAT),
+                                    smidx * batch * sizeof(RFLOAT),
+                                    cudaMemcpyHostToDevice,
+                                    *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("memcpy w to device constant memory.");
+
+            //cudaEventRecord(start[smidx + baseS], stream[smidx + baseS]);
+
+            for (int m = 0; m < mReco; m++)
+            {
+                block = ((batch * npxl) % thread == 0) 
+                      ? (batch * npxl) / thread 
+                      : (batch * npxl) / thread + 1; 
+#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
+                kernel_Translate<<<block,
+                                   thread,
+                                   0,
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                              devdatPI[smidx + baseS],
+                                                                              devtranP[smidx + baseS],
+                                                                              dev_offs_buf[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              deviCol[n],
+                                                                              deviRow[n],
+                                                                              batch,
+                                                                              m,
+                                                                              opf,
+                                                                              npxl,
+                                                                              mReco,
+                                                                              idim);
+                cudaCheckErrors("translate kernel.");
+
+                kernel_InsertO3D<<<1,
+                                   thread,
+                                   3 * thread * sizeof(double)
+                                     + thread * sizeof(int),
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
+                                                                              dev_C[n],
+                                                                              dev_mat_buf[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              dev_offs_buf[smidx + baseS],
+                                                                              m,
+                                                                              mReco,
+                                                                              batch);
+
+                cudaCheckErrors("InsertO kernel.");
+#else
+                kernel_Translate<<<block,
+                                   thread,
+                                   0,
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
+                                                                              devdatPI[smidx + baseS],
+                                                                              devtranP[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              deviCol[n],
+                                                                              deviRow[n],
+                                                                              batch,
+                                                                              m,
+                                                                              opf,
+                                                                              npxl,
+                                                                              mReco,
+                                                                              idim);
+
+                cudaCheckErrors("translate kernel.");
+
+                kernel_InsertO3D<<<1,
+                                   thread,
+                                   3 * thread * sizeof(double)
+                                     + thread * sizeof(int),
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
+                                                                              dev_C[n],
+                                                                              dev_mat_buf[smidx + baseS],
+                                                                              devnT[smidx + baseS],
+                                                                              m,
+                                                                              mReco,
+                                                                              batch);
+
+                cudaCheckErrors("InsertO kernel.");
+#endif
                 if (cSearch)
                 {
-                    cudaMemcpyAsync(dev_nd_buf[smidx + baseS],
-                                    nD + mrShift,
-                                    batch * mReco * sizeof(double),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy nt to device.");
+                    kernel_CalculateCTF<<<block,
+                                          thread,
+                                          0,
+                                          *((cudaStream_t*)stream[smidx + baseS])>>>(devctfP[smidx + baseS],
+                                                                                     dev_ctfas_buf[smidx + baseS],
+                                                                                     dev_nd_buf[smidx + baseS],
+                                                                                     deviCol[n],
+                                                                                     deviRow[n],
+                                                                                     pixel,
+                                                                                     batch,
+                                                                                     m,
+                                                                                     opf,
+                                                                                     npxl,
+                                                                                     mReco);
 
-                    cudaMemcpyAsync(dev_ctfas_buf[smidx + baseS],
-                                    ctfaData + (l + i),
-                                    batch * sizeof(CTFAttr),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy CTFAttr to device.");
-                }
-                else
-                {
-                    cudaMemcpyAsync(devctfP[smidx + baseS],
-                                    pglk_ctfP_buf + i * npxl,
-                                    batch * npxl * sizeof(RFLOAT),
-                                    cudaMemcpyHostToDevice,
-                                    *((cudaStream_t*)stream[smidx + baseS]));
-                    cudaCheckErrors("memcpy ctf to device.");
+                    cudaCheckErrors("calculateCTF kernel.");
                 }
 
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-                cudaMemcpyAsync(devsigRcpP[smidx + baseS],
-                                pglk_sigRcpP_buf + i * npxl,
-                                batch * npxl * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memcpy sigRcp.");
-#endif
-#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                cudaMemcpyAsync(dev_offs_buf[smidx + baseS],
-                                offS + 2 * (l + i),
-                                batch * 2 * sizeof(double),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy offset to device.");
-#endif
+                kernel_InsertT<<<block,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
+                                                                            devctfP[smidx + baseS],
+                                                                            devsigRcpP[smidx + baseS],
+                                                                            devTau[n],
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            deviSig[n],
+                                                                            //batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertT error.");
 
-                cudaMemcpyToSymbolAsync(dev_ws_data,
-                                        w + (l + i),
-                                        batch * sizeof(RFLOAT),
-                                        smidx * batch * sizeof(RFLOAT),
-                                        cudaMemcpyHostToDevice,
-                                        *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("memcpy w to device constant memory.");
-
-                //cudaEventRecord(start[smidx + baseS], stream[smidx + baseS]);
-
-                for (int m = 0; m < mReco; m++)
-                {
-                    block = ((batch * npxl) % thread == 0) 
-                          ? (batch * npxl) / thread 
-                          : (batch * npxl) / thread + 1; 
-#ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                    kernel_Translate<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  dev_offs_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  opf,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  idim);
-                    cudaCheckErrors("translate kernel.");
-
-                    kernel_InsertO3D<<<1,
-                                       thread,
-                                       3 * thread * sizeof(double)
-                                         + thread * sizeof(int),
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
-                                                                                  dev_C[n],
-                                                                                  dev_mat_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  dev_offs_buf[smidx + baseS],
-                                                                                  m,
-                                                                                  mReco,
-                                                                                  batch);
-
-                    cudaCheckErrors("InsertO kernel.");
+                kernel_InsertF<<<block,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
+                                                                            devtranP[smidx + baseS],
+                                                                            devctfP[smidx + baseS],
+                                                                            devsigRcpP[smidx + baseS],
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertF error.");
 #else
-                    kernel_Translate<<<block,
-                                       thread,
-                                       0,
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(devdatPR[smidx + baseS],
-                                                                                  devdatPI[smidx + baseS],
-                                                                                  devtranP[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  deviCol[n],
-                                                                                  deviRow[n],
-                                                                                  batch,
-                                                                                  m,
-                                                                                  opf,
-                                                                                  npxl,
-                                                                                  mReco,
-                                                                                  idim);
+                kernel_InsertT<<<block,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
+                                                                            devctfP[smidx + baseS],
+                                                                            devTau[n],
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            deviSig[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertT error.");
 
-                    cudaCheckErrors("translate kernel.");
-
-                    kernel_InsertO3D<<<1,
-                                       thread,
-                                       3 * thread * sizeof(double)
-                                         + thread * sizeof(int),
-                                       *((cudaStream_t*)stream[smidx + baseS])>>>(dev_O[n],
-                                                                                  dev_C[n],
-                                                                                  dev_mat_buf[smidx + baseS],
-                                                                                  devnT[smidx + baseS],
-                                                                                  m,
-                                                                                  mReco,
-                                                                                  batch);
-
-                    cudaCheckErrors("InsertO kernel.");
+                kernel_InsertF<<<block,
+                                 thread,
+                                 thread * 9 * sizeof(double),
+                                 *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
+                                                                            devtranP[smidx + baseS],
+                                                                            devctfP[smidx + baseS],
+                                                                            dev_mat_buf[smidx + baseS],
+                                                                            deviCol[n],
+                                                                            deviRow[n],
+                                                                            batch,
+                                                                            m,
+                                                                            npxl,
+                                                                            mReco,
+                                                                            vdim,
+                                                                            smidx);
+                cudaCheckErrors("InsertF error.");
 #endif
-                    if (cSearch)
-                    {
-                        kernel_CalculateCTF<<<block,
-                                              thread,
-                                              0,
-                                              *((cudaStream_t*)stream[smidx + baseS])>>>(devctfP[smidx + baseS],
-                                                                                         dev_ctfas_buf[smidx + baseS],
-                                                                                         dev_nd_buf[smidx + baseS],
-                                                                                         deviCol[n],
-                                                                                         deviRow[n],
-                                                                                         pixel,
-                                                                                         batch,
-                                                                                         m,
-                                                                                         opf,
-                                                                                         npxl,
-                                                                                         mReco);
-
-                        cudaCheckErrors("calculateCTF kernel.");
-                    }
-
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-                    kernel_InsertT<<<block,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
-                                                                                devctfP[smidx + baseS],
-                                                                                devsigRcpP[smidx + baseS],
-                                                                                devTau[n],
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                deviSig[n],
-                                                                                //batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertT error.");
-
-                    kernel_InsertF<<<block,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
-                                                                                devtranP[smidx + baseS],
-                                                                                devctfP[smidx + baseS],
-                                                                                devsigRcpP[smidx + baseS],
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertF error.");
-#else
-                    kernel_InsertT<<<block,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_T[n],
-                                                                                devctfP[smidx + baseS],
-                                                                                devTau[n],
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                deviSig[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertT error.");
-
-                    kernel_InsertF<<<block,
-                                     thread,
-                                     thread * 9 * sizeof(double),
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(dev_F[n],
-                                                                                devtranP[smidx + baseS],
-                                                                                devctfP[smidx + baseS],
-                                                                                dev_mat_buf[smidx + baseS],
-                                                                                deviCol[n],
-                                                                                deviRow[n],
-                                                                                batch,
-                                                                                m,
-                                                                                npxl,
-                                                                                mReco,
-                                                                                vdim,
-                                                                                smidx);
-                    cudaCheckErrors("InsertF error.");
-#endif
-                }
-                i += batch;
             }
-            smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
+            i += batch;
         }
-        
-        //synchronizing on CUDA streams
-        for (int n = 0; n < nGPU; ++n)
-        {
-            baseS = n * NUM_STREAM_PER_DEVICE;
-            cudaSetDevice(iGPU[n]);
-
-            for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
-            {
-                cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
-                cudaCheckErrors("Stream synchronize after.");
-            }
-        }
-        
-        l += imgBatch;
+        smidx = (smidx + 1) % NUM_STREAM_PER_DEVICE;
     }
-
+    
     //synchronizing on CUDA streams to wait for start of NCCL operation
     for (int n = 0; n < nGPU; ++n)
     {
@@ -5488,16 +5076,6 @@ void InsertFT(vector<int>& iGPU,
     cudaHostUnregister(w);
     cudaHostUnregister(nR);
     cudaHostUnregister(nT);
-    cudaHostUnregister(pglk_datPR_buf);
-    cudaHostUnregister(pglk_datPI_buf);
-    cudaHostUnregister(pglk_ctfP_buf);
-    free(pglk_datPR_buf);
-    free(pglk_datPI_buf);
-    free(pglk_ctfP_buf);
-#ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
-    cudaHostUnregister(pglk_sigRcpP_buf);
-    free(pglk_sigRcpP_buf);
-#endif
     if (cSearch)
     {
         cudaHostUnregister(nD);
@@ -10294,10 +9872,35 @@ void hostRegister(Complex* img,
  * @param
  * @param
  */
+void hostRegister(RFLOAT* data,
+                  int totalNum)
+{
+    cudaHostRegister(data, totalNum * sizeof(RFLOAT), cudaHostRegisterDefault);
+    cudaCheckErrors("Register data.");
+}
+
+/**
+ * @brief .
+ *
+ * @param
+ * @param
+ */
 void hostFree(Complex* img)
 {
     cudaHostUnregister(img);
     cudaCheckErrors("Free img data.");
+}
+
+/**
+ * @brief .
+ *
+ * @param
+ * @param
+ */
+void hostFree(RFLOAT* data)
+{
+    cudaHostUnregister(data);
+    cudaCheckErrors("Free data.");
 }
 
 /**
