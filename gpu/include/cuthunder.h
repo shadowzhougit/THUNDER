@@ -427,10 +427,6 @@ void expectGlobal2D(vector<int>& iGPU,
                     double** devnR,
                     double** devpR,
                     double** devpT,
-                    //MemoryBazaar<RFLOAT, BaseType, 4>& datPR,
-                    //MemoryBazaar<RFLOAT, BaseType, 4>& datPI,
-                    //MemoryBazaar<RFLOAT, BaseType, 4>& ctfP,
-                    //MemoryBazaar<RFLOAT, BaseType, 4>& sigRcpP,
                     RFLOAT* pglk_datPR,
                     RFLOAT* pglk_datPI,
                     RFLOAT* pglk_ctfP,
@@ -450,39 +446,6 @@ void expectGlobal2D(vector<int>& iGPU,
                     int npxl,
                     int imgNum,
                     int nGPU);
-
-///**
-// * @brief  Expectation GLobal.
-// *
-// * @param
-// * @param
-// */
-//void expectGlobal2D(vector<int>& iGPU,
-//                    vector<void*>& stream,
-//                    vector<void*>& texObject,
-//                    Complex** devtraP,
-//                    double** devnR,
-//                    double** devpR,
-//                    double** devpT,
-//                    RFLOAT* pglk_datPR,
-//                    RFLOAT* pglk_datPI,
-//                    RFLOAT* pglk_ctfP,
-//                    RFLOAT* pglk_sigRcpP,
-//                    RFLOAT* wC,
-//                    RFLOAT* wR,
-//                    RFLOAT* wT,
-//                    int** deviCol,
-//                    int** deviRow,
-//                    int nK,
-//                    int nR,
-//                    int nT,
-//                    int pf,
-//                    int interp,
-//                    int idim,
-//                    int vdim,
-//                    int npxl,
-//                    int imgNum,
-//                    int nGPU);
 
 /**
  * @brief  Expectation GLobal.
