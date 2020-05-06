@@ -4097,6 +4097,8 @@ void InsertI2D(vector<int>& iGPU,
             cudaFree(dev_offs_buf[i + baseS]);
 #endif
             cudaFree(devtranP[i + baseS]);
+            cudaFree(devdatPR[i + baseS]);
+            cudaFree(devdatPI[i + baseS]);
             cudaFree(devctfP[i + baseS]);
             cudaFree(devnC[i + baseS]);
             cudaFree(devnR[i + baseS]);
