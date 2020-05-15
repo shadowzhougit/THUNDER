@@ -21,6 +21,7 @@
 #include "cufft.h"
 #include "nccl.h"
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <cfloat>
 #include <cuda_profiler_api.h>
 
@@ -207,6 +208,23 @@ void gpuCheck(vector<void*>& stream,
             
             stream.push_back(gpuStream[i + baseS]);
         }
+    }
+}
+
+void gpuMemoryCheck(vector<int>& iGPU,
+                    int rankId,
+                    int nGPU)
+{
+    for (int n = 0; n < nGPU; n++)
+    {
+        cudaSetDevice(iGPU[n]);
+        cudaCheckErrors("set device.");
+        
+        size_t free;
+        size_t total;
+        cudaMemGetInfo(&free, &total);
+        cudaCheckErrors("get memory info error.");
+        printf("rank:%d, gpuId:%d, free = %fM, total = %fM\n", rankId, iGPU[n], (float)free / 1024 / 1024, (float)total / 1024 / 1024);
     }
 }
 

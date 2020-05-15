@@ -77,6 +77,10 @@ void gpuCheck(vector<void*>& stream,
               vector<int>& iGPU,
               int& nGPU);
 
+void gpuMemoryCheck(vector<int>& iGPU,
+                    int rankId,
+                    int nGPU);
+
 /**
  * @brief  GPU stream destory.
  *

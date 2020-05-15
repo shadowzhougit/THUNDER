@@ -20,6 +20,15 @@ void gpuCheck(std::vector<void*>& stream,
                         nGPU);
 }
 
+void gpuMemoryCheck(std::vector<int>& iGPU,
+                    int rankId,
+                    int nGPU)
+{
+    cuthunder::gpuMemoryCheck(iGPU,
+                              rankId,
+                              nGPU);
+}
+
 void gpuEnvDestory(std::vector<void*>& stream,
                    std::vector<int>& iGPU,
                    int nGPU)

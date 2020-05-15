@@ -1692,6 +1692,11 @@ void Optimiser::expectationG()
 
     allocPreCalIdx(_r, _rL);
 
+    printf("Round:%d, Before expectation GPU memory check!\n", _iter);
+    gpuMemoryCheck(_iGPU,
+                   _commRank,
+                   _nGPU);
+
     int *deviCol[_nGPU];
     int *deviRow[_nGPU];
 
@@ -3611,6 +3616,11 @@ void Optimiser::expectationG()
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Freeing Space GPU iCol & iRow";
 
     freePreCalIdx();
+    
+    printf("Round:%d, after expectation GPU memory check!\n", _iter);
+    gpuMemoryCheck(_iGPU,
+                   _commRank,
+                   _nGPU);
 }
 #endif
 
@@ -7061,6 +7071,13 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
     NT_MASTER
     {
+#ifdef GPU_VERSION
+        printf("Round:%d, before insert image GPU memory check!\n", _iter);
+        gpuMemoryCheck(_iGPU,
+                       _commRank,
+                       _nGPU);
+#endif
+
         if ((_para.parGra) && (_para.k != 1))
         {
             ALOG(WARNING, "LOGGER_ROUND") << "Round " << _iter << ", " << "PATTICLE GRADING IS ONLY RECOMMENDED IN REFINEMENT, NOT CLASSIFICATION";
@@ -7985,6 +8002,13 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #endif
 
         MPI_Barrier(_hemi);
+
+#ifdef GPU_VERSION
+        printf("Round:%d, after insert image GPU memory check!\n", _iter);
+        gpuMemoryCheck(_iGPU,
+                       _commRank,
+                       _nGPU);
+#endif
 
         for (int t = 0; t < _para.k; t++)
         {
