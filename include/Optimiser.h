@@ -228,6 +228,18 @@ struct OptimiserPara
 
     bool refAutoRecentre;
 
+#define KEY_ALIGN_R "Rotation Alignment"
+
+    bool alignR;
+
+#define KEY_ALIGN_T "Translation Alignment"
+
+    bool alignT;
+
+#define KEY_ALIGN_D "Defocus Alignment"
+
+    bool alignD;
+
 #define KEY_PERFORM_MASK "Perform Reference Mask"
 
     /**
@@ -617,9 +629,17 @@ class Optimiser : public Parallel
 #endif
 
         /**
-         * a particle filter for each 2D image
+         * a particle filter for each (2D image, class) pair, total number will be _ID.size() * _para.k. For l-th 2D image and t-th class, the index will be t * _ID.size() + l.
          */
-        vector<Particle> _par;
+        vector<Particle> _parAll;
+
+        /* previous round classification assignment */
+        vector<size_t> _iRefPrev;
+
+        /* current round classification assignment */
+        vector<size_t> _iRef;
+
+        vector<Particle*> _par;
 
         vector<CTFAttr> _ctfAttr;
 
@@ -944,6 +964,8 @@ class Optimiser : public Parallel
          * previous one
          */
         void refreshRotationChange();
+
+        void refreshClassChange();
 
         void refreshClassDistr();
 

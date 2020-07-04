@@ -56,6 +56,13 @@ TEST(DirectionalStatVMSPdfVMSKappaTest, DirectionalStatVMSPdfVMSKappaTestKappaEq
     EXPECT_EQ(pdfVMSKappa(dvec2(sqrt(2) / 2, sqrt(2)), dvec2(1, 0), 0), 1.0 / (2 * M_PI));
 }
 
+TEST(DirectionalStatVMSSampleVMS, Test01)
+{
+    dmat4 r = dmat4::Zero(100, 4);
+
+    sampleVMS(r, dvec4(1, 0, 0, 0), 0.02, 100);
+}
+
 int main(int argc, char* argv[])
 {
     ::testing::InitGoogleTest(&argc, argv);

@@ -307,26 +307,21 @@ double pdfVMSKappa(const dvec2& x,
 
         if (kappa < 1e-6)
         {
-            status = gsl_sf_bessel_I0_e(1e-6, &u);
-
-            return exp(1e-6 * x.dot(mu)) / (2 * M_PI * u.val);
+            return 1;
         }
         else
         {
-            status =  gsl_sf_bessel_I0_e(kappa, &u);
+            status = gsl_sf_bessel_I0_e(kappa, &u);
+
+            if (status != 0)
+            {
+                REPORT_ERROR("gsl_sf_bessel_I0 ERROR");
+
+                abort();
+            }
 
             return exp(kappa * x.dot(mu)) / (2 * M_PI * u.val);
         }
-
-        if (status != 0)
-        {
-            REPORT_ERROR("gsl_sf_bessel_I0 ERROR");
-
-            abort();
-        }
-
-
-        // return exp(kappa * x.dot(mu)) / (2 * M_PI * gsl_sf_bessel_I0(kappa));
     }
     else
     {
@@ -336,7 +331,7 @@ double pdfVMSKappa(const dvec2& x,
 
 double pdfVMS(const dvec2& x,
               const dvec2& mu,
-              const double k)
+            const double k)
 {
     double kappa = (1 - k) * (1 + 2 * k - gsl_pow_2(k)) / k / (2 - k);
 
@@ -350,17 +345,23 @@ void sampleVMS(dmat2& dst,
 {
     double kappa = (1 - k) * (1 + 2 * k - gsl_pow_2(k)) / k / (2 - k);
 
-    if (kappa < 1e-6)
-    {
-        kappa = 1e-6;
-    }
-
     gsl_rng* engine = get_random_engine();
 
-    if (kappa < 1e-1) // avoiding overflow
+    if (kappa < 1e-6) // avoiding overflow
     {
         for (int i = 0; i < n; i++)
+        {
+            // double x, y;
+
             gsl_ran_dir_2d(engine, &dst(i, 0), &dst(i, 1));
+
+            /***
+            gsl_ran_dir_2d(engine, &x, &y);
+
+            dst(i, 0) = x * mu(0) - y * mu(1);
+            dst(i, 1) = x * mu(1) + y * mu(0);
+            ***/
+        }
     }
     else
     {

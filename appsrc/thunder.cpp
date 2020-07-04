@@ -245,6 +245,11 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     dst.maskFSC = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_MASK_FSC).asBool();
     dst.parGra = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_PAR_GRA).asBool();
     dst.refAutoRecentre = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_REF_AUTO_RECENTRE).asBool();
+
+    dst.alignR = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_ALIGN_R).asBool();
+    dst.alignT = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_ALIGN_T).asBool();
+    dst.alignD = JSONCPP_READ_ERROR_HANDLER(src, "Basic", KEY_ALIGN_D).asBool();
+
     dst.performMask = JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_PERFORM_MASK).asBool();
     dst.globalMask = JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_GLOBAL_MASK).asBool();
     copy_string(dst.mask, JSONCPP_READ_ERROR_HANDLER(src, "Reference Mask", KEY_MASK).asString());
@@ -263,13 +268,17 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     if (dst.mode == MODE_2D)
     {
         dst.mS = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_S_2D).asInt();
-        dst.mLR = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_R_2D).asInt();
+        dst.mLR = dst.alignR
+                ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_R_2D).asInt()
+                : 1;
     }
 
     else if (dst.mode == MODE_3D)
     {
         dst.mS = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_S_3D).asInt();
-        dst.mLR = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_R_3D).asInt();
+        dst.mLR = dst.alignR
+                ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_R_3D).asInt()
+                : 1;
     }
 
     else
@@ -280,9 +289,15 @@ void readPara(OptimiserPara &dst, const Json::Value src)
 
     dst.saveRefEachIter = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_SAVE_REF_EACH_ITER).asBool();
     dst.saveTHUEachIter = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_SAVE_THU_EACH_ITER).asBool();
-    dst.mLT = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_T).asInt();
-    dst.mLD = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_D).asInt();
-    dst.mReco = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_RECO).asInt();
+    dst.mLT = dst.alignT
+            ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_T).asInt()
+            : 1;
+    dst.mLD = dst.alignR
+            ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_D).asInt()
+            : 1;
+    dst.mReco = (dst.alignR && dst.alignT && dst.alignD && (dst.k == 1))
+              ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_RECO).asInt()
+              : 1;
     dst.ignoreRes = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_IGNORE_RES).asFloat();
     dst.sclCorRes = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_SCL_COR_RES).asFloat();
     dst.thresCutoffFSC = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_THRES_CUTOFF_FSC).asFloat();

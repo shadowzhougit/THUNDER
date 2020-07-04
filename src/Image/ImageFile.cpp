@@ -248,6 +248,25 @@ void ImageFile::readMetaDataMRC()
     _metaData.nSlc = _MRCHeader.nz;
 
     _metaData.symmetryDataSize = _MRCHeader.nsymbt;
+
+    if (_MRCHeader.nx != 0 && _MRCHeader.ny != 0 && _MRCHeader.nz != 0)
+    {
+        if (_MRCHeader.cella[0] / _MRCHeader.nx == _MRCHeader.cella[1] / _MRCHeader.ny)
+        {
+            _metaData.pixelsize = _MRCHeader.cella[0] / _MRCHeader.nx;
+        }
+        else
+        {
+            CLOG(WARNING, "LOGGER_SYS") << "PIXELSIZE OF X AND Y NOT EQUAL.";
+
+            _metaData.pixelsize = _MRCHeader.cella[0] / _MRCHeader.nx;
+        }
+    }
+    else
+    {
+        REPORT_ERROR("SIZE OF MRC FILE COULD NOT BE ZERO.");
+        abort();
+    }
 }
 
 void ImageFile::readSymmetryData()

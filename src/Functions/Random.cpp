@@ -119,3 +119,22 @@ uvec shuffledIndex(const size_t n)
 
     return s;
 }
+
+int drawWithWeightIndex(const vec& v)
+{
+    vec cs = cumsum(v);
+
+    gsl_rng* engine = get_random_engine();
+
+    RFLOAT dice = TSGSL_rng_uniform(engine) * cs(cs.size() - 1);
+
+    for (int i = 0; i < cs.size() - 1; i++)
+    {
+        if (cs(i) > dice)
+        {
+            return i;
+        }
+    }
+
+    return cs.size() - 1;
+}

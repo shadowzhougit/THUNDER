@@ -78,10 +78,11 @@ uvec d_index_sort_descend(const dvec& v)
     return idx;
 }
 
-int d_value_max_index(const dvec& v)
+size_t value_max_index(const vec& v)
 {
     RFLOAT maxVal = v(0);
-    int maxIdx = 0;
+
+    size_t maxIdx = 0;
 
     for (int i = 1; i < v.size(); i++)
     {
@@ -91,7 +92,62 @@ int d_value_max_index(const dvec& v)
             maxIdx = i;
         }
     }
+
     return maxIdx;
+}
+
+size_t d_value_max_index(const dvec& v)
+{
+    double maxVal = v(0);
+
+    size_t maxIdx = 0;
+
+    for (int i = 1; i < v.size(); i++)
+    {
+        if (maxVal < v(i))
+        {
+            maxVal = v(i);
+            maxIdx = i;
+        }
+    }
+
+    return maxIdx;
+}
+
+size_t value_min_index(const vec& v)
+{
+    RFLOAT minVal = v(0);
+
+    size_t minIdx = 0;
+
+    for (int i = 1; i < v.size(); i++)
+    {
+        if (minVal > v(i))
+        {
+            minVal = v(i);
+            minIdx = i;
+        }
+    }
+
+    return minIdx;
+}
+
+size_t d_value_min_index(const dvec& v)
+{
+    double minVal = v(0);
+
+    size_t minIdx = 0;
+
+    for (int i = 1; i < v.size(); i++)
+    {
+        if (minVal > v(i))
+        {
+            minVal = v(i);
+            minIdx = i;
+        }
+    }
+
+    return minIdx;
 }
 
 int periodic(RFLOAT& x,
