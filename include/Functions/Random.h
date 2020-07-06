@@ -26,9 +26,12 @@
 #include "Logging.h"
 #include "Precision.h"
 #include "Typedef.h"
+#include "Functions.h"
 
 gsl_rng* get_random_engine();
 
 uvec shuffledIndex(const size_t n);
+
+int drawWithWeightIndex(const vec& v);
 
 #endif // RANDOM_H

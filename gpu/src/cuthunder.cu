@@ -1799,7 +1799,6 @@ void expectGlobal2D(vector<int>& iGPU,
     RFLOAT* devwC[nStream];
     RFLOAT* devwR[nStream];
     RFLOAT* devwT[nStream];
-    RFLOAT* devcomP[nStream];
 
     int baseS;
     for (int n = 0; n < nGPU; ++n)
@@ -1819,11 +1818,6 @@ void expectGlobal2D(vector<int>& iGPU,
             allocDeviceParamBuffer(&devwC[i + baseS], BATCH_SIZE * nK);
             allocDeviceParamBuffer(&devwR[i + baseS], BATCH_SIZE * nK * nR);
             allocDeviceParamBuffer(&devwT[i + baseS], BATCH_SIZE * nK * nT);
-
-            if (nK != 1)
-            {
-                allocDeviceParamBuffer(&devcomP[i + baseS], BATCH_SIZE);
-            }
         }
     }
 
@@ -1938,57 +1932,30 @@ void expectGlobal2D(vector<int>& iGPU,
                     r += rbatch;
                 }
 
-                if (k == 0)
-                {
-                    kernel_getMaxBase<<<batch,
-                                        thread,
-                                        thread * sizeof(RFLOAT),
-                                        *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
-                                                                                   devDvp[smidx + baseS],
-                                                                                   nR * nT);
-                    cudaCheckErrors("getMaxBase error.");
-                }
-                else
-                {
-                    kernel_getMaxBase<<<batch,
-                                        thread,
-                                        thread * sizeof(RFLOAT),
-                                        *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                   devDvp[smidx + baseS],
-                                                                                   nR * nT);
-                    cudaCheckErrors("getMaxBase error.");
-
-                    kernel_setBaseLine<<<batch,
-                                         thread,
-                                         0,
-                                         *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                    devbaseL[smidx + baseS],
-                                                                                    devwC[smidx + baseS],
-                                                                                    devwR[smidx + baseS],
-                                                                                    devwT[smidx + baseS],
-                                                                                    nK,
-                                                                                    nR,
-                                                                                    nT,
-                                                                                    nK * (1 + nR + nT));
-                    cudaCheckErrors("setBaseLine error.");
-                }
+                kernel_getMaxBase<<<batch,
+                                    thread,
+                                    thread * sizeof(RFLOAT),
+                                    *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
+                                                                               devDvp[smidx + baseS],
+                                                                               nR * nT);
+                cudaCheckErrors("getMaxBase error.");
 
                 //printf("batch:%d, threadS:%d, nT:%d, share:%d\n", batch, threadS, nT, (nT + 1) * threadS);
-                kernel_UpdateW<<<batch,
-                                 threadS,
-                                 (nT + 1) * threadS * sizeof(RFLOAT),
-                                 *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
-                                                                            devbaseL[smidx + baseS],
-                                                                            devwC[smidx + baseS],
-                                                                            devwR[smidx + baseS],
-                                                                            devwT[smidx + baseS],
-                                                                            devpR[n],
-                                                                            devpT[n],
-                                                                            k,
-                                                                            nK,
-                                                                            nR,
-                                                                            nT,
-                                                                            nR * nT);
+                kernel_UpdateW2D<<<batch,
+                                   threadS,
+                                   (nT + 1) * threadS * sizeof(RFLOAT),
+                                   *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
+                                                                              devbaseL[smidx + baseS],
+                                                                              devwC[smidx + baseS],
+                                                                              devwR[smidx + baseS],
+                                                                              devwT[smidx + baseS],
+                                                                              devpR[n],
+                                                                              devpT[n],
+                                                                              k,
+                                                                              nK,
+                                                                              nR,
+                                                                              nT,
+                                                                              nR * nT);
                 cudaCheckErrors("Update error.");
 
             }
@@ -2041,10 +2008,6 @@ void expectGlobal2D(vector<int>& iGPU,
             cudaFree(devwC[i + baseS]);
             cudaFree(devwR[i + baseS]);
             cudaFree(devwT[i + baseS]);
-            if (nK != 1)
-            {
-                cudaFree(devcomP[i + baseS]);
-            }
             cudaCheckErrors("cuda Free error.");
         }
     }
@@ -2079,8 +2042,6 @@ void expectGlobal3D(vector<int>& iGPU,
                     RFLOAT* wR,
                     RFLOAT* wT,
                     RFLOAT* baseL,
-                    int kIdx,
-                    int nK,
                     int nR,
                     int nT,
                     int npxl,
@@ -2101,18 +2062,18 @@ void expectGlobal3D(vector<int>& iGPU,
                      cudaHostRegisterDefault);
     cudaCheckErrors("Register wC data.");
 
-    cudaHostRegister(wC, 
-                     imgNum * nK * sizeof(RFLOAT), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register wC data.");
+    //cudaHostRegister(wC, 
+    //                 imgNum * nK * sizeof(RFLOAT), 
+    //                 cudaHostRegisterDefault);
+    //cudaCheckErrors("Register wC data.");
 
     cudaHostRegister(wR, 
-                     (long long)imgNum * nK * nR * sizeof(RFLOAT), 
+                     (long long)imgNum * nR * sizeof(RFLOAT), 
                      cudaHostRegisterDefault);
     cudaCheckErrors("Register wR data.");
 
     cudaHostRegister(wT, 
-                     (long long)imgNum * nK * nT * sizeof(RFLOAT), 
+                     (long long)imgNum * nT * sizeof(RFLOAT), 
                      cudaHostRegisterDefault);
     cudaCheckErrors("Register wT data.");
 
@@ -2127,7 +2088,6 @@ void expectGlobal3D(vector<int>& iGPU,
     RFLOAT* devwC[nStream];
     RFLOAT* devwR[nStream];
     RFLOAT* devwT[nStream];
-    RFLOAT* devcomP[nStream];
 
     int baseS;
     for (int n = 0; n < nGPU; ++n)
@@ -2143,14 +2103,9 @@ void expectGlobal3D(vector<int>& iGPU,
             allocDeviceParamBuffer(&devsigP[i + baseS], BATCH_SIZE * npxl);
             allocDeviceParamBuffer(&devDvp[i + baseS], BATCH_SIZE * nR * nT);
             allocDeviceParamBuffer(&devbaseL[i + baseS], BATCH_SIZE);
-            allocDeviceParamBuffer(&devwC[i + baseS], BATCH_SIZE * nK);
-            allocDeviceParamBuffer(&devwR[i + baseS], BATCH_SIZE * nK * nR);
-            allocDeviceParamBuffer(&devwT[i + baseS], BATCH_SIZE * nK * nT);
-
-            if (kIdx != 0)
-            {
-                allocDeviceParamBuffer(&devcomP[i + baseS], BATCH_SIZE);
-            }
+            allocDeviceParamBuffer(&devwC[i + baseS], BATCH_SIZE);
+            allocDeviceParamBuffer(&devwR[i + baseS], BATCH_SIZE * nR);
+            allocDeviceParamBuffer(&devwT[i + baseS], BATCH_SIZE * nT);
         }
     }
 
@@ -2199,56 +2154,23 @@ void expectGlobal3D(vector<int>& iGPU,
                             *((cudaStream_t*)stream[smidx + baseS]));
             cudaCheckErrors("memcpy sigP to device.");
 
-            if (kIdx == 0)
-            {
-                cudaMemsetAsync(devwC[smidx + baseS],
-                                0.0,
-                                batch * nK * sizeof(RFLOAT),
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wC.");
+            cudaMemsetAsync(devwC[smidx + baseS],
+                            0.0,
+                            batch * sizeof(RFLOAT),
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("for memset wC.");
 
-                cudaMemsetAsync(devwR[smidx + baseS],
-                                0.0,
-                                batch * nK * nR * sizeof(RFLOAT),
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wR.");
+            cudaMemsetAsync(devwR[smidx + baseS],
+                            0.0,
+                            batch * nR * sizeof(RFLOAT),
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("for memset wR.");
 
-                cudaMemsetAsync(devwT[smidx + baseS],
-                                0.0,
-                                batch * nK * nT * sizeof(RFLOAT),
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wT.");
-            }
-            else
-            {
-                cudaMemcpyAsync(devbaseL[smidx + baseS],
-                                baseL + i,
-                                batch * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset baseL.");
-
-                cudaMemcpyAsync(devwC[smidx + baseS],
-                                wC + i * nK,
-                                batch * nK * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wC.");
-
-                cudaMemcpyAsync(devwR[smidx + baseS],
-                                wR + (long long)i * nR,
-                                batch * nK * nR * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wR.");
-
-                cudaMemcpyAsync(devwT[smidx + baseS],
-                                wT + (long long)i * nT,
-                                batch * nK * nT * sizeof(RFLOAT),
-                                cudaMemcpyHostToDevice,
-                                *((cudaStream_t*)stream[smidx + baseS]));
-                cudaCheckErrors("for memset wT.");
-            }
+            cudaMemsetAsync(devwT[smidx + baseS],
+                            0.0,
+                            batch * nT * sizeof(RFLOAT),
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("for memset wT.");
 
             for (int r = 0; r < nR;)
             {
@@ -2281,56 +2203,27 @@ void expectGlobal3D(vector<int>& iGPU,
                 r += rbatch;
             }
 
-            if (kIdx == 0)
-            {
-                kernel_getMaxBase<<<batch,
-                                    thread,
-                                    thread * sizeof(RFLOAT),
-                                    *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
-                                                                               devDvp[smidx + baseS],
-                                                                               nR * nT);
-                cudaCheckErrors("getMaxBase error.");
-            }
-            else
-            {
-                kernel_getMaxBase<<<batch,
-                                    thread,
-                                    thread * sizeof(RFLOAT),
-                                    *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                               devDvp[smidx + baseS],
-                                                                               nR * nT);
-                cudaCheckErrors("getMaxBase error.");
+            kernel_getMaxBase<<<batch,
+                                thread,
+                                thread * sizeof(RFLOAT),
+                                *((cudaStream_t*)stream[smidx + baseS])>>>(devbaseL[smidx + baseS],
+                                                                           devDvp[smidx + baseS],
+                                                                           nR * nT);
+            cudaCheckErrors("getMaxBase error.");
 
-                kernel_setBaseLine<<<batch,
-                                     thread,
-                                     0,
-                                     *((cudaStream_t*)stream[smidx + baseS])>>>(devcomP[smidx + baseS],
-                                                                                devbaseL[smidx + baseS],
-                                                                                devwC[smidx + baseS],
-                                                                                devwR[smidx + baseS],
-                                                                                devwT[smidx + baseS],
-                                                                                nK,
-                                                                                nR,
-                                                                                nT,
-                                                                                nK * (1 + nR + nT));
-                cudaCheckErrors("setBaseLine error.");
-            }
-
-            kernel_UpdateW<<<batch,
-                             threadS,
-                             (nT + 1) * threadS * sizeof(RFLOAT),
-                             *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
-                                                                        devbaseL[smidx + baseS],
-                                                                        devwC[smidx + baseS],
-                                                                        devwR[smidx + baseS],
-                                                                        devwT[smidx + baseS],
-                                                                        devpR[n],
-                                                                        devpT[n],
-                                                                        kIdx,
-                                                                        nK,
-                                                                        nR,
-                                                                        nT,
-                                                                        nR * nT);
+            kernel_UpdateW3D<<<batch,
+                               threadS,
+                               (nT + 1) * threadS * sizeof(RFLOAT),
+                               *((cudaStream_t*)stream[smidx + baseS])>>>(devDvp[smidx + baseS],
+                                                                          devbaseL[smidx + baseS],
+                                                                          devwC[smidx + baseS],
+                                                                          devwR[smidx + baseS],
+                                                                          devwT[smidx + baseS],
+                                                                          devpR[n],
+                                                                          devpT[n],
+                                                                          nR,
+                                                                          nT,
+                                                                          nR * nT);
             cudaCheckErrors("UpdateW error.");
 
             cudaMemcpyAsync(baseL + i,
@@ -2340,23 +2233,23 @@ void expectGlobal3D(vector<int>& iGPU,
                             *((cudaStream_t*)stream[smidx + baseS]));
             cudaCheckErrors("memcpy baseL to host.");
 
-            cudaMemcpyAsync(wC + i * nK,
+            cudaMemcpyAsync(wC + i,
                             devwC[smidx + baseS],
-                            batch * nK * sizeof(RFLOAT),
+                            batch * sizeof(RFLOAT),
                             cudaMemcpyDeviceToHost,
                             *((cudaStream_t*)stream[smidx + baseS]));
             cudaCheckErrors("memcpy wC to host.");
 
-            cudaMemcpyAsync(wR + (long long)i * nK * nR,
+            cudaMemcpyAsync(wR + i * nR,
                             devwR[smidx + baseS],
-                            batch * nK * nR * sizeof(RFLOAT),
+                            batch * nR * sizeof(RFLOAT),
                             cudaMemcpyDeviceToHost,
                             *((cudaStream_t*)stream[smidx + baseS]));
             cudaCheckErrors("memcpy wR to host.");
 
-            cudaMemcpyAsync(wT + (long long)i * nK * nT,
+            cudaMemcpyAsync(wT + i * nT,
                             devwT[smidx + baseS],
-                            batch * nK * nT * sizeof(RFLOAT),
+                            batch * nT * sizeof(RFLOAT),
                             cudaMemcpyDeviceToHost,
                             *((cudaStream_t*)stream[smidx + baseS]));
             cudaCheckErrors("memcpy wT to host.");
@@ -2378,10 +2271,6 @@ void expectGlobal3D(vector<int>& iGPU,
             cudaStreamSynchronize(*((cudaStream_t*)stream[i + baseS]));
             cudaCheckErrors("Stream synchronize after.");
 
-            if (kIdx != 0)
-            {
-                cudaFree(devcomP[i + baseS]);
-            }
             cudaFree(devdatPR[i + baseS]);
             cudaFree(devdatPI[i + baseS]);
             cudaFree(devctfP[i + baseS]);
@@ -3066,7 +2955,7 @@ void expectLocalM(int gpuIdx,
                   RFLOAT* wR,
                   RFLOAT* wT,
                   RFLOAT* wD,
-                  double oldC,
+                  RFLOAT* baseLine,
                   int npxl)
 {
     cudaSetDevice(gpuIdx);
@@ -3113,9 +3002,15 @@ void expectLocalM(int gpuIdx,
                                                                 mcp->getDevR(),
                                                                 mcp->getDevT(),
                                                                 mcp->getDevD(),
-                                                                oldC,
                                                                 mcp->getNT());
         cudaCheckErrors("UpdateWL kernel.");
+
+        cudaMemcpyAsync(baseLine,
+                        mcp->getDevBaseL(),
+                        sizeof(RFLOAT),
+                        cudaMemcpyDeviceToHost,
+                        *((cudaStream_t*)mcp->getStream()));
+        cudaCheckErrors("memcpy baseLine to host.");
 
         cudaMemcpyAsync(wC,
                         mcp->getDevwC(),
@@ -3195,7 +3090,6 @@ void expectLocalM(int gpuIdx,
                                                                  mcp->getDevR(),
                                                                  mcp->getDevT(),
                                                                  mcp->getDevD(),
-                                                                 oldC,
                                                                  mcp->getNT(),
                                                                  mcp->getMD());
         cudaCheckErrors("UpdateWL kernel.");
@@ -3213,6 +3107,13 @@ void expectLocalM(int gpuIdx,
                          *((cudaStream_t*)mcp->getStream())>>>(mcp->getDevwD(),
                                                                mcp->getDevtD());
         cudaCheckErrors("ReduceWD kernel.");
+
+        cudaMemcpyAsync(baseLine,
+                        mcp->getDevBaseL(),
+                        sizeof(RFLOAT),
+                        cudaMemcpyDeviceToHost,
+                        *((cudaStream_t*)mcp->getStream()));
+        cudaCheckErrors("memcpy baseLine to host.");
 
         cudaMemcpyAsync(wC,
                         mcp->getDevwC(),

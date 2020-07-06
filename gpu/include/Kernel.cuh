@@ -302,18 +302,35 @@ __global__ void kernel_setBaseLine(RFLOAT* devcomP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_UpdateW(RFLOAT* devDvp,
-                               RFLOAT* devbaseL,
-                               RFLOAT* devwC,
-                               RFLOAT* devwR,
-                               RFLOAT* devwT,
-                               double* devpR,
-                               double* devpT,
-                               int kIdx,
-                               int nK,
-                               int nR,
-                               int nT,
-                               int rSize);
+__global__ void kernel_UpdateW2D(RFLOAT* devDvp,
+                                 RFLOAT* devbaseL,
+                                 RFLOAT* devwC,
+                                 RFLOAT* devwR,
+                                 RFLOAT* devwT,
+                                 double* devpR,
+                                 double* devpT,
+                                 int kIdx,
+                                 int nK,
+                                 int nR,
+                                 int nT,
+                                 int rSize);
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
+__global__ void kernel_UpdateW3D(RFLOAT* devDvp,
+                                 RFLOAT* devbaseL,
+                                 RFLOAT* devwC,
+                                 RFLOAT* devwR,
+                                 RFLOAT* devwT,
+                                 double* devpR,
+                                 double* devpT,
+                                 int nR,
+                                 int nT,
+                                 int rSize);
 
 /**
  * @brief ...
@@ -330,7 +347,6 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
                                 double* devR,
                                 double* devT,
                                 double* devD,
-                                double oldC,
                                 int nT,
                                 int l);
 
@@ -349,7 +365,6 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
                                 double* devR,
                                 double* devT,
                                 double* devD,
-                                double oldC,
                                 int nT);
 
 /**
@@ -367,7 +382,6 @@ __global__ void kernel_UpdateWLC(RFLOAT* devDvp,
                                  double* devR,
                                  double* devT,
                                  double* devD,
-                                 double oldC,
                                  int nT,
                                  int nD);
 
@@ -379,41 +393,6 @@ __global__ void kernel_UpdateWLC(RFLOAT* devDvp,
  */
 __global__ void kernel_ReduceW(RFLOAT* devw,
                                RFLOAT* devt);
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_UpdateW3D(RFLOAT* devDvp,
-                                 RFLOAT* devbaseL,
-                                 RFLOAT* devwC,
-                                 RFLOAT* devwR,
-                                 RFLOAT* devwT,
-                                 int rIdx,
-                                 int nK,
-                                 int nR,
-                                 int nT,
-                                 int rSize);
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_UpdateW2D(RFLOAT* devDvp,
-                                 RFLOAT* devbaseL,
-                                 RFLOAT* devwC,
-                                 RFLOAT* devwR,
-                                 RFLOAT* devwT,
-                                 int kIdx,
-                                 int rIdx,
-                                 int nK,
-                                 int nR,
-                                 int nT,
-                                 int rSize);
 
 /**
  * @brief ...

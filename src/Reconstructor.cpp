@@ -1148,8 +1148,8 @@ void Reconstructor::prepareTF(const unsigned int nThread)
 {
     IF_MASTER return;
 
-    //ALOG(INFO, "LOGGER_RECO") << "Allreducing tau";
-    //BLOG(INFO, "LOGGER_RECO") << "Allreducing tau";
+    ALOG(INFO, "LOGGER_RECO") << "Allreducing tau";
+    BLOG(INFO, "LOGGER_RECO") << "Allreducing tau";
 
     allReduceTau();
 
@@ -1698,7 +1698,7 @@ void Reconstructor::reconstruct(Volume& dst,
                 if (QUAD(i, j) < TSGSL_pow_2(_maxRadius * _pf))
                     _W2D.setFTHalf(COMPLEX(1.0
                                          / TSGSL_MAX_RFLOAT(ABS(_T2D.getFTHalf(i, j)),
-                                                       1e-6),
+                                                                1e-6),
                                            0),
                                    i,
                                    j);
@@ -1710,7 +1710,7 @@ void Reconstructor::reconstruct(Volume& dst,
                 if (QUAD_3(i, j, k) < TSGSL_pow_2(_maxRadius * _pf))
                     _W3D.setFTHalf(COMPLEX(1.0
                                          / TSGSL_MAX_RFLOAT(ABS(_T3D.getFTHalf(i, j, k)),
-                                                       1e-6),
+                                                                1e-6),
                                            0),
                                    i,
                                    j,
@@ -2317,7 +2317,6 @@ void Reconstructor::allReduceT(const unsigned int nThread)
     BLOG(INFO, "LOGGER_RECO") << "Waiting for Synchronizing all Processes in Hemisphere B";
 
     MPI_Barrier(_hemi);
-
 
     if (_mode == MODE_2D)
     {

@@ -280,7 +280,7 @@ void expectLocalM(int gpuIdx,
                   RFLOAT* wR,
                   RFLOAT* wT,
                   RFLOAT* wD,
-                  double oldC,
+                  RFLOAT* baseLine,
                   int npxl);
 
 /**
@@ -472,8 +472,6 @@ void expectGlobal3D(vector<int>& iGPU,
                     RFLOAT* wR,
                     RFLOAT* wT,
                     RFLOAT* baseL,
-                    int kIdx,
-                    int nK,
                     int nR,
                     int nT,
                     int npxl,

@@ -43,19 +43,27 @@
 
 #define SEARCH_TYPE_CTF 2
 
-/**
-#define MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL 0
+#define MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_REFINEMENT 2
 
-#define MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL 0
-***/
+#define MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_CLASSIFICATION 2
 
-#define MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL 2
+#define MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_REFINEMENT 0
 
-#define MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL 0
+#define MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_CLASSIFICATION 1
 
-#define MAX_ITER_R_CHANGE_NO_DECREASE_CTF 0
+#define MAX_ITER_R_CHANGE_NO_DECREASE_CTF_REFINEMENT 0
+
+#define MAX_ITER_R_CHANGE_NO_DECREASE_CTF_CLASSIFICATION 1
 
 #define MAX_ITER_RES_NO_IMPROVE 2
+
+#define C_CHANGE_LIMIT 0.05
+
+#define C_CHANGE_DECREASE_GLOBAL 0.1
+
+#define C_CHANGE_DECREASE_STUN 0.1
+
+#define C_CHANGE_DECREASE_LOCAL 0.1
 
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
 
@@ -300,6 +308,10 @@ class Model : public Parallel
          */
         int _nRChangeNoDecrease;
 
+        RFLOAT _cChange;
+
+        RFLOAT _cChangePrev;
+
         /**
          * number of iterations without top resolution improvement
          */
@@ -360,6 +372,8 @@ class Model : public Parallel
             _rChangePrev = TS_MAX_RFLOAT_VALUE;
             _stdRChange = 0;
             _stdRChangePrev = 0;
+            _cChange = TS_MAX_RFLOAT_VALUE;
+            _cChangePrev = TS_MAX_RFLOAT_VALUE;
             _nRChangeNoDecrease = 0;
             _nTopResNoImprove = 0;
             _sym = NULL;
@@ -805,6 +819,14 @@ class Model : public Parallel
          */
         void setNRChangeNoDecrease(const int nRChangeNoDecrease);
 
+        RFLOAT cChange() const;
+
+        RFLOAT cChangePrev() const;
+
+        void setCChange(const RFLOAT cChange);
+
+        void resetCChange();
+
         /**
          * This function returns the number of iterations that the resolution
          * does not elevate.
@@ -863,6 +885,8 @@ class Model : public Parallel
          * or not at current frequency. If there is still room, return false,
          * otherwise, return true.
          */
+
+        bool determineIncreaseRClass(const RFLOAT cChangeDecreaseFactor);
 
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
         bool determineIncreaseR(const RFLOAT rChangeDecreaseFactor);

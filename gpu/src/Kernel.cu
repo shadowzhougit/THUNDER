@@ -1033,18 +1033,18 @@ __global__ void kernel_setBaseLine(RFLOAT* devcomP,
  * @param ...
  * @param ...
  */
-__global__ void kernel_UpdateW(RFLOAT* devDvp,
-                               RFLOAT* devbaseL,
-                               RFLOAT* devwC,
-                               RFLOAT* devwR,
-                               RFLOAT* devwT,
-                               double* devpR,
-                               double* devpT,
-                               int kIdx,
-                               int nK,
-                               int nR,
-                               int nT,
-                               int rSize)
+__global__ void kernel_UpdateW2D(RFLOAT* devDvp,
+                                 RFLOAT* devbaseL,
+                                 RFLOAT* devwC,
+                                 RFLOAT* devwR,
+                                 RFLOAT* devwT,
+                                 double* devpR,
+                                 double* devpT,
+                                 int kIdx,
+                                 int nK,
+                                 int nR,
+                                 int nT,
+                                 int rSize)
 {
     extern __shared__ RFLOAT result[];
     int itr = 0;
@@ -1144,6 +1144,115 @@ __global__ void kernel_UpdateW(RFLOAT* devDvp,
  * @param ...
  * @param ...
  */
+__global__ void kernel_UpdateW3D(RFLOAT* devDvp,
+                                 RFLOAT* devbaseL,
+                                 RFLOAT* devwC,
+                                 RFLOAT* devwR,
+                                 RFLOAT* devwT,
+                                 double* devpR,
+                                 double* devpT,
+                                 int nR,
+                                 int nT,
+                                 int rSize)
+{
+    extern __shared__ RFLOAT result[];
+    int itr = 0;
+    for (itr = threadIdx.x; itr < blockDim.x * (nT + 1); itr += blockDim.x)
+        result[itr] = 0;
+
+    __syncthreads();
+
+    RFLOAT w;
+    int tIdx;
+    int index;
+    int indexC = nT * blockDim.x;
+    int shiftR = blockIdx.x * nR;
+    for (itr = threadIdx.x; itr < nR; itr += blockDim.x)
+    {
+        index = blockIdx.x * rSize + itr * nT;
+        for (tIdx = 0; tIdx < nT; tIdx++)
+        {
+#ifdef SINGLE_PRECISION
+            w = expf(devDvp[index + tIdx] - devbaseL[blockIdx.x]);
+#else
+            w = exp(devDvp[index + tIdx] - devbaseL[blockIdx.x]);
+#endif
+            result[indexC + threadIdx.x] += w * devpR[itr] * devpT[tIdx];
+            result[tIdx * blockDim.x + threadIdx.x] += w * devpR[itr]; 
+            devwR[shiftR + itr] += w * devpT[tIdx];
+        } 
+    }
+
+    __syncthreads();
+
+    int i;
+    bool flag;
+    if (blockDim.x % 2 == 0)
+    {
+        i = blockDim.x / 2;
+        flag = true;
+    }
+    else
+    {
+        i = blockDim.x / 2 + 1;
+        flag = false;
+    }
+    while (i != 0)
+    {
+        if (flag)
+        {
+            if (threadIdx.x < i)
+            {
+                for (itr = 0; itr < nT; itr++)
+                {
+                    index = itr * blockDim.x + threadIdx.x;
+                    result[index] += result[index + i];
+                } 
+                result[indexC + threadIdx.x] += result[indexC + threadIdx.x + i];
+            }
+        }
+        else
+        {
+            if (threadIdx.x < i - 1)
+            {
+                for (itr = 0; itr < nT; itr++)
+                {
+                    index = itr * blockDim.x + threadIdx.x;
+                    result[index] += result[index + i];
+                } 
+                result[indexC + threadIdx.x] += result[indexC + threadIdx.x + i];
+            }
+        }
+        
+        __syncthreads();
+        
+        if(i % 2 != 0 && i != 1)
+        {
+            i++;
+            flag = false;
+        }
+        else
+            flag = true;
+
+        i /= 2;
+    }
+    
+    if (threadIdx.x == 0)
+        devwC[blockIdx.x] = result[indexC];
+    
+    int shiftT = blockIdx.x * nT;
+    for (itr = threadIdx.x; itr < nT; itr += blockDim.x)
+    {
+        devwT[shiftT + itr] += result[itr * blockDim.x];
+    } 
+}
+
+/**
+ * @brief ...
+ *
+ * @param ...
+ * @param ...
+ */
 __global__ void kernel_UpdateWL(RFLOAT* devDvp,
                                 RFLOAT* devBaseL,
                                 RFLOAT* devwC,
@@ -1153,7 +1262,6 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
                                 double* devR,
                                 double* devT,
                                 double* devD,
-                                double oldC,
                                 int nT)
 {
     extern __shared__ RFLOAT resCRD[];
@@ -1174,9 +1282,6 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
     RFLOAT w;
     int dvpIdx = threadIdx.x * nT;
     double rd = devR[threadIdx.x] * devD[0];
-    double rc = devR[threadIdx.x] * oldC;
-    double dc = devD[0] * oldC;
-    double rcd = rc * devD[0];
 
     for (itr = 0; itr < nT; itr++)
     {
@@ -1186,9 +1291,9 @@ __global__ void kernel_UpdateWL(RFLOAT* devDvp,
         w = exp(devDvp[dvpIdx + itr] - devBaseL[0]);
 #endif
         resC[threadIdx.x] += w * rd * devT[itr];
-        resR[threadIdx.x] += w * dc * devT[itr];
-        resD[threadIdx.x] += w * rc * devT[itr];
-        resT[itr * blockDim.x + threadIdx.x] = w * rcd; 
+        resR[threadIdx.x] += w * devD[0] * devT[itr];
+        resD[threadIdx.x] += w * devR[threadIdx.x] * devT[itr];
+        resT[itr * blockDim.x + threadIdx.x] = w * rd; 
     }
 
     devwR[threadIdx.x] = resR[threadIdx.x];
@@ -1279,7 +1384,6 @@ __global__ void kernel_UpdateWLC(RFLOAT* devDvp,
                                  double* devR,
                                  double* devT,
                                  double* devD,
-                                 double oldC,
                                  int nT,
                                  int nD)
 {
@@ -1294,7 +1398,6 @@ __global__ void kernel_UpdateWLC(RFLOAT* devDvp,
     int itr;
     RFLOAT w;
     int dvpIdx = threadIdx.x * nT * nD;
-    double rc = devR[threadIdx.x] * oldC;
     double td;
     int tIdx, dIdx;
 
@@ -1309,9 +1412,9 @@ __global__ void kernel_UpdateWLC(RFLOAT* devDvp,
         dIdx = itr % nD;
         td = devT[tIdx] * devD[dIdx];
         resC[threadIdx.x] += w * (td * devR[threadIdx.x]);
-        resR[threadIdx.x] += w * (td * oldC);
-        devtT[threadIdx.x + tIdx * blockDim.x] += w * (rc * devD[dIdx]);
-        devtD[threadIdx.x + dIdx * blockDim.x] += w * (rc * devT[tIdx]);
+        resR[threadIdx.x] += w * td;
+        devtT[threadIdx.x + tIdx * blockDim.x] += w * (devR[threadIdx.x] * devD[dIdx]);
+        devtD[threadIdx.x + dIdx * blockDim.x] += w * (devR[threadIdx.x] * devT[tIdx]);
     }
 
     devwR[threadIdx.x] = resR[threadIdx.x];
@@ -1430,123 +1533,6 @@ __global__ void kernel_ReduceW(RFLOAT* devw,
     {
         devw[blockIdx.x] = resW[0];
     }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_UpdateW3D(RFLOAT* devDvp,
-                                 RFLOAT* devbaseL,
-                                 RFLOAT* devwC,
-                                 RFLOAT* devwR,
-                                 RFLOAT* devwT,
-                                 int rIdx,
-                                 int nK,
-                                 int nR,
-                                 int nT,
-                                 int rSize)
-{
-   int imgBase = threadIdx.x * rSize;
-   if (rIdx == 0)
-   {
-       devbaseL[threadIdx.x] = devDvp[imgBase];
-   }
-
-   RFLOAT offset, nf, w;
-   int cBase = threadIdx.x * nK;
-   int rBase = threadIdx.x * nR + rIdx;
-   int tBase = threadIdx.x * nT;
-   for (int itr = 0; itr < rSize; itr++)
-   {
-       if (devDvp[threadIdx.x * rSize + itr] > devbaseL[threadIdx.x])
-       {
-           offset = devDvp[threadIdx.x * rSize + itr] - devbaseL[threadIdx.x];
-#ifdef SINGLE_PRECISION
-           nf = expf(-offset);
-#else
-           nf = exp(-offset);
-#endif
-           for (int c = 0; c < nK; c++)
-               devwC[threadIdx.x * nK + c] *= nf;
-           for (int r = 0; r < nR; r++)
-               devwR[threadIdx.x * nR + r] *= nf;
-           for (int t = 0; t < nT; t++)
-               devwT[threadIdx.x * nT + t] *= nf;
-
-           devbaseL[threadIdx.x] += offset;
-       }
-
-#ifdef SINGLE_PRECISION
-       w = expf(devDvp[imgBase + itr] - devbaseL[threadIdx.x]);
-#else
-       w = exp(devDvp[imgBase + itr] - devbaseL[threadIdx.x]);
-#endif
-       devwC[cBase] += w;
-       devwR[rBase + itr / nT] += w;
-       devwT[tBase + itr % nT] += w;
-   }
-}
-
-/**
- * @brief ...
- *
- * @param ...
- * @param ...
- */
-__global__ void kernel_UpdateW2D(RFLOAT* devDvp,
-                                 RFLOAT* devbaseL,
-                                 RFLOAT* devwC,
-                                 RFLOAT* devwR,
-                                 RFLOAT* devwT,
-                                 int kIdx,
-                                 int rIdx,
-                                 int nK,
-                                 int nR,
-                                 int nT,
-                                 int rSize)
-{
-   int imgBase = threadIdx.x * rSize;
-   if (rIdx == 0)
-   {
-       devbaseL[threadIdx.x] = devDvp[imgBase];
-   }
-
-   RFLOAT offset, nf, w;
-   int cBase = threadIdx.x * nK + kIdx;
-   int rBase = threadIdx.x * nR + rIdx;
-   int tBase = threadIdx.x * nT;
-   for (int itr = 0; itr < rSize; itr++)
-   {
-       if (devDvp[threadIdx.x * rSize + itr] > devbaseL[threadIdx.x])
-       {
-           offset = devDvp[threadIdx.x * rSize + itr] - devbaseL[threadIdx.x];
-#ifdef SINGLE_PRECISION
-           nf = expf(-offset);
-#else
-           nf = exp(-offset);
-#endif
-           for (int c = 0; c < nK; c++)
-               devwC[threadIdx.x * nK + c] *= nf;
-           for (int r = 0; r < nR; r++)
-               devwR[threadIdx.x * nR + r] *= nf;
-           for (int t = 0; t < nT; t++)
-               devwT[threadIdx.x * nT + t] *= nf;
-
-           devbaseL[threadIdx.x] += offset;
-       }
-
-#ifdef SINGLE_PRECISION
-       w = expf(devDvp[imgBase + itr] - devbaseL[threadIdx.x]);
-#else
-       w = exp(devDvp[imgBase + itr] - devbaseL[threadIdx.x]);
-#endif
-       devwC[cBase] += w;
-       devwR[rBase + itr / nT] += w;
-       devwT[tBase + itr % nT] += w;
-   }
 }
 
 /**

@@ -677,14 +677,16 @@ void Optimiser::expectation()
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Minimum Standard Deviation of Translation in Scanning Phase: "
                                    << scanMinStdT;
 
-        Particle par = _par[0].copy();
+        Particle par = _parAll[0].copy();
 
-        par.reset(_para.k, nR, nT, 1);
+        par.reset(nR, nT, 1);
 
-        FOR_EACH_2D_IMAGE
+        for (size_t t = 0; t < (size_t)_para.k; t++)
         {
-            // the previous top class, translation, rotation remain
-            par.copy(_par[l]);
+            FOR_EACH_2D_IMAGE
+            {
+                par.copy(_parAll[t * _ID.size() + l]);
+            }
         }
 
         dmat22 rot2D;
@@ -716,25 +718,21 @@ void Optimiser::expectation()
         vector<mat> wR(_para.k, mat::Zero(_ID.size(), nR));
         vector<mat> wT(_para.k, mat::Zero(_ID.size(), nT));
 
-        //mat wR = mat::Zero(_ID.size(), nR);
-        //mat wT = mat::Zero(_ID.size(), nT);
-
         _nR = 0;
 
-        // omp_lock_t* mtx = new omp_lock_t[_ID.size()];
+        // the same arrangement with _par
+        RFLOAT* baseLine = new RFLOAT[_ID.size() * _para.k];
 
-        RFLOAT* baseLine = new RFLOAT[_ID.size()];
-
-        #pragma omp parallel for
-        FOR_EACH_2D_IMAGE
+        for (size_t t = 0; t < (size_t)_para.k; t++)
         {
-            // omp_init_lock(&mtx[l]);
-            baseLine[l] = GSL_NAN;
+            #pragma omp parallel for
+            FOR_EACH_2D_IMAGE
+            {
+                baseLine[t * _ID.size() + l] = GSL_NAN;
+            }
         }
 
         // determining batch size
-
-        // size_t batchSize = GSL_MAX_INT(GSL_MIN_INT(AROUND(SCANNING_PHASE_BATCH_MEMORY_USAGE / _nPxl / sizeof(Complex)), nR), 1);
 
         size_t batchSize = GSL_MAX_INT(GSL_MIN_INT(AROUND(SCANNING_PHASE_BATCH_MEMORY_USAGE / _nPxl / sizeof(Complex)), _para.k * nR), 1);
 
@@ -749,6 +747,8 @@ void Optimiser::expectation()
         RFLOAT* poolPriRotPI = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
         RFLOAT* poolPriAllPR = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
         RFLOAT* poolPriAllPI = (RFLOAT*)TSFFTW_malloc(batchSize * _nPxl * sizeof(RFLOAT));
+
+        // will be converted to dvp, for storing logDataVSPrior result for each image against a certain prior (projection from reference in a certain rotation and translation)
         RFLOAT *poolSIMDResult = (RFLOAT*)TSFFTW_malloc(batchSize * _ID.size() * sizeof(RFLOAT));
 
         /***
@@ -843,37 +843,46 @@ void Optimiser::expectation()
                             size_t t = (tm * batchSize + tnp) / nR; // class index
                             size_t m = (tm * batchSize + tnp) - t * nR; // rotation index
 
-                            if (TSGSL_isnan(baseLine[l]))
+                            size_t baseLineIndex = t * _ID.size() + l;
+
+                            if (TSGSL_isnan(baseLine[baseLineIndex]))
                             {
-                                baseLine[l] = dvp[tnp * _ID.size() + l];
+                                baseLine[baseLineIndex] = dvp[tnp * _ID.size() + l];
                             }
                             else
                             {
-                                if (dvp[tnp * _ID.size() + l] > baseLine[l])
+                                if (dvp[tnp * _ID.size() + l] > baseLine[baseLineIndex])
                                 {
-                                    RFLOAT offset = dvp[tnp * _ID.size() + l] - baseLine[l];
+                                    RFLOAT offset = dvp[tnp * _ID.size() + l] - baseLine[baseLineIndex];
 
                                     RFLOAT nf = exp(-offset);
 
-                                    wC.row(l) *= nf;
+                                    wC(l, t) *= nf;
 
+                                    // wC.row(l) *= nf;
+
+                                    /***
                                     for (int td = 0; td < _para.k; td++)
                                     {
                                         wR[td].row(l) *= nf;
                                         wT[td].row(l) *= nf;
                                     }
+                                    ***/
 
-                                    baseLine[l] += offset;
+                                    wR[t].row(l) *= nf;
+                                    wT[t].row(l) *= nf;
+
+                                    baseLine[baseLineIndex] += offset;
                                 }
                             }
 
-                            RFLOAT w = exp(dvp[tnp * _ID.size() + l] - baseLine[l]);
+                            RFLOAT w = exp(dvp[tnp * _ID.size() + l] - baseLine[baseLineIndex]);
 
-                            wC(l, t) += w * (_par[l].wR(m) * _par[l].wT(n));
+                            wC(l, t) += w * (_parAll[t * _ID.size() + l].wR(m) * _parAll[t * _ID.size() + l].wT(n));
 
-                            wR[t](l, m) += w * _par[l].wT(n);
+                            wR[t](l, m) += w * _parAll[t * _ID.size() + l].wT(n);
 
-                            wT[t](l, n) += w * _par[l].wR(m);
+                            wT[t](l, n) += w * _parAll[t * _ID.size() + l].wR(m);
                         }
                     }
                 }
@@ -895,6 +904,70 @@ void Optimiser::expectation()
                 }
         }
 
+        /***
+        #pragma omp parallel for
+        FOR_EACH_2D_IMAGE
+        {
+            vec baseLineT = vec::Zero(_para.k);
+
+            vec ratio = vec::Zero(_para.k);
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                baseLineT(t) = baseLine[t * _ID.size() + l];
+            }
+
+            if ((l == 0) && (_commRank == HEMI_A_LEAD))
+            {
+                for (size_t t = 0; t < _para.k; t++)
+                {
+                    std::cout << "t = " << t << ", baseLine(t) = " << baseLineT(t) << std::endl;
+                }
+            }
+
+            RFLOAT maxBaseLine = baseLineT(value_max_index(baseLineT));
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                ratio(t) = exp(baseLineT(t) - maxBaseLine);
+            }
+
+            RFLOAT hh = ratio(value_max_index(ratio)) * PEAK_FACTOR_C;
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                if (ratio(t) < hh)
+                {
+                    ratio(t) = 0;
+                }
+                else
+                {
+                    ratio(t) -= hh;
+                }
+            }
+
+            if ((l == 0) && (_commRank == HEMI_A_LEAD))
+            {
+                for (size_t t = 0; t < _para.k; t++)
+                {
+                    std::cout << "t = " << t << ", ratio(t) = " << ratio(t) << std::endl;
+                }
+            }
+
+            _iRef[l] = drawWithWeightIndex(ratio);
+
+            if ((_iRef[l] < 0) ||
+                (_iRef[l] >= _para.k))
+            {
+                CLOG(FATAL, "LOGGER_SYS") << "_iRef[l] = " << _iRef[l];
+
+                abort();
+            }
+
+            _par[l] = &(_parAll[_iRef[l] * _ID.size() + l]);
+        }
+        ***/
+
         TSFFTW_free(poolSIMDResult);
         TSFFTW_free(poolPriRotPR);
         TSFFTW_free(poolPriRotPI);
@@ -908,18 +981,11 @@ void Optimiser::expectation()
         #pragma omp parallel for
         FOR_EACH_2D_IMAGE
         {
-            for (int iC = 0; iC < _para.k; iC++)
-                _par[l].setUC(wC(l, iC), iC);
-
-#ifdef OPTIMISER_PEAK_FACTOR_C
-            _par[l].setPeakFactor(PAR_C);
-            _par[l].keepHalfHeightPeak(PAR_C);
-#endif
-
+            /***
 #ifdef OPTIMISER_SAVE_PARTICLES
             if (_ID[l] < N_SAVE_IMG)
             {
-                _par[l].sort();
+                _par[l]->sort();
 
                 char filename[FILE_NAME_LENGTH];
 
@@ -931,37 +997,56 @@ void Optimiser::expectation()
                 save(filename, _par[l], PAR_C, true);
             }
 #endif
+            ***/
 
-            _par[l].resample(_para.k, PAR_C);
+            // FOR_DEBUG
 
-            size_t cls;
-            _par[l].rand(cls);
-
-            _par[l].setNC(1);
-            _par[l].setC(uvec::Constant(1, cls));
-            _par[l].setWC(dvec::Constant(1, 1));
-            _par[l].setUC(dvec::Constant(1, 1));
-
+            /***
             for (int iR = 0; iR < nR; iR++)
-                _par[l].setUR(wR[cls](l, iR), iR);
+                _par[l]->setUR(wR[cls](l, iR), iR);
             for (int iT = 0; iT < nT; iT++)
-                _par[l].setUT(wT[cls](l, iT), iT);
+                _par[l]->setUT(wT[cls](l, iT), iT);
+            ***/
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                Particle* par = &(_parAll[t * _ID.size() + l]);
+
+                for (int iR = 0; iR < nR; iR++)
+                {
+                    // _par[l]->setUR(wR[_iRef[l]](l, iR), iR);
+
+                    par->setUR(wR[t](l, iR), iR);
+                }
+
+                for (int iT = 0; iT < nT; iT++)
+                {
+                    // _par[l]->setUT(wT[_iRef[l]](l, iT), iT);
+
+                    par->setUT(wT[t](l, iT), iT);
+                }
 
 #ifdef OPTIMISER_PEAK_FACTOR_R
-            _par[l].setPeakFactor(PAR_R);
-            _par[l].keepHalfHeightPeak(PAR_R);
+                // _par[l]->setPeakFactor(PAR_R);
+                // _par[l]->keepHalfHeightPeak(PAR_R);
+
+                par->setPeakFactor(PAR_R);
+                par->keepHalfHeightPeak(PAR_R);
 #endif
 
 #ifdef OPTIMISER_PEAK_FACTOR_T
-            _par[l].setPeakFactor(PAR_T);
-            _par[l].keepHalfHeightPeak(PAR_T);
+                // _par[l]->setPeakFactor(PAR_T);
+                // _par[l]->keepHalfHeightPeak(PAR_T);
+                par->setPeakFactor(PAR_T);
+                par->keepHalfHeightPeak(PAR_T);
 #endif
 
 
+            /***
 #ifdef OPTIMISER_SAVE_PARTICLES
             if (_ID[l] < N_SAVE_IMG)
             {
-                _par[l].sort();
+                _par[l]->sort();
 
                 char filename[FILE_NAME_LENGTH];
 
@@ -985,91 +1070,101 @@ void Optimiser::expectation()
                 save(filename, _par[l], PAR_D, true);
             }
 #endif
+            ***/
 
-            _par[l].resample(_para.mLR, PAR_R);
-            _par[l].resample(_para.mLT, PAR_T);
+                // _par[l]->resample(_para.mLR, PAR_R);
+                // _par[l]->resample(_para.mLT, PAR_T);
 
-            _par[l].calVari(PAR_R);
-            _par[l].calVari(PAR_T);
+                par->resample(_para.mLR, PAR_R);
+                par->resample(_para.mLT, PAR_T);
+
+                // _par[l]->calVari(PAR_R);
+                // _par[l]->calVari(PAR_T);
+
+                par->calVari(PAR_R);
+                par->calVari(PAR_T);
 
 #ifdef PARTICLE_RHO
-            _par[l].setRho(0);
+                // _par[l].setRho(0);
+
+                par->setRho(0);
             // if there is only two resampled points in translation, it is possible making pho be 1
             // then it will crash down
             // make rho to be 0
 #endif
 
-            if (_para.mode == MODE_2D)
-            {
+                if (_para.mode == MODE_2D)
+                {
 #ifdef OPTIMISER_SCAN_SET_MIN_STD_WITH_PERTURB
-                _par[l].setK1(TSGSL_MAX_RFLOAT((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
-                                                ? _para.perturbFactorSGlobal
-                                                : _para.perturbFactorSLocal))
-                                        * MIN_STD_FACTOR * scanMinStdR,
-                                          _par[l].k1()));
+                    par->setK1(TSGSL_MAX_RFLOAT((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                                                 ? _para.perturbFactorSGlobal
+                                                 : _para.perturbFactorSLocal))
+                                                 * MIN_STD_FACTOR * scanMinStdR,
+                                                 par->k1()));
 #else
-                _par[l].setK1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdR,
-                                               _par[l].k1()));
+                    par->setK1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdR,
+                                                par->k1()));
 #endif
-            }
-            else if (_para.mode == MODE_3D)
-            {
+                }
+                else if (_para.mode == MODE_3D)
+                {
 #ifdef OPTIMISER_SCAN_SET_MIN_STD_WITH_PERTURB
-                _par[l].setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                par->setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                                           ? _para.perturbFactorSGlobal
                                                           : _para.perturbFactorSLocal))
                                                   * MIN_STD_FACTOR * scanMinStdR),
-                                          _par[l].k1()));
-                _par[l].setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                                          par->k1()));
+                par->setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                                           ? _para.perturbFactorSGlobal
                                                           : _para.perturbFactorSLocal))
                                                   * MIN_STD_FACTOR * scanMinStdR),
-                                          _par[l].k2()));
+                                          par->k2()));
 
-                _par[l].setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                par->setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                                           ? _para.perturbFactorSGlobal
                                                           : _para.perturbFactorSLocal))
                                                    * MIN_STD_FACTOR * scanMinStdR),
-                                          _par[l].k3()));
+                                          par->k3()));
 #else
-                _par[l].setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
-                                               _par[l].k1()));
-                _par[l].setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
-                                               _par[l].k2()));
-                _par[l].setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
-                                               _par[l].k3()));
+                par->setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
+                                               par->k1()));
+                par->setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
+                                               par->k2()));
+                par->setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
+                                               par->k3()));
 #endif
-            }
-            else
-            {
-                REPORT_ERROR("INEXISTENT MODE");
+                }
+                else
+                {
+                    REPORT_ERROR("INEXISTENT MODE");
 
-                abort();
-            }
+                    abort();
+                }
 
 #ifdef OPTIMISER_SCAN_SET_MIN_STD_WITH_PERTURB
-            _par[l].setS0(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                par->setS0(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                            ? _para.perturbFactorSGlobal
                                            : _para.perturbFactorSLocal)
                                     * MIN_STD_FACTOR * scanMinStdT,
-                                      _par[l].s0()));
+                                      par->s0()));
 
-            _par[l].setS1(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                par->setS1(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                            ? _para.perturbFactorSGlobal
                                            : _para.perturbFactorSLocal)
                                     * MIN_STD_FACTOR * scanMinStdT,
-                                      _par[l].s1()));
+                                      par->s1()));
 #else
-            _par[l].setS0(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
-                                           _par[l].s0()));
-            _par[l].setS1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
-                                           _par[l].s1()));
+                par->setS0(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
+                                           par->s0()));
+                par->setS1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
+                                           par->s1()));
 #endif
 
+                /***
 #ifdef OPTIMISER_SAVE_PARTICLES
-            if (_ID[l] < N_SAVE_IMG)
-            {
-                _par[l].sort();
+                if (_ID[l] < N_SAVE_IMG)
+                {
+                _par[l]->sort();
 
                 char filename[FILE_NAME_LENGTH];
                 snprintf(filename,
@@ -1096,8 +1191,10 @@ void Optimiser::expectation()
                          _ID[l],
                          _iter);
                 save(filename, _par[l], PAR_D);
-            }
+                }
 #endif
+                ***/
+            }
         }
 
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search Performed.";
@@ -1149,6 +1246,25 @@ void Optimiser::expectation()
     if (_searchType == SEARCH_TYPE_CTF)
         poolCtfP = (RFLOAT*)TSFFTW_malloc(_para.mLD * _nPxl * omp_get_max_threads() * sizeof(RFLOAT));
 
+    // new, for non-alignment classification
+    mat wC = mat::Zero(_ID.size(), _para.k);
+
+    vector<mat> wR(_para.k, mat::Zero(_ID.size(), _para.mLR));
+    vector<mat> wT(_para.k, mat::Zero(_ID.size(), _para.mLT));
+    vector<mat> wD(_para.k, mat::Zero(_ID.size(), _para.mLD));
+
+    // the same arrangement with _par
+    RFLOAT* baseLine = new RFLOAT[_ID.size() * _para.k];
+
+    for (size_t t = 0; t < (size_t)_para.k; t++)
+    {
+        #pragma omp parallel for
+        FOR_EACH_2D_IMAGE
+        {
+            baseLine[t * _ID.size() + l] = GSL_NAN;
+        }
+    }
+
     MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> datPIDustman(&_datPI);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
@@ -1175,75 +1291,131 @@ void Optimiser::expectation()
         RFLOAT* priAllPR = poolPriAllPR + _nPxl * omp_get_thread_num();
         RFLOAT* priAllPI = poolPriAllPI + _nPxl * omp_get_thread_num();
 
-        int nPhaseWithNoVariDecrease = 0;
+        /***
+        // debug
+        if (_commRank == HEMI_A_LEAD)
+        {
+            # pragma omp critical
+            std::cout << "_para.alignR = " << _para.alignR << std::endl;
+            # pragma omp critical
+            std::cout << "_para.alignT = " << _para.alignT << std::endl;
+            # pragma omp critical
+            std::cout << "_para.alignD = " << _para.alignD << std::endl;
+            # pragma omp critical
+            std::cout << "phase rounds = " << ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 2) << std::endl;
+        }
+        // end debug
+        ***/
+
+        for (size_t t = 0; t < _para.k; t++)
+        {
+            Particle* par = &(_parAll[t * _ID.size() + l]);
+
+            /**
+            if (par == _par[l])
+            {
+            ***/
+
+            int nPhaseWithNoVariDecrease = 0;
 
 #ifdef OPTIMISER_COMPRESS_CRITERIA
-        double variR = DBL_MAX;
-        double variT = DBL_MAX;
-        double variD = DBL_MAX;
+            double variR = DBL_MAX;
+            double variT = DBL_MAX;
+            double variD = DBL_MAX;
 #else
-        double k1 = 1;
-        double k2 = 1;
-        double k3 = 1;
-        double tVariS0 = 5 * _para.transS;
-        double tVariS1 = 5 * _para.transS;
-        double dVari = 5 * _para.ctfRefineS;
+            double k1 = 1;
+            double k2 = 1;
+            double k3 = 1;
+            double tVariS0 = 5 * _para.transS;
+            double tVariS1 = 5 * _para.transS;
+            double dVari = 5 * _para.ctfRefineS;
 #endif
-        for (int phase = (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0; phase < MAX_N_PHASE_PER_ITER; phase++)
-        {
+
+            for (int phase = ((_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0); phase < ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 2); phase++)
+            {
+                // wR, wT, wD and baseLine should be reset
+                // in this section, the class ID, i.e., k, and the image ID, i.e., l, are given
+                wR[t].row(l) = vec::Zero(_para.mLR);
+                wT[t].row(l) = vec::Zero(_para.mLT);
+                wD[t].row(l) = vec::Zero(_para.mLD);
+
+                baseLine[t * _ID.size() + l] = GSL_NAN;
+
 #ifdef OPTIMISER_GLOBAL_PERTURB_LARGE
-            if (phase == (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0)
+                if (phase == (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0)
 #else
-            if (phase == 0)
+                if (phase == 0)
 #endif
-            {
-                _par[l].perturb(_para.perturbFactorL, PAR_R);
-                _par[l].perturb(_para.perturbFactorL, PAR_T);
-
-                if (_searchType == SEARCH_TYPE_CTF)
-                    _par[l].initD(_para.mLD, _para.ctfRefineS);
-            }
-            else
-            {
-                _par[l].perturb((_searchType == SEARCH_TYPE_GLOBAL)
-                              ? _para.perturbFactorSGlobal
-                              : _para.perturbFactorSLocal,
-                                PAR_R);
-                _par[l].perturb((_searchType == SEARCH_TYPE_GLOBAL)
-                              ? _para.perturbFactorSGlobal
-                              : _para.perturbFactorSLocal,
-                                PAR_T);
-
-                if (_searchType == SEARCH_TYPE_CTF)
-                    _par[l].perturb(_para.perturbFactorSCTF, PAR_D);
-            }
-
-            RFLOAT baseLine = GSL_NAN;
-
-            vec wC = vec::Zero(1);
-            vec wR = vec::Zero(_para.mLR);
-            vec wT = vec::Zero(_para.mLT);
-            vec wD = vec::Zero(_para.mLD);
-
-            size_t c;
-            dmat22 rot2D;
-            dmat33 rot3D;
-            double d;
-            dvec2 t;
-
-            FOR_EACH_C(_par[l])
-            {
-                _par[l].c(c, iC);
-
-                Complex* traP = poolTraP + _par[l].nT() * _nPxl * omp_get_thread_num();
-
-                FOR_EACH_T(_par[l])
                 {
-                    _par[l].t(t, iT);
+                    // _par[l]->perturb(_para.perturbFactorL, PAR_R);
+                    // _par[l]->perturb(_para.perturbFactorL, PAR_T);
+
+                    par->perturb(_para.perturbFactorL, PAR_R);
+                    par->perturb(_para.perturbFactorL, PAR_T);
+
+                    if (_searchType == SEARCH_TYPE_CTF)
+                    {
+                        // _par[l]->initD(_para.mLD, _para.ctfRefineS);
+
+                        par->initD(_para.mLD, _para.ctfRefineS);
+                    }
+                }
+                else
+                {
+                    if (_para.alignR)
+                    {
+                        par->perturb((_searchType == SEARCH_TYPE_GLOBAL)
+                                   ? _para.perturbFactorSGlobal
+                                   : _para.perturbFactorSLocal,
+                                     PAR_R);
+                    }
+
+                    if (_para.alignT)
+                    {
+                        par->perturb((_searchType == SEARCH_TYPE_GLOBAL)
+                                   ? _para.perturbFactorSGlobal
+                                   : _para.perturbFactorSLocal,
+                                     PAR_T);
+                    }
+
+                    if (_para.alignD && _searchType == SEARCH_TYPE_CTF)
+                    {
+                        par->perturb(_para.perturbFactorSCTF, PAR_D);
+                    }
+                }
+
+                // RFLOAT baseLine = GSL_NAN;
+
+                // vec wC = vec::Zero(1);
+                // vec wR = vec::Zero(_para.mLR);
+                // vec wT = vec::Zero(_para.mLT);
+                // vec wD = vec::Zero(_para.mLD);
+
+                // size_t c;
+                dmat22 rot2D;
+                dmat33 rot3D;
+                double d;
+                dvec2 tran;
+
+                Complex* traP = poolTraP + par->nT() * _nPxl * omp_get_thread_num();
+
+                FOR_EACH_T(*par)
+                {
+                    par->t(tran, iT);
+
+                    /***
+                    // debug
+                    if ((l == 0) && (_commRank == HEMI_A_LEAD))
+                    {
+                        # pragma omp critical
+                        std::cout << "t = " << t << ", tran = " << tran << std::endl;
+                    }
+                    // end debug
+                    ***/
 
                     translate(traP + iT * _nPxl,
-                              t(0),
-                              t(1),
+                              tran(0),
+                              tran(1),
                               _para.size,
                               _para.size,
                               _iCol,
@@ -1256,11 +1428,11 @@ void Optimiser::expectation()
 
                 if (_searchType == SEARCH_TYPE_CTF)
                 {
-                    ctfP = poolCtfP + _par[l].nD() * _nPxl * omp_get_thread_num();
+                    ctfP = poolCtfP + par->nD() * _nPxl * omp_get_thread_num();
 
-                    FOR_EACH_D(_par[l])
+                    FOR_EACH_D(*par)
                     {
-                        _par[l].d(d, iD);
+                        par->d(d, iD);
 
                         for (int i = 0; i < _nPxl; i++)
                         {
@@ -1272,7 +1444,6 @@ void Optimiser::expectation()
                                       * TSGSL_pow_4(_frequency[i])
                                       - _ctfAttr[l].phaseShift;
 
-                            //ctfP[_nPxl * iD + i] = -w1 * TS_SIN(ki) + w2 * TS_COS(ki);
                             ctfP[_nPxl * iD + i] = -TS_SQRT(1 - TSGSL_pow_2(_ctfAttr[l].amplitudeContrast))
                                                  * TS_SIN(ki)
                                                  + _ctfAttr[l].amplitudeContrast
@@ -1281,15 +1452,35 @@ void Optimiser::expectation()
                     }
                 }
 
-                FOR_EACH_R(_par[l])
+                FOR_EACH_R(*par)
                 {
                     if (_para.mode == MODE_2D)
                     {
-                        _par[l].rot(rot2D, iR);
+                        par->rot(rot2D, iR);
+
+                        /*
+                        // debug
+                        if ((l == 0) && (_commRank == HEMI_A_LEAD))
+                        {
+                            # pragma omp critical
+                            std::cout << "t = " << t << ", rot2D = " << rot2D << std::endl;
+                        }
+                        // end debug
+                        */
                     }
                     else if (_para.mode == MODE_3D)
                     {
-                        _par[l].rot(rot3D, iR);
+                        par->rot(rot3D, iR);
+
+                        /*
+                        // debug
+                        if ((l == 0) && (_commRank == HEMI_A_LEAD))
+                        {
+                            # pragma omp critical
+                            std::cout << "t = " << t << ", rot3D = " << rot3D << std::endl;
+                        }
+                        // end debug
+                        */
                     }
                     else
                     {
@@ -1300,7 +1491,7 @@ void Optimiser::expectation()
 
                     if (_para.mode == MODE_2D)
                     {
-                        _model.proj(c).project(priRotP,
+                        _model.proj(t).project(priRotP,
                                                rot2D,
                                                _iCol,
                                                _iRow,
@@ -1309,7 +1500,7 @@ void Optimiser::expectation()
                     }
                     else if (_para.mode == MODE_3D)
                     {
-                        _model.proj(c).project(priRotP,
+                        _model.proj(t).project(priRotP,
                                                rot3D,
                                                _iCol,
                                                _iRow,
@@ -1323,7 +1514,7 @@ void Optimiser::expectation()
                         abort();
                     }
 
-                    FOR_EACH_T(_par[l])
+                    FOR_EACH_T(*par)
                     {
                         for (int i = 0; i < _nPxl; i++)
                         {
@@ -1340,9 +1531,9 @@ void Optimiser::expectation()
                             priAllPI[i] = priAllP[i].dat[1];
                         }
 
-                        FOR_EACH_D(_par[l])
+                        FOR_EACH_D(*par)
                         {
-                            _par[l].d(d, iD);
+                            par->d(d, iD);
 
                             RFLOAT w;
 
@@ -1378,156 +1569,185 @@ void Optimiser::expectation()
                                                    _nPxl);
                             }
 
-                            baseLine = TSGSL_isnan(baseLine) ? w : baseLine;
+                            baseLine[t * _ID.size() + l] = TSGSL_isnan(baseLine[t * _ID.size() + l]) ? w : baseLine[t * _ID.size() + l];
 
-                            if (w > baseLine)
+                            if (w > baseLine[t * _ID.size() + l])
                             {
-                                RFLOAT nf = exp(baseLine - w);
+                                RFLOAT nf = exp(baseLine[t * _ID.size() + l] - w);
 
-                                wC *= nf;
-                                wR *= nf;
-                                wT *= nf;
-                                wD *= nf;
+                                wC(l, t) *= nf;
 
-                                baseLine = w;
+                                // wR[t] *= nf;
+                                // wT[t] *= nf;
+                                // wD[t] *= nf;
+
+                                wR[t].row(l) *= nf;
+                                wT[t].row(l) *= nf;
+                                wD[t].row(l) *= nf;
+
+                                baseLine[t * _ID.size() + l] = w;
                             }
 
-                            RFLOAT s = exp(w - baseLine);
+                            /* 
+                            // for debug
+                            if ((l == 0) && (_commRank == HEMI_A_LEAD))
+                            {
+                                std::cout << "t = " << t << ", baseLine(t) = " << baseLine[t * _ID.size() + l] << std::endl;
+                            }
+                            // end debug
+                            */
 
-                            wC(iC) += s * (_par[l].wR(iR) * _par[l].wT(iT) * _par[l].wD(iD));
-                            wR(iR) += s * (_par[l].wC(iC) * _par[l].wT(iT) * _par[l].wD(iD));
-                            wT(iT) += s * (_par[l].wC(iC) * _par[l].wR(iR) * _par[l].wD(iD));
-                            wD(iD) += s * (_par[l].wC(iC) * _par[l].wR(iR) * _par[l].wT(iT));
+                            RFLOAT s = exp(w - baseLine[t * _ID.size() + l]);
+
+                            wC(l, t) += s * (par->wR(iR) * par->wT(iT) * par->wD(iD));
+                            wR[t](l, iR) += s * (par->wT(iT) * par->wD(iD));
+                            wT[t](l, iT) += s * (par->wR(iR) * par->wD(iD));
+                            wD[t](l, iD) += s * (par->wR(iR) * par->wT(iT));
                         }
                     }
                 }
-            }
 
-            _par[l].setUC(wC(0), 0);
+                // par->setUC(wC(0), 0);
 
-            for (int iR = 0; iR < _para.mLR; iR++)
-                _par[l].setUR(wR(iR), iR);
+                for (int iR = 0; iR < _para.mLR; iR++)
+                {
+                    par->setUR(wR[t](l, iR), iR);
+                }
 
 #ifdef OPTIMISER_PEAK_FACTOR_R
-            _par[l].keepHalfHeightPeak(PAR_R);
+                par->keepHalfHeightPeak(PAR_R);
 #endif
 
-            for (int iT = 0; iT < _para.mLT; iT++)
-                _par[l].setUT(wT(iT), iT);
+                for (int iT = 0; iT < _para.mLT; iT++)
+                {
+                    par->setUT(wT[t](l, iT), iT);
+                }
 
 #ifdef OPTIMISER_PEAK_FACTOR_T
-            _par[l].keepHalfHeightPeak(PAR_T);
+                par->keepHalfHeightPeak(PAR_T);
 #endif
 
-            if (_searchType == SEARCH_TYPE_CTF)
-            {
-                for (int iD = 0; iD < _para.mLD; iD++)
-                    _par[l].setUD(wD(iD), iD);
+                if (_searchType == SEARCH_TYPE_CTF)
+                {
+                    for (int iD = 0; iD < _para.mLD; iD++)
+                    {
+                        par->setUD(wD[t](l, iD), iD);
+                    }
 
 #ifdef OPTIMISER_PEAK_FACTOR_D
-                if (phase == 0) _par[l].setPeakFactor(PAR_D);
+                    if (phase == 0)
+                    {
+                        par->setPeakFactor(PAR_D);
+                    }
 
-                _par[l].keepHalfHeightPeak(PAR_D);
+                    par->keepHalfHeightPeak(PAR_D);
 #endif
-            }
+                }
 
 #ifdef OPTIMISER_SAVE_PARTICLES
-            if (_ID[l] < N_SAVE_IMG)
-            {
-                _par[l].sort();
+                if (_ID[l] < N_SAVE_IMG)
+                {
+                    par->sort();
 
-                char filename[FILE_NAME_LENGTH];
+                    char filename[FILE_NAME_LENGTH];
 
-                snprintf(filename,
-                         sizeof(filename),
-                         "C_Particle_%04d_Round_%03d_%03d.par",
-                         _ID[l],
-                         _iter,
-                         phase);
-                save(filename, _par[l], PAR_C, true);
-                snprintf(filename,
-                         sizeof(filename),
-                         "R_Particle_%04d_Round_%03d_%03d.par",
-                         _ID[l],
-                         _iter,
-                         phase);
-                save(filename, _par[l], PAR_R, true);
-                snprintf(filename,
-                         sizeof(filename),
-                         "T_Particle_%04d_Round_%03d_%03d.par",
-                         _ID[l],
-                         _iter,
-                         phase);
-                save(filename, _par[l], PAR_T, true);
-                snprintf(filename,
-                         sizeof(filename),
-                         "D_Particle_%04d_Round_%03d_%03d.par",
-                         _ID[l],
-                         _iter,
-                         phase);
-                save(filename, _par[l], PAR_D, true);
-            }
+                    /***
+                    snprintf(filename,
+                             sizeof(filename),
+                             "C_Particle_%04d_Round_%03d_%03d.par",
+                             _ID[l],
+                             _iter,
+                             phase);
+                    save(filename, *par, PAR_C, true);
+                    ***/
+                    snprintf(filename,
+                             sizeof(filename),
+                             "R_Particle_%04d_Round_%03d_%03d.par",
+                             _ID[l],
+                             _iter,
+                             phase);
+                    save(filename, *par, PAR_R, true);
+                    snprintf(filename,
+                             sizeof(filename),
+                             "T_Particle_%04d_Round_%03d_%03d.par",
+                             _ID[l],
+                             _iter,
+                             phase);
+                    save(filename, *par, PAR_T, true);
+                    snprintf(filename,
+                             sizeof(filename),
+                             "D_Particle_%04d_Round_%03d_%03d.par",
+                             _ID[l],
+                             _iter,
+                             phase);
+                    save(filename, *par, PAR_D, true);
+                }
 #endif
 
-            _par[l].calRank1st(PAR_R);
-            _par[l].calRank1st(PAR_T);
+                if (_para.alignR)
+                {
+                    par->calRank1st(PAR_R);
+                    par->calVari(PAR_R);
+                    par->resample(_para.mLR, PAR_R);
+                }
 
-            _par[l].calVari(PAR_R);
-            _par[l].calVari(PAR_T);
+                if (_para.alignT)
+                {
+                    par->calRank1st(PAR_T);
+                    par->calVari(PAR_T);
+                    par->resample(_para.mLT, PAR_T);
+                }
 
-            _par[l].resample(_para.mLR, PAR_R);
-            _par[l].resample(_para.mLT, PAR_T);
-
-            if (_searchType == SEARCH_TYPE_CTF)
-            {
-                _par[l].calRank1st(PAR_D);
-                _par[l].calVari(PAR_D);
-                _par[l].resample(_para.mLD, PAR_D);
-            }
+                if (_para.alignD && (_searchType == SEARCH_TYPE_CTF))
+                {
+                    par->calRank1st(PAR_D);
+                    par->calVari(PAR_D);
+                    par->resample(_para.mLD, PAR_D);
+                }
 
             /***
-            RFLOAT k1 = _par[l].k1();
-            RFLOAT s0 = _par[l].s0();
-            RFLOAT s1 = _par[l].s1();
+            RFLOAT k1 = _par[l]->k1();
+            RFLOAT s0 = _par[l]->s0();
+            RFLOAT s1 = _par[l]->s1();
 
-            _par[l].resample(_para.mLR, PAR_R);
-            _par[l].resample(_para.mLT, PAR_T);
+            _par[l]->resample(_para.mLR, PAR_R);
+            _par[l]->resample(_para.mLT, PAR_T);
 
-            _par[l].calVari(PAR_R);
-            _par[l].calVari(PAR_T);
+            _par[l]->calVari(PAR_R);
+            _par[l]->calVari(PAR_T);
 
-            _par[l].setK1(TSGSL_MAX_RFLOAT(k1 * gsl_pow_2(MIN_STD_FACTOR
-                                                   * pow(_par[l].nR(), -1.0 / 3)),
-                                      _par[l].k1()));
+            _par[l]->setK1(TSGSL_MAX_RFLOAT(k1 * gsl_pow_2(MIN_STD_FACTOR
+                                                   * pow(_par[l]->nR(), -1.0 / 3)),
+                                      _par[l]->k1()));
 
-            _par[l].setS0(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * s0 / sqrt(_par[l].nT()), _par[l].s0()));
+            _par[l]->setS0(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * s0 / sqrt(_par[l]->nT()), _par[l]->s0()));
 
-            _par[l].setS1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * s1 / sqrt(_par[l].nT()), _par[l].s1()));
+            _par[l]->setS1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * s1 / sqrt(_par[l]->nT()), _par[l]->s1()));
             ***/
 
-            if (phase >= ((_searchType == SEARCH_TYPE_GLOBAL)
-                        ? MIN_N_PHASE_PER_ITER_GLOBAL
-                        : MIN_N_PHASE_PER_ITER_LOCAL))
-            {
+                if (phase >= ((_searchType == SEARCH_TYPE_GLOBAL)
+                              ? MIN_N_PHASE_PER_ITER_GLOBAL
+                              : MIN_N_PHASE_PER_ITER_LOCAL))
+                {
 #ifdef OPTIMISER_COMPRESS_CRITERIA
-                double variRCur;
-                double variTCur;
-                double variDCur;
+                    double variRCur;
+                    double variTCur;
+                    double variDCur;
 #else
-                double k1Cur;
-                double k2Cur;
-                double k3Cur;
-                double tVariS0Cur;
-                double tVariS1Cur;
-                double dVariCur;
+                    double k1Cur;
+                    double k2Cur;
+                    double k3Cur;
+                    double tVariS0Cur;
+                    double tVariS1Cur;
+                    double dVariCur;
 #endif
 
 #ifdef OPTIMISER_COMPRESS_CRITERIA
-                variRCur = _par[l].variR();
-                variTCur = _par[l].variT();
-                variDCur = _par[l].variD();
+                    variRCur = par->variR();
+                    variTCur = par->variT();
+                    variDCur = par->variD();
 #else
-                _par[l].vari(k1Cur, k2Cur, k3Cur, tVariS0Cur, tVariS1Cur, dVariCur);
+                    par->vari(k1Cur, k2Cur, k3Cur, tVariS0Cur, tVariS1Cur, dVariCur);
 #endif
 
                 if (_para.mode == MODE_2D)
@@ -1580,8 +1800,8 @@ void Optimiser::expectation()
 #ifdef OPTIMISER_COMPRESS_CRITERIA
 
 #ifndef NAN_NO_CHECK
-                POINT_NAN_CHECK(_par[l].compressR());
-                POINT_NAN_CHECK(_par[l].compressT());
+                POINT_NAN_CHECK(par->compressR());
+                POINT_NAN_CHECK(par->compressT());
 #endif
 
                 if (variRCur < variR) variR = variRCur;
@@ -1611,10 +1831,12 @@ void Optimiser::expectation()
                     break;
                 }
             }
-        }
+        } // phase end
+        // } // if statement end
+        } // class end
 
         #pragma omp critical  (line1495)
-        if (_nI > (int)(_ID.size() / 10))
+        if (_nI > (int)(_ID.size() * _para.k / 10))
         {
             _nI = 0;
 
@@ -1629,33 +1851,118 @@ void Optimiser::expectation()
         {
             char filename[FILE_NAME_LENGTH];
 
+            /***
             snprintf(filename,
                      sizeof(filename),
                      "C_Particle_%04d_Round_%03d_Final.par",
                      _ID[l],
                      _iter);
-            save(filename, _par[l], PAR_C);
+            save(filename, *(_par[l]), PAR_C);
+            ***/
             snprintf(filename,
                      sizeof(filename),
                      "R_Particle_%04d_Round_%03d_Final.par",
                      _ID[l],
                      _iter);
-            save(filename, _par[l], PAR_R);
+            save(filename, *(_par[l]), PAR_R);
             snprintf(filename,
                      sizeof(filename),
                      "T_Particle_%04d_Round_%03d_Final.par",
                      _ID[l],
                      _iter);
-            save(filename, _par[l], PAR_T);
+            save(filename, *(_par[l]), PAR_T);
             snprintf(filename,
                      sizeof(filename),
                      "D_Particle_%04d_Round_%03d_Final.par",
                      _ID[l],
                      _iter);
-            save(filename, _par[l], PAR_D);
+            save(filename, *(_par[l]), PAR_D);
         }
 #endif
-    }
+    } // image end
+
+        #pragma omp parallel for
+        FOR_EACH_2D_IMAGE
+        {
+            vec baseLineT = vec::Zero(_para.k);
+
+            vec ratio = vec::Zero(_para.k);
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                baseLineT(t) = baseLine[t * _ID.size() + l];
+            }
+
+            /*
+            if ((l == 0) && (_commRank == HEMI_A_LEAD))
+            {
+                for (size_t t = 0; t < _para.k; t++)
+                {
+                    std::cout << "t = " << t << ", baseLine(t) = " << baseLineT(t) << std::endl;
+                }
+            }
+            */
+
+            RFLOAT maxBaseLine = baseLineT(value_max_index(baseLineT));
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                ratio(t) = exp(baseLineT(t) - maxBaseLine);
+            }
+
+            /*
+            // add [0, 1%] uniform distribution noise here
+            
+            gsl_rng* engine = get_random_engine();
+
+            RFLOAT range = 0.01 * ratio(value_min_index(ratio));
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                ratio(t) += range * TSGSL_rng_uniform(engine);
+            }
+            */
+
+            RFLOAT hh = ratio(value_max_index(ratio)) * PEAK_FACTOR_C;
+
+            for (size_t t = 0; t < _para.k; t++)
+            {
+                if (ratio(t) < hh)
+                {
+                    ratio(t) = 0;
+                }
+                else
+                {
+                    ratio(t) -= hh;
+                }
+            }
+
+            /* debug
+            if ((l == 0) && (_commRank == HEMI_A_LEAD))
+            {
+                for (size_t t = 0; t < _para.k; t++)
+                {
+                    std::cout << "t = " << t << ", ratio(t) = " << ratio(t) << std::endl;
+                }
+            }
+            */
+
+            _iRefPrev[l] = _iRef[l];
+
+            _iRef[l] = drawWithWeightIndex(ratio);
+
+            /*
+            if ((_iRef[l] < 0) ||
+                (_iRef[l] >= _para.k))
+            {
+                CLOG(FATAL, "LOGGER_SYS") << "_iRef[l] = " << _iRef[l];
+
+                abort();
+            }
+            */
+
+            _par[l] = &(_parAll[_iRef[l] * _ID.size() + l]);
+        }
 
     TSFFTW_free(poolPriRotP);
     TSFFTW_free(poolPriAllP);
@@ -1770,16 +2077,17 @@ void Optimiser::expectationG()
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Minimum Standard Deviation of Translation in Scanning Phase: "
                                    << scanMinStdT;
 
-        Particle par = _par[0].copy();
+        Particle par = _parAll[0].copy();
 
-        par.reset(_para.k, nR, nT, 1);
+        par.reset(nR, nT, 1);
 
-        FOR_EACH_2D_IMAGE
+        for (size_t t = 0; t < (size_t)_para.k; t++)
         {
-            // the previous top class, translation, rotation remain
-            par.copy(_par[l]);
+            FOR_EACH_2D_IMAGE
+            {
+                par.copy(_parAll[t * _ID.size() + l]);
+            }
         }
-
         //float time_use = 0;
         //struct timeval start;
         //struct timeval end;
@@ -1910,12 +2218,10 @@ void Optimiser::expectationG()
                                    pglk_datPI,
                                    pglk_ctfP,
                                    pglk_sigRcpP,
-                                   weightC + l * _para.k,
-                                   weightR + (long long)l * _para.k * nR,
-                                   weightT + (long long)l * _para.k * nT,
+                                   weightC + t * nImg + l,
+                                   weightR + (long long)t * nImg * nR + l * nR,
+                                   weightT + (long long)t * nImg * nT + l * nT,
                                    baseL + l,
-                                   t,
-                                   _para.k,
                                    nR,
                                    nT,
                                    _nPxl,
@@ -2095,215 +2401,141 @@ void Optimiser::expectationG()
         #pragma omp parallel for
         FOR_EACH_2D_IMAGE
         {
-            for (int iC = 0; iC < _para.k; iC++)
-                _par[l].setUC(weightC[l * _para.k + iC], iC);
-
-#ifdef OPTIMISER_PEAK_FACTOR_C
-            _par[l].setPeakFactor(PAR_C);
-            _par[l].keepHalfHeightPeak(PAR_C);
-#endif
-
-#ifdef OPTIMISER_SAVE_PARTICLES
-            if (_ID[l] < N_SAVE_IMG)
+            for (size_t t = 0; t < _para.k; t++)
             {
-                _par[l].sort();
+                Particle* par = &(_parAll[t * _ID.size() + l]);
 
-                char filename[FILE_NAME_LENGTH];
+                long long rShift;
+                if (_para.mode == MODE_3D)
+                {
+                    rShift = (long long)t * nImg * nR + l * nR;
+                }
+                else
+                {
+                    rShift = (long long)l * _para.k * nR + t * nR;
+                }
+                
+                for (int iR = 0; iR < nR; iR++)
+                {
+                    par->setUR(weightR[rShift + iR], iR);
+                }
 
-                snprintf(filename,
-                         sizeof(filename),
-                         "C_Particle_%04d_Round_%03d_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_C, true);
-            }
-#endif
-
-            _par[l].resample(_para.k, PAR_C);
-
-            size_t cls;
-            _par[l].rand(cls);
-
-            _par[l].setNC(1);
-            _par[l].setC(uvec::Constant(1, cls));
-            _par[l].setWC(dvec::Constant(1, 1));
-            _par[l].setUC(dvec::Constant(1, 1));
-
-            //for (int iR = 0; iR < nR; iR++)
-            //    _par[l].setUR(wR[cls](l, iR), iR);
-            //for (int iT = 0; iT < nT; iT++)
-            //    _par[l].setUT(wT[cls](l, iT), iT);
-
-            long long shiftR = (long long)l * _para.k * nR;
-            long long shiftT = (long long)l * _para.k * nT;
-
-            for (int iR = 0; iR < nR; iR++)
-                _par[l].setUR(weightR[shiftR + cls * nR + iR], iR);
-            for (int iT = 0; iT < nT; iT++)
-                _par[l].setUT(weightT[shiftT + cls * nT + iT], iT);
+                long long tShift;
+                if (_para.mode == MODE_3D)
+                {
+                    tShift = (long long)t * nImg * nT + l * nT;
+                }
+                else
+                {
+                    tShift = (long long)l * _para.k * nT + t * nT;
+                }
+                
+                for (int iT = 0; iT < nT; iT++)
+                {
+                    par->setUT(weightT[tShift + iT], iT);
+                }
 
 #ifdef OPTIMISER_PEAK_FACTOR_R
-            _par[l].setPeakFactor(PAR_R);
-            _par[l].keepHalfHeightPeak(PAR_R);
+                par->setPeakFactor(PAR_R);
+                par->keepHalfHeightPeak(PAR_R);
 #endif
 
 #ifdef OPTIMISER_PEAK_FACTOR_T
-            _par[l].setPeakFactor(PAR_T);
-            _par[l].keepHalfHeightPeak(PAR_T);
+                par->setPeakFactor(PAR_T);
+                par->keepHalfHeightPeak(PAR_T);
 #endif
 
+                par->resample(_para.mLR, PAR_R);
+                par->resample(_para.mLT, PAR_T);
 
-#ifdef OPTIMISER_SAVE_PARTICLES
-            if (_ID[l] < N_SAVE_IMG)
-            {
-                _par[l].sort();
-
-                char filename[FILE_NAME_LENGTH];
-
-                snprintf(filename,
-                         sizeof(filename),
-                         "R_Particle_%04d_Round_%03d_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_R, true);
-                snprintf(filename,
-                         sizeof(filename),
-                         "T_Particle_%04d_Round_%03d_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_T, true);
-                snprintf(filename,
-                         sizeof(filename),
-                         "D_Particle_%04d_Round_%03d_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_D, true);
-            }
-#endif
-
-            _par[l].resample(_para.mLR, PAR_R);
-            _par[l].resample(_para.mLT, PAR_T);
-
-            _par[l].calVari(PAR_R);
-            _par[l].calVari(PAR_T);
+                par->calVari(PAR_R);
+                par->calVari(PAR_T);
 
 #ifdef PARTICLE_RHO
-            _par[l].setRho(0);
-            // if there is only two resampled points in translation, it is possible making pho be 1
-            // then it will crash down
-            // make rho to be 0
+                par->setRho(0);
+                // if there is only two resampled points in translation, it is possible making pho be 1
+                // then it will crash down
+                // make rho to be 0
 #endif
 
-            if (_para.mode == MODE_2D)
-            {
+                if (_para.mode == MODE_2D)
+                {
 #ifdef OPTIMISER_SCAN_SET_MIN_STD_WITH_PERTURB
-                _par[l].setK1(TSGSL_MAX_RFLOAT((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
-                                                ? _para.perturbFactorSGlobal
-                                                : _para.perturbFactorSLocal))
-                                        * MIN_STD_FACTOR * scanMinStdR,
-                                          _par[l].k1()));
+                    par->setK1(TSGSL_MAX_RFLOAT((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                                                 ? _para.perturbFactorSGlobal
+                                                 : _para.perturbFactorSLocal))
+                                                 * MIN_STD_FACTOR * scanMinStdR,
+                                                 par->k1()));
 #else
-                _par[l].setK1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdR,
-                                               _par[l].k1()));
+                    par->setK1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdR,
+                                                par->k1()));
 #endif
-            }
-            else if (_para.mode == MODE_3D)
-            {
+                }
+                else if (_para.mode == MODE_3D)
+                {
 #ifdef OPTIMISER_SCAN_SET_MIN_STD_WITH_PERTURB
-                _par[l].setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
-                                                          ? _para.perturbFactorSGlobal
-                                                          : _para.perturbFactorSLocal))
-                                                  * MIN_STD_FACTOR * scanMinStdR),
-                                          _par[l].k1()));
-                _par[l].setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
-                                                          ? _para.perturbFactorSGlobal
-                                                          : _para.perturbFactorSLocal))
-                                                  * MIN_STD_FACTOR * scanMinStdR),
-                                          _par[l].k2()));
+                    par->setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                                                              ? _para.perturbFactorSGlobal
+                                                              : _para.perturbFactorSLocal))
+                                                      * MIN_STD_FACTOR * scanMinStdR),
+                                              par->k1()));
+                    par->setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                                                              ? _para.perturbFactorSGlobal
+                                                              : _para.perturbFactorSLocal))
+                                                      * MIN_STD_FACTOR * scanMinStdR),
+                                              par->k2()));
 
-                _par[l].setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
-                                                          ? _para.perturbFactorSGlobal
-                                                          : _para.perturbFactorSLocal))
-                                                   * MIN_STD_FACTOR * scanMinStdR),
-                                          _par[l].k3()));
+                    par->setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2((1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                                                              ? _para.perturbFactorSGlobal
+                                                              : _para.perturbFactorSLocal))
+                                                       * MIN_STD_FACTOR * scanMinStdR),
+                                              par->k3()));
 #else
-                _par[l].setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
-                                               _par[l].k1()));
-                _par[l].setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
-                                               _par[l].k2()));
-                _par[l].setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
-                                               _par[l].k3()));
+                    par->setK1(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
+                                                   par->k1()));
+                    par->setK2(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
+                                                   par->k2()));
+                    par->setK3(TSGSL_MAX_RFLOAT(TSGSL_pow_2(MIN_STD_FACTOR * scanMinStdR),
+                                               par->k3()));
 #endif
-            }
-            else
-            {
-                REPORT_ERROR("INEXISTENT MODE");
+                }
+                else
+                {
+                    REPORT_ERROR("INEXISTENT MODE");
 
-                abort();
-            }
+                    abort();
+                }
 
 #ifdef OPTIMISER_SCAN_SET_MIN_STD_WITH_PERTURB
-            _par[l].setS0(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                par->setS0(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                            ? _para.perturbFactorSGlobal
                                            : _para.perturbFactorSLocal)
                                     * MIN_STD_FACTOR * scanMinStdT,
-                                      _par[l].s0()));
+                                      par->s0()));
 
-            _par[l].setS1(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
+                par->setS1(TSGSL_MAX_RFLOAT(1.0 / ((_searchType == SEARCH_TYPE_GLOBAL)
                                            ? _para.perturbFactorSGlobal
                                            : _para.perturbFactorSLocal)
                                     * MIN_STD_FACTOR * scanMinStdT,
-                                      _par[l].s1()));
+                                      par->s1()));
 #else
-            _par[l].setS0(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
-                                           _par[l].s0()));
-            _par[l].setS1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
-                                           _par[l].s1()));
+                par->setS0(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
+                                           par->s0()));
+                par->setS1(TSGSL_MAX_RFLOAT(MIN_STD_FACTOR * scanMinStdT,
+                                           par->s1()));
 #endif
-
-#ifdef OPTIMISER_SAVE_PARTICLES
-            if (_ID[l] < N_SAVE_IMG)
-            {
-                _par[l].sort();
-
-                char filename[FILE_NAME_LENGTH];
-                snprintf(filename,
-                         sizeof(filename),
-                         "C_Particle_%04d_Round_%03d_Resampled_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_C);
-                snprintf(filename,
-                         sizeof(filename),
-                         "R_Particle_%04d_Round_%03d_Resampled_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_R);
-                snprintf(filename,
-                         sizeof(filename),
-                         "T_Particle_%04d_Round_%03d_Resampled_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_T);
-                snprintf(filename,
-                         sizeof(filename),
-                         "D_Particle_%04d_Round_%03d_Resampled_Initial.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_D);
             }
-#endif
         }
 
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search Performed.";
         BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search Performed.";
 
-//#ifdef VERBOSE_LEVEL_1
+#ifdef VERBOSE_LEVEL_1
         MPI_Barrier(_hemi);
 
         ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search in Hemisphere A Performed";
         BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Initial Phase of Global Search in Hemisphere B Performed";
-//#endif
+#endif
 
         delete[] weightC;
         delete[] weightR;
@@ -2403,18 +2635,6 @@ void Optimiser::expectationG()
     ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Local Search texture object done.";
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Local Search texture object done.";
 
-    vector<vector<int> > vecImg(_para.k);
-
-    if(_para.k != 1 && _para.mode == MODE_3D)
-    {
-        FOR_EACH_2D_IMAGE
-        {
-            size_t cls;
-            _par[l].c(cls, 0);
-            vecImg[cls].push_back(l);
-        }
-    }
-
     int cpyNum = omp_get_max_threads() / _nGPU;
     int cpyNumL = (omp_get_max_threads() % _nGPU == 0) ? cpyNum : cpyNum + 1;
 
@@ -2473,6 +2693,7 @@ void Optimiser::expectationG()
     double* dpara[omp_get_max_threads()];
     double* rot[omp_get_max_threads()];
 
+    RFLOAT* baseLine = new RFLOAT[_ID.size() * _para.k];
     omp_lock_t* mtx = new omp_lock_t[_nGPU];
 
     #pragma omp parallel for
@@ -2513,487 +2734,11 @@ void Optimiser::expectationG()
     MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> sigRcpPDustman(&_sigRcpP);
 
-    if (_para.mode == MODE_3D && _para.k != 1)
-    {
-        for (int itr = 0; itr < _para.k; itr++)
-        {
-
-            #pragma omp parallel for
-            for (int i = 0; i < _nGPU; i++)
-            {
-                Complex* temp = &((const_cast<Volume&>(_model.proj(itr).projectee3D()))[0]);
-                ExpectLocalV3D(_iGPU[i],
-                               mgr3D[i],
-                               temp,
-                               vdim);
-            }
-
-            #pragma omp parallel for schedule(dynamic) firstprivate(datPRDustman, datPIDustman, ctfPDustman, sigRcpPDustman)
-            for (size_t l = 0; l < vecImg[itr].size(); l++)
-            {
-                _datPR.endLastVisit(vecImg[itr][l] * _nPxl);
-                _datPI.endLastVisit(vecImg[itr][l] * _nPxl);
-
-                if (_searchType != SEARCH_TYPE_CTF)
-                {
-                    _ctfP.endLastVisit(vecImg[itr][l] * _nPxl);
-                }
-
-                _sigRcpP.endLastVisit(vecImg[itr][l] * _nPxl);
-
-                RFLOAT* datPR = &_datPR[vecImg[itr][l] * _nPxl];
-                RFLOAT* datPI = &_datPI[vecImg[itr][l] * _nPxl];
-                RFLOAT* sigRcpP = &_sigRcpP[vecImg[itr][l] * _nPxl];
-                RFLOAT* ctfP;
-                if (_searchType != SEARCH_TYPE_CTF)
-                {
-                    ctfP = &_ctfP[vecImg[itr][l] * _nPxl];
-                }
-
-                int threadId = omp_get_thread_num();
-                int gpuIdx;
-                if (threadId / cpyNum > _nGPU)
-                    gpuIdx = threadId - _nGPU * cpyNum;
-                else if (threadId / cpyNum == _nGPU)
-                    gpuIdx = threadId % cpyNum;
-                else
-                    gpuIdx = threadId / cpyNum;
-
-                omp_set_lock(&mtx[gpuIdx]);
-
-                if (threadId < _nGPU * cpyNum)
-                {
-                    ExpectLocalP(_iGPU[gpuIdx],
-                                 devdatPR[gpuIdx],
-                                 devdatPI[gpuIdx],
-                                 devctfP[gpuIdx],
-                                 devsigP[gpuIdx],
-                                 devdefO[gpuIdx],
-                                 datPR,
-                                 datPI,
-                                 ctfP,
-                                 sigRcpP,
-                                 _defocusP + vecImg[itr][l] * _nPxl,
-                                 threadId % cpyNum,
-                                 _nPxl,
-                                 _searchType);
-                }
-                else
-                {
-                    ExpectLocalP(_iGPU[gpuIdx],
-                                 devdatPR[gpuIdx],
-                                 devdatPI[gpuIdx],
-                                 devctfP[gpuIdx],
-                                 devsigP[gpuIdx],
-                                 devdefO[gpuIdx],
-                                 datPR,
-                                 datPI,
-                                 ctfP,
-                                 sigRcpP,
-                                 _defocusP + vecImg[itr][l] * _nPxl,
-                                 cpyNum,
-                                 _nPxl,
-                                 _searchType);
-                }
-
-                omp_unset_lock(&mtx[gpuIdx]);
-
-                int nPhaseWithNoVariDecrease = 0;
-
-#ifdef OPTIMISER_COMPRESS_CRITERIA
-                double variR = DBL_MAX;
-                double variT = DBL_MAX;
-                double variD = DBL_MAX;
-#else
-                double k1 = 1;
-                double k2 = 1;
-                double k3 = 1;
-                double tVariS0 = 5 * _para.transS;
-                double tVariS1 = 5 * _para.transS;
-                double dVari = 5 * _para.ctfRefineS;
-#endif
-                for (int phase = (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0; phase < MAX_N_PHASE_PER_ITER; phase++)
-                {
-#ifdef OPTIMISER_GLOBAL_PERTURB_LARGE
-                    if (phase == (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0)
-#else
-                    if (phase == 0)
-#endif
-                    {
-                        _par[vecImg[itr][l]].perturb(_para.perturbFactorL, PAR_R);
-                        _par[vecImg[itr][l]].perturb(_para.perturbFactorL, PAR_T);
-
-                        if (_searchType == SEARCH_TYPE_CTF)
-                            _par[vecImg[itr][l]].initD(_para.mLD, _para.ctfRefineS);
-                    }
-                    else
-                    {
-                        _par[vecImg[itr][l]].perturb((_searchType == SEARCH_TYPE_GLOBAL)
-                                      ? _para.perturbFactorSGlobal
-                                      : _para.perturbFactorSLocal,
-                                        PAR_R);
-                        _par[vecImg[itr][l]].perturb((_searchType == SEARCH_TYPE_GLOBAL)
-                                      ? _para.perturbFactorSGlobal
-                                      : _para.perturbFactorSLocal,
-                                        PAR_T);
-
-                        if (_searchType == SEARCH_TYPE_CTF)
-                            _par[vecImg[itr][l]].perturb(_para.perturbFactorSCTF, PAR_D);
-                    }
-
-                    for (int r = 0; r < _para.mLR; r++)
-                        oldR[threadId][r] = _par[vecImg[itr][l]].wR(r);
-
-                    for (int r = 0; r < _para.mLT; r++)
-                        oldT[threadId][r] = _par[vecImg[itr][l]].wT(r);
-
-                    for (int r = 0; r < _par[vecImg[itr][l]].nD(); r++)
-                        oldD[threadId][r] = _par[vecImg[itr][l]].wD(r);
-
-                    dvec2 t;
-                    for (int k = 0; k < _para.mLT; k++)
-                    {
-                        _par[vecImg[itr][l]].t(t, k);
-                        trans[threadId][k * 2] = t(0);
-                        trans[threadId][k * 2 + 1] = t(1);
-                    }
-
-                    dvec4 r;
-                    for (int k = 0; k < _para.mLR; k++)
-                    {
-                        _par[vecImg[itr][l]].quaternion(r, k);
-                        rot[threadId][k * 4] = r(0);
-                        rot[threadId][k * 4 + 1] = r(1);
-                        rot[threadId][k * 4 + 2] = r(2);
-                        rot[threadId][k * 4 + 3] = r(3);
-                    }
-
-                    if (_searchType == SEARCH_TYPE_CTF)
-                    {
-                        for (int k = 0; k < _para.mLD; k++)
-                            dpara[threadId][k] = (_par[vecImg[itr][l]].d())(k);
-                    }
-
-                    int streamId;
-                    int datId;
-                    int datShift;
-                    if (threadId < _nGPU * cpyNum)
-                    {
-                        datShift = threadId % cpyNum;
-                        streamId = (threadId % cpyNum) % streamNum;
-                        datId = gpuIdx * streamNum + streamId;
-                    }
-                    else
-                    {
-                        datShift = cpyNum;
-                        streamId = cpyNum % streamNum;
-                        datId = gpuIdx * streamNum + streamId;
-                    }
-
-                    omp_set_lock(&mtx[gpuIdx]);
-
-                    ExpectLocalRTD(_iGPU[gpuIdx],
-                                   mcp[datId],
-                                   oldR[threadId],
-                                   oldT[threadId],
-                                   oldD[threadId],
-                                   trans[threadId],
-                                   rot[threadId],
-                                   dpara[threadId]);
-
-                    if (_searchType == SEARCH_TYPE_CTF)
-                    {
-                        ExpectLocalPreI3D(_iGPU[gpuIdx],
-                                          datShift,
-                                          mgr3D[gpuIdx],
-                                          mcp[datId],
-                                          devdefO[gpuIdx],
-                                          devfreQ[gpuIdx],
-                                          deviCol[gpuIdx],
-                                          deviRow[gpuIdx],
-                                          _ctfAttr[vecImg[itr][l]].phaseShift,
-                                          _ctfAttr[vecImg[itr][l]].amplitudeContrast,
-                                          _K1[vecImg[itr][l]],
-                                          _K2[vecImg[itr][l]],
-                                          _para.pf,
-                                          _para.size,
-                                          vdim,
-                                          _nPxl,
-                                          interp);
-                    }
-                    else
-                    {
-                        ExpectLocalPreI3D(_iGPU[gpuIdx],
-                                          datShift,
-                                          mgr3D[gpuIdx],
-                                          mcp[datId],
-                                          devdefO[gpuIdx],
-                                          devfreQ[gpuIdx],
-                                          deviCol[gpuIdx],
-                                          deviRow[gpuIdx],
-                                          _ctfAttr[vecImg[itr][l]].phaseShift,
-                                          _ctfAttr[vecImg[itr][l]].amplitudeContrast,
-                                          0,
-                                          0,
-                                          _para.pf,
-                                          _para.size,
-                                          vdim,
-                                          _nPxl,
-                                          interp);
-                    }
-
-                    ExpectLocalM(_iGPU[gpuIdx],
-                                 datShift,
-                                 //vecImg[itr][l],
-                                 mcp[datId],
-                                 devdatPR[gpuIdx],
-                                 devdatPI[gpuIdx],
-                                 devctfP[gpuIdx],
-                                 devsigP[gpuIdx],
-                                 wC[threadId],
-                                 wR[threadId],
-                                 wT[threadId],
-                                 wD[threadId],
-                                 _par[vecImg[itr][l]].wC(0),
-                                 _nPxl);
-
-                    omp_unset_lock(&mtx[gpuIdx]);
-
-                    _par[vecImg[itr][l]].setUC(wC[threadId][0], 0);
-
-                    for (int iR = 0; iR < _para.mLR; iR++)
-                        _par[vecImg[itr][l]].setUR(wR[threadId][iR], iR);
-
-#ifdef OPTIMISER_PEAK_FACTOR_R
-                    _par[vecImg[itr][l]].keepHalfHeightPeak(PAR_R);
-#endif
-
-                    for (int iT = 0; iT < _para.mLT; iT++)
-                        _par[vecImg[itr][l]].setUT(wT[threadId][iT], iT);
-
-#ifdef OPTIMISER_PEAK_FACTOR_T
-                    _par[vecImg[itr][l]].keepHalfHeightPeak(PAR_T);
-#endif
-
-                    if (_searchType == SEARCH_TYPE_CTF)
-                    {
-                        for (int iD = 0; iD < _para.mLD; iD++)
-                            _par[vecImg[itr][l]].setUD(wD[threadId][iD], iD);
-
-#ifdef OPTIMISER_PEAK_FACTOR_D
-                        if (phase == 0) _par[vecImg[itr][l]].setPeakFactor(PAR_D);
-
-                        _par[vecImg[itr][l]].keepHalfHeightPeak(PAR_D);
-#endif
-                    }
-
-#ifdef OPTIMISER_SAVE_PARTICLES
-                    if (_ID[vecImg[itr][l]] < N_SAVE_IMG)
-                    {
-                        _par[vecImg[itr][l]].sort();
-
-                        char filename[FILE_NAME_LENGTH];
-
-                        snprintf(filename,
-                                 sizeof(filename),
-                                 "C_Particle_%04d_Round_%03d_%03d.par",
-                                 _ID[vecImg[itr][l]],
-                                 _iter,
-                                 phase);
-                        save(filename, _par[vecImg[itr][l]], PAR_C, true);
-                        snprintf(filename,
-                                 sizeof(filename),
-                                 "R_Particle_%04d_Round_%03d_%03d.par",
-                                 _ID[vecImg[itr][l]],
-                                 _iter,
-                                 phase);
-                        save(filename, _par[vecImg[itr][l]], PAR_R, true);
-                        snprintf(filename,
-                                 sizeof(filename),
-                                 "T_Particle_%04d_Round_%03d_%03d.par",
-                                 _ID[vecImg[itr][l]],
-                                 _iter,
-                                 phase);
-                        save(filename, _par[vecImg[itr][l]], PAR_T, true);
-                        snprintf(filename,
-                                 sizeof(filename),
-                                 "D_Particle_%04d_Round_%03d_%03d.par",
-                                 _ID[vecImg[itr][l]],
-                                 _iter,
-                                 phase);
-                        save(filename, _par[vecImg[itr][l]], PAR_D, true);
-                    }
-#endif
-
-                    _par[vecImg[itr][l]].calRank1st(PAR_R);
-                    _par[vecImg[itr][l]].calRank1st(PAR_T);
-
-                    _par[vecImg[itr][l]].calVari(PAR_R);
-                    _par[vecImg[itr][l]].calVari(PAR_T);
-
-                    _par[vecImg[itr][l]].resample(_para.mLR, PAR_R);
-                    _par[vecImg[itr][l]].resample(_para.mLT, PAR_T);
-
-                    if (_searchType == SEARCH_TYPE_CTF)
-                    {
-                        _par[vecImg[itr][l]].calRank1st(PAR_D);
-                        _par[vecImg[itr][l]].calVari(PAR_D);
-                        _par[vecImg[itr][l]].resample(_para.mLD, PAR_D);
-                    }
-
-                    if (phase >= ((_searchType == SEARCH_TYPE_GLOBAL)
-                                ? MIN_N_PHASE_PER_ITER_GLOBAL
-                                : MIN_N_PHASE_PER_ITER_LOCAL))
-                    {
-#ifdef OPTIMISER_COMPRESS_CRITERIA
-                        double variRCur;
-                        double variTCur;
-                        double variDCur;
-#else
-                        double k1Cur;
-                        double k2Cur;
-                        double k3Cur;
-                        double tVariS0Cur;
-                        double tVariS1Cur;
-                        double dVariCur;
-#endif
-
-#ifdef OPTIMISER_COMPRESS_CRITERIA
-                        variRCur = _par[vecImg[itr][l]].variR();
-                        variTCur = _par[vecImg[itr][l]].variT();
-                        variDCur = _par[vecImg[itr][l]].variD();
-#else
-                        _par[vecImg[itr][l]].vari(k1Cur, k2Cur, k3Cur, tVariS0Cur, tVariS1Cur, dVariCur);
-#endif
-
-                        if (_para.mode == MODE_2D)
-                        {
-#ifdef OPTIMISER_COMPRESS_CRITERIA
-                            if ((variRCur < variR * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (variTCur < variT * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (variDCur < variD * PARTICLE_FILTER_DECREASE_FACTOR))
-#else
-                            if ((k1Cur < k1 * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (tVariS0Cur < tVariS0 * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (tVariS1Cur < tVariS1 * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (dVariCur < dVari * PARTICLE_FILTER_DECREASE_FACTOR))
-#endif
-                            {
-                                // there is still room for searching
-                                nPhaseWithNoVariDecrease = 0;
-                            }
-                            else
-                                nPhaseWithNoVariDecrease += 1;
-                        }
-                        else if (_para.mode == MODE_3D)
-                        {
-#ifdef OPTIMISER_COMPRESS_CRITERIA
-                            if ((variRCur < variR * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (variTCur < variT * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (variDCur < variD * PARTICLE_FILTER_DECREASE_FACTOR))
-#else
-                            if ((k1Cur < k1 * gsl_pow_2(PARTICLE_FILTER_DECREASE_FACTOR)) ||
-                                (k2Cur < k2 * gsl_pow_2(PARTICLE_FILTER_DECREASE_FACTOR)) ||
-                                (k3Cur < k3 * gsl_pow_2(PARTICLE_FILTER_DECREASE_FACTOR)) ||
-                                (tVariS0Cur < tVariS0 * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (tVariS1Cur < tVariS1 * PARTICLE_FILTER_DECREASE_FACTOR) ||
-                                (dVariCur < dVari * PARTICLE_FILTER_DECREASE_FACTOR))
-#endif
-                            {
-                                // there is still room for searching
-                                nPhaseWithNoVariDecrease = 0;
-                            }
-                            else
-                                nPhaseWithNoVariDecrease += 1;
-                        }
-                        else
-                        {
-                            REPORT_ERROR("EXISTENT MODE");
-
-                            abort();
-                        }
-
-#ifdef OPTIMISER_COMPRESS_CRITERIA
-
-                        if (variRCur < variR) variR = variRCur;
-                        if (variTCur < variT) variT = variTCur;
-                        if (variDCur < variD) variD = variDCur;
-#else
-                        // make tVariS0, tVariS1, rVari the smallest variance ever got
-                        if (k1Cur < k1) k1 = k1Cur;
-                        if (k2Cur < k2) k2 = k2Cur;
-                        if (k3Cur < k3) k3 = k3Cur;
-                        if (tVariS0Cur < tVariS0) tVariS0 = tVariS0Cur;
-                        if (tVariS1Cur < tVariS1) tVariS1 = tVariS1Cur;
-                        if (dVariCur < dVari) dVari = dVariCur;
-#endif
-
-                        // break if in a few continuous searching, there is no improvement
-                        if (nPhaseWithNoVariDecrease == N_PHASE_WITH_NO_VARI_DECREASE)
-                        {
-                            _nP[vecImg[itr][l]] = phase;
-
-                            #pragma omp atomic
-                            _nF += phase;
-
-                            #pragma omp atomic
-                            _nI += 1;
-
-                            break;
-                        }
-                    }
-                }
-
-                #pragma omp critical  (line1495)
-                if (_nI > (int)(_ID.size() / 10))
-                {
-                    _nI = 0;
-
-                    nPer += 1;
-
-                    ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10 << "\% Expectation Performed";
-                    BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10 << "\% Expectation Performed";
-                }
-
-#ifdef OPTIMISER_SAVE_PARTICLES
-                if (_ID[vecImg[itr][l]] < N_SAVE_IMG)
-                {
-                    char filename[FILE_NAME_LENGTH];
-
-                    snprintf(filename,
-                             sizeof(filename),
-                             "C_Particle_%04d_Round_%03d_Final.par",
-                             _ID[vecImg[itr][l]],
-                             _iter);
-                    save(filename, _par[vecImg[itr][l]], PAR_C);
-                    snprintf(filename,
-                             sizeof(filename),
-                             "R_Particle_%04d_Round_%03d_Final.par",
-                             _ID[vecImg[itr][l]],
-                             _iter);
-                    save(filename, _par[vecImg[itr][l]], PAR_R);
-                    snprintf(filename,
-                             sizeof(filename),
-                             "T_Particle_%04d_Round_%03d_Final.par",
-                             _ID[vecImg[itr][l]],
-                             _iter);
-                    save(filename, _par[vecImg[itr][l]], PAR_T);
-                    snprintf(filename,
-                             sizeof(filename),
-                             "D_Particle_%04d_Round_%03d_Final.par",
-                             _ID[vecImg[itr][l]],
-                             _iter);
-                    save(filename, _par[vecImg[itr][l]], PAR_D);
-                }
-#endif
-            }
-        }
-    }
-    else
+    for (int cls = 0; cls < _para.k; cls++)
     {
         if (_para.mode == MODE_3D)
         {
-            Complex* temp = &((const_cast<Volume&>(_model.proj(0).projectee3D()))[0]);
+            Complex* temp = &((const_cast<Volume&>(_model.proj(cls).projectee3D()))[0]);
             #pragma omp parallel for
             for (int i = 0; i < _nGPU; i++)
             {
@@ -3003,10 +2748,13 @@ void Optimiser::expectationG()
                                vdim);
             }
         }
-
+        
+        nPer = 0;
         #pragma omp parallel for schedule(dynamic) firstprivate(datPRDustman, datPIDustman, ctfPDustman, sigRcpPDustman)
         FOR_EACH_2D_IMAGE
         {
+            Particle* par = &(_parAll[cls * _ID.size() + l]);
+        
             _datPR.endLastVisit(l * _nPxl);
             _datPI.endLastVisit(l * _nPxl);
 
@@ -3088,7 +2836,7 @@ void Optimiser::expectationG()
             double tVariS1 = 5 * _para.transS;
             double dVari = 5 * _para.ctfRefineS;
 #endif
-            for (int phase = (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0; phase < MAX_N_PHASE_PER_ITER; phase++)
+            for (int phase = ((_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0); phase < ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 2); phase++)
             {
 #ifdef OPTIMISER_GLOBAL_PERTURB_LARGE
                 if (phase == (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0)
@@ -3096,40 +2844,49 @@ void Optimiser::expectationG()
                 if (phase == 0)
 #endif
                 {
-                    _par[l].perturb(_para.perturbFactorL, PAR_R);
-                    _par[l].perturb(_para.perturbFactorL, PAR_T);
+                    par->perturb(_para.perturbFactorL, PAR_R);
+                    par->perturb(_para.perturbFactorL, PAR_T);
 
                     if (_searchType == SEARCH_TYPE_CTF)
-                        _par[l].initD(_para.mLD, _para.ctfRefineS);
+                        par->initD(_para.mLD, _para.ctfRefineS);
                 }
                 else
                 {
-                    _par[l].perturb((_searchType == SEARCH_TYPE_GLOBAL)
-                                  ? _para.perturbFactorSGlobal
-                                  : _para.perturbFactorSLocal,
-                                    PAR_R);
-                    _par[l].perturb((_searchType == SEARCH_TYPE_GLOBAL)
-                                  ? _para.perturbFactorSGlobal
-                                  : _para.perturbFactorSLocal,
-                                    PAR_T);
+                    if (_para.alignR)
+                    {
+                        par->perturb((_searchType == SEARCH_TYPE_GLOBAL)
+                                   ? _para.perturbFactorSGlobal
+                                   : _para.perturbFactorSLocal,
+                                     PAR_R);
+                    }
 
-                    if (_searchType == SEARCH_TYPE_CTF)
-                        _par[l].perturb(_para.perturbFactorSCTF, PAR_D);
+                    if (_para.alignT)
+                    {
+                        par->perturb((_searchType == SEARCH_TYPE_GLOBAL)
+                                   ? _para.perturbFactorSGlobal
+                                   : _para.perturbFactorSLocal,
+                                     PAR_T);
+                    }
+
+                    if (_para.alignD && _searchType == SEARCH_TYPE_CTF)
+                    {
+                        par->perturb(_para.perturbFactorSCTF, PAR_D);
+                    }
                 }
 
                 for (int itr = 0; itr < _para.mLR; itr++)
-                    oldR[threadId][itr] = _par[l].wR(itr);
+                    oldR[threadId][itr] = par->wR(itr);
 
                 for (int itr = 0; itr < _para.mLT; itr++)
-                    oldT[threadId][itr] = _par[l].wT(itr);
+                    oldT[threadId][itr] = par->wT(itr);
 
-                for (int itr = 0; itr < _par[l].nD(); itr++)
-                    oldD[threadId][itr] = _par[l].wD(itr);
+                for (int itr = 0; itr < par->nD(); itr++)
+                    oldD[threadId][itr] = par->wD(itr);
 
                 dvec2 t;
                 for (int k = 0; k < _para.mLT; k++)
                 {
-                    _par[l].t(t, k);
+                    par->t(t, k);
                     trans[threadId][k * 2] = t(0);
                     trans[threadId][k * 2 + 1] = t(1);
                 }
@@ -3139,7 +2896,7 @@ void Optimiser::expectationG()
                     dvec4 r;
                     for (int k = 0; k < _para.mLR; k++)
                     {
-                        _par[l].quaternion(r, k);
+                        par->quaternion(r, k);
                         rot[threadId][k * 2] = r(0);
                         rot[threadId][k * 2 + 1] = r(1);
                     }
@@ -3149,7 +2906,7 @@ void Optimiser::expectationG()
                     dvec4 r;
                     for (int k = 0; k < _para.mLR; k++)
                     {
-                        _par[l].quaternion(r, k);
+                        par->quaternion(r, k);
                         rot[threadId][k * 4] = r(0);
                         rot[threadId][k * 4 + 1] = r(1);
                         rot[threadId][k * 4 + 2] = r(2);
@@ -3159,12 +2916,9 @@ void Optimiser::expectationG()
 
                 if (_searchType == SEARCH_TYPE_CTF)
                 {
-                    for (int k = 0; k < _par[l].nD(); k++)
-                        dpara[threadId][k] = (_par[l].d())(k);
+                    for (int k = 0; k < par->nD(); k++)
+                        dpara[threadId][k] = (par->d())(k);
                 }
-
-                size_t cls;
-                _par[l].c(cls, 0);
 
                 int streamId;
                 int datId;
@@ -3292,96 +3046,92 @@ void Optimiser::expectationG()
                              wR[threadId],
                              wT[threadId],
                              wD[threadId],
-                             _par[l].wC(0),
+                             baseLine + cls * _ID.size() + l, 
                              _nPxl);
 
                 omp_unset_lock(&mtx[gpuIdx]);
 
-                _par[l].setUC(wC[threadId][0], 0);
-
                 for (int iR = 0; iR < _para.mLR; iR++)
-                    _par[l].setUR(wR[threadId][iR], iR);
+                    par->setUR(wR[threadId][iR], iR);
 
 #ifdef OPTIMISER_PEAK_FACTOR_R
-                _par[l].keepHalfHeightPeak(PAR_R);
+                par->keepHalfHeightPeak(PAR_R);
 #endif
 
                 for (int iT = 0; iT < _para.mLT; iT++)
-                    _par[l].setUT(wT[threadId][iT], iT);
+                    par->setUT(wT[threadId][iT], iT);
 
 #ifdef OPTIMISER_PEAK_FACTOR_T
-                _par[l].keepHalfHeightPeak(PAR_T);
+                par->keepHalfHeightPeak(PAR_T);
 #endif
 
                 if (_searchType == SEARCH_TYPE_CTF)
                 {
                     for (int iD = 0; iD < _para.mLD; iD++)
-                        _par[l].setUD(wD[threadId][iD], iD);
+                        par->setUD(wD[threadId][iD], iD);
 
 #ifdef OPTIMISER_PEAK_FACTOR_D
-                    if (phase == 0) _par[l].setPeakFactor(PAR_D);
+                    if (phase == 0) par->setPeakFactor(PAR_D);
 
-                    _par[l].keepHalfHeightPeak(PAR_D);
+                    par->keepHalfHeightPeak(PAR_D);
 #endif
                 }
 
 #ifdef OPTIMISER_SAVE_PARTICLES
                 if (_ID[l] < N_SAVE_IMG)
                 {
-                    _par[l].sort();
+                    par->sort();
 
                     char filename[FILE_NAME_LENGTH];
 
-                    snprintf(filename,
-                             sizeof(filename),
-                             "C_Particle_%04d_Round_%03d_%03d.par",
-                             _ID[l],
-                             _iter,
-                             phase);
-                    save(filename, _par[l], PAR_C, true);
                     snprintf(filename,
                              sizeof(filename),
                              "R_Particle_%04d_Round_%03d_%03d.par",
                              _ID[l],
                              _iter,
                              phase);
-                    save(filename, _par[l], PAR_R, true);
+                    save(filename, *par, PAR_R, true);
                     snprintf(filename,
                              sizeof(filename),
                              "T_Particle_%04d_Round_%03d_%03d.par",
                              _ID[l],
                              _iter,
                              phase);
-                    save(filename, _par[l], PAR_T, true);
+                    save(filename, *par, PAR_T, true);
                     snprintf(filename,
                              sizeof(filename),
                              "D_Particle_%04d_Round_%03d_%03d.par",
                              _ID[l],
                              _iter,
                              phase);
-                    save(filename, _par[l], PAR_D, true);
+                    save(filename, *par, PAR_D, true);
                 }
 #endif
 
-                _par[l].calRank1st(PAR_R);
-                _par[l].calRank1st(PAR_T);
-
-                _par[l].calVari(PAR_R);
-                _par[l].calVari(PAR_T);
-
-                _par[l].resample(_para.mLR, PAR_R);
-                _par[l].resample(_para.mLT, PAR_T);
-
-                if (_searchType == SEARCH_TYPE_CTF)
+                if (_para.alignR)
                 {
-                    _par[l].calRank1st(PAR_D);
-                    _par[l].calVari(PAR_D);
-                    _par[l].resample(_para.mLD, PAR_D);
+                    par->calRank1st(PAR_R);
+                    par->calVari(PAR_R);
+                    par->resample(_para.mLR, PAR_R);
+                }
+
+                if (_para.alignT)
+                {
+                    par->calRank1st(PAR_T);
+                    par->calVari(PAR_T);
+                    par->resample(_para.mLT, PAR_T);
+                }
+
+                if (_para.alignD && (_searchType == SEARCH_TYPE_CTF))
+                {
+                    par->calRank1st(PAR_D);
+                    par->calVari(PAR_D);
+                    par->resample(_para.mLD, PAR_D);
                 }
 
                 if (phase >= ((_searchType == SEARCH_TYPE_GLOBAL)
-                            ? MIN_N_PHASE_PER_ITER_GLOBAL
-                            : MIN_N_PHASE_PER_ITER_LOCAL))
+                              ? MIN_N_PHASE_PER_ITER_GLOBAL
+                              : MIN_N_PHASE_PER_ITER_LOCAL))
                 {
 #ifdef OPTIMISER_COMPRESS_CRITERIA
                     double variRCur;
@@ -3397,11 +3147,11 @@ void Optimiser::expectationG()
 #endif
 
 #ifdef OPTIMISER_COMPRESS_CRITERIA
-                    variRCur = _par[l].variR();
-                    variTCur = _par[l].variT();
-                    variDCur = _par[l].variD();
+                    variRCur = par->variR();
+                    variTCur = par->variT();
+                    variDCur = par->variD();
 #else
-                    _par[l].vari(k1Cur, k2Cur, k3Cur, tVariS0Cur, tVariS1Cur, dVariCur);
+                    par->vari(k1Cur, k2Cur, k3Cur, tVariS0Cur, tVariS1Cur, dVariCur);
 #endif
 
                     if (_para.mode == MODE_2D)
@@ -3454,8 +3204,8 @@ void Optimiser::expectationG()
 #ifdef OPTIMISER_COMPRESS_CRITERIA
 
 #ifndef NAN_NO_CHECK
-                    POINT_NAN_CHECK(_par[l].compressR());
-                    POINT_NAN_CHECK(_par[l].compressT());
+                    POINT_NAN_CHECK(par->compressR());
+                    POINT_NAN_CHECK(par->compressT());
 #endif
 
                     if (variRCur < variR) variR = variRCur;
@@ -3485,17 +3235,17 @@ void Optimiser::expectationG()
                         break;
                     }
                 }
-            }
+            }//phase end
 
             #pragma omp critical  (line1495)
-            if (_nI > (int)(_ID.size() / 10))
+            if (_nI > (int)(_ID.size() * _para.k / 10))
             {
                 _nI = 0;
 
                 nPer += 1;
 
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10 << "\% Expectation Performed";
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10 << "\% Expectation Performed";
+                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", class " << cls << ", " << nPer * 10 << "\% Expectation Performed";
+                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", class " << cls << ", " << nPer * 10 << "\% Expectation Performed";
             }
 
 #ifdef OPTIMISER_SAVE_PARTICLES
@@ -3505,32 +3255,66 @@ void Optimiser::expectationG()
 
                 snprintf(filename,
                          sizeof(filename),
-                         "C_Particle_%04d_Round_%03d_Final.par",
-                         _ID[l],
-                         _iter);
-                save(filename, _par[l], PAR_C);
-                snprintf(filename,
-                         sizeof(filename),
                          "R_Particle_%04d_Round_%03d_Final.par",
                          _ID[l],
                          _iter);
-                save(filename, _par[l], PAR_R);
+                save(filename, *(_par[l]), PAR_R);
                 snprintf(filename,
                          sizeof(filename),
                          "T_Particle_%04d_Round_%03d_Final.par",
                          _ID[l],
                          _iter);
-                save(filename, _par[l], PAR_T);
+                save(filename, *(_par[l]), PAR_T);
                 snprintf(filename,
                          sizeof(filename),
                          "D_Particle_%04d_Round_%03d_Final.par",
                          _ID[l],
                          _iter);
-                save(filename, _par[l], PAR_D);
+                save(filename, *(_par[l]), PAR_D);
             }
 #endif
+        }//image end
+
+    }//class end
+
+    #pragma omp parallel for
+    FOR_EACH_2D_IMAGE
+    {
+        vec baseLineT = vec::Zero(_para.k);
+
+        vec ratio = vec::Zero(_para.k);
+
+        for (size_t t = 0; t < _para.k; t++)
+        {
+            baseLineT(t) = baseLine[t * _ID.size() + l];
         }
 
+        RFLOAT maxBaseLine = baseLineT(value_max_index(baseLineT));
+
+        for (size_t t = 0; t < _para.k; t++)
+        {
+            ratio(t) = exp(baseLineT(t) - maxBaseLine);
+        }
+
+        RFLOAT hh = ratio(value_max_index(ratio)) * PEAK_FACTOR_C;
+
+        for (size_t t = 0; t < _para.k; t++)
+        {
+            if (ratio(t) < hh)
+            {
+                ratio(t) = 0;
+            }
+            else
+            {
+                ratio(t) -= hh;
+            }
+        }
+
+        _iRefPrev[l] = _iRef[l];
+
+        _iRef[l] = drawWithWeightIndex(ratio);
+
+        _par[l] = &(_parAll[_iRef[l] * _ID.size() + l]);
     }
 
     ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Freeing Space for Pre-calculation in Expectation";
@@ -3998,6 +3782,17 @@ void Optimiser::run()
         MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Standard Deviation of Rotation Change : "
                                    << _model.stdRChange();
 
+        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Calculating Changes of Classification Between Iterations";
+        refreshClassChange();
+
+#ifdef VERBOSE_LEVEL_1
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Changes of Classification Between Iterations Calculated";
+#endif
+
+        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Classification Change : " << _model.cChange();
+
         if (!_para.skipM)
         {
 #ifdef OPTIMISER_LOG_MEM_USAGE
@@ -4160,44 +3955,48 @@ void Optimiser::run()
 
         _model.updateR(_para.thresCutoffFSC);
 
+        if (_para.k == 1)
+        {
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
-        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
-                                   << _model.increaseR()
-                                   << ", as the Rotation Change is "
-                                   << _model.rChange()
-                                   << " and the Previous Rotation Change is "
-                                   << _model.rChangePrev();
+            MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
+                                       << _model.increaseR()
+                                       << ", as the Rotation Change is "
+                                       << _model.rChange()
+                                       << " and the Previous Rotation Change is "
+                                       << _model.rChangePrev();
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_R_T_VARI
-        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
-                                   << _model.increaseR()
-                                   << ", as the Translation Variance is "
-                                   << _model.tVariS0()
-                                   << ", "
-                                   << _model.tVariS1()
-                                   << ", and the Previous Translation Variance is "
-                                   << _model.tVariS0Prev()
-                                   << ", "
-                                   << _model.tVariS1Prev();
+            MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
+                                       << _model.increaseR()
+                                       << ", as the Translation Variance is "
+                                       << _model.tVariS0()
+                                       << ", "
+                                       << _model.tVariS1()
+                                       << ", and the Previous Translation Variance is "
+                                       << _model.tVariS0Prev()
+                                       << ", "
+                                       << _model.tVariS1Prev();
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_FSC
-        MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
-                                   << _model.increaseR()
-                                   << ", as the FSC Area is "
-                                   << _model.fscArea()
-                                   << ", and the Previous FSC Area is "
-                                   << _model.fscAreaPrev();
+            MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
+                                       << _model.increaseR()
+                                       << ", as the FSC Area is "
+                                       << _model.fscArea()
+                                       << ", and the Previous FSC Area is "
+                                       << _model.fscAreaPrev();
 #endif
-
-        /***
-        if (_iter == 0)
-        {
-            _model.resetTVari();
-            _model.resetFSCArea();
         }
-        ***/
+        else
+        {
+            MLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Increasing Cutoff Frequency or Not: "
+                                       << _model.increaseR()
+                                       << ", as the Classification Change is "
+                                       << _model.cChange()
+                                       << ", and the Previous Classification Change is "
+                                       << _model.cChangePrev();
+        }
 
         if (_model.r() > _model.rT())
         {
@@ -4206,7 +4005,9 @@ void Optimiser::run()
             //_model.resetTVari();
             //_model.resetFSCArea();
 
+            _model.resetCChange();
             _model.resetRChange();
+
             _model.setNRChangeNoDecrease(0);
 
             _model.setNTopResNoImprove(0);
@@ -5577,20 +5378,43 @@ void Optimiser::initParticles()
 {
     IF_MASTER return;
 
-    _par.clear();
+    _parAll.clear();
+
+    // _par.resize(_ID.size());
+    _parAll.resize(_ID.size() * _para.k);
+
+    for (size_t t = 0; t < _para.k; t++)
+    {
+        #pragma omp parallel for
+        FOR_EACH_2D_IMAGE
+        {
+#ifdef VERBOSE_LEVEL_3
+            ALOG(INFO, "LOGGER_SYS") << "Initialising Particle Filter for Image " << _ID[l];
+            BLOG(INFO, "LOGGER_SYS") << "Initialising Particle Filter for Image " << _ID[l];
+#endif
+            _parAll[t * _ID.size() + l].init(_para.mode,
+                                             _para.transS,
+                                             TRANS_Q,
+                                             &_sym);
+        }
+    }
+
+    _iRefPrev.resize(_ID.size());
+
+    _iRef.resize(_ID.size());
+
     _par.resize(_ID.size());
+
+    gsl_rng* engine = get_random_engine();
 
     #pragma omp parallel for
     FOR_EACH_2D_IMAGE
     {
-#ifdef VERBOSE_LEVEL_3
-        ALOG(INFO, "LOGGER_SYS") << "Initialising Particle Filter for Image " << _ID[l];
-        BLOG(INFO, "LOGGER_SYS") << "Initialising Particle Filter for Image " << _ID[l];
-#endif
-        _par[l].init(_para.mode,
-                     _para.transS,
-                     TRANS_Q,
-                     &_sym);
+        _iRefPrev[l] = gsl_rng_uniform_int(engine, _para.k);
+
+        _iRef[l] = gsl_rng_uniform_int(engine, _para.k);
+
+        _par[l] = &_parAll[_iRef[l] * _ID.size() + l]; // in initialisation, assign it to the first class
     }
 }
 
@@ -5644,19 +5468,6 @@ void Optimiser::loadParticles()
 {
     IF_MASTER return;
 
-    /***
-    RFLOAT stdR, stdT;
-
-    avgStdR(stdR);
-    avgStdT(stdT);
-
-    ALOG(INFO, "LOGGER_SYS") << "Average Standard Deviation of Rotation: " << stdR;
-    BLOG(INFO, "LOGGER_SYS") << "Average Standard Deviation of Rotation: " << stdR;
-
-    ALOG(INFO, "LOGGER_SYS") << "Average Standard Deviation of Translation: " << stdT;
-    BLOG(INFO, "LOGGER_SYS") << "Average Standard Deviation of Translation: " << stdT;
-    ***/
-
     // size_t cls;
     dvec4 quat;
     dvec2 tran;
@@ -5664,16 +5475,12 @@ void Optimiser::loadParticles()
 
     double k1, k2, k3, stdTX, stdTY, stdD, score;
 
-    //#pragma omp parallel for private(cls, quat, stdR, tran, d)
-
-    #pragma omp parallel for private(quat, tran, d, k1, k2, k3, stdTX, stdTY, stdD)
+    #pragma omp parallel for private(quat, tran, d, k1, k2, k3, stdTX, stdTY, stdD, score)
     FOR_EACH_2D_IMAGE
     {
-        #pragma omp critical  (line2883)
+        #pragma omp critical (line2883)
         {
-            // cls = _db.cls(_ID[l]);
             quat = _db.quat(_ID[l]);
-            //stdR = _db.stdR(_ID[l]);
             tran = _db.tran(_ID[l]);
             d = _db.d(_ID[l]);
 
@@ -5688,97 +5495,36 @@ void Optimiser::loadParticles()
             score = _db.score(_ID[l]);
         }
 
-        _par[l].load(_para.mLR,
-                     _para.mLT,
-                     1,
-                     quat,
-                     k1,
-                     k2,
-                     k3,
-                     tran,
-                     stdTX,
-                     stdTY,
-                     d,
-                     stdD,
-                     score);
+        for (size_t t = 0; t < _para.k; t++)
+        {
+            _parAll[t * _ID.size() + l].load(_para.mLR,
+                                             _para.mLT,
+                                             1,
+                                             quat,
+                                             k1,
+                                             k2,
+                                             k3,
+                                             tran,
+                                             stdTX,
+                                             stdTY,
+                                             d,
+                                             stdD,
+                                             score);
+        }
     }
-
-    /***
-    for (int l = 0; l < 10; l++)
-    {
-        ALOG(INFO, "LOGGER_SYS") << "Compress of "
-                                 << l
-                                 << " : "
-                                 << _par[l].compress();
-    }
-    ***/
 }
 
 void Optimiser::refreshRotationChange()
 {
-    /***
-    RFLOAT mean = 0;
-    RFLOAT std = 0;
-
-    int num = 0;
-
-    NT_MASTER
-    {
-        FOR_EACH_2D_IMAGE
-        {
-            RFLOAT diffR = _par[l].diffTopR();
-
-            if (_par[l].diffTopC())
-            {
-                mean += diffR;
-                std += TSGSL_pow_2(diffR);
-                num += 1;
-            }
-        }
-    }
-
-    MPI_Allreduce(MPI_IN_PLACE,
-                  &mean,
-                  1,
-                  TS_MPI_DOUBLE,
-                  MPI_SUM,
-                  MPI_COMM_WORLD);
-
-    MPI_Allreduce(MPI_IN_PLACE,
-                  &std,
-                  1,
-                  TS_MPI_DOUBLE,
-                  MPI_SUM,
-                  MPI_COMM_WORLD);
-
-    MPI_Allreduce(MPI_IN_PLACE,
-                  &num,
-                  1,
-                  MPI_INT,
-                  MPI_SUM,
-                  MPI_COMM_WORLD);
-
-    mean /= num;
-
-    std = sqrt(std / num - TSGSL_pow_2(mean));
-    ***/
-
     vec rc = vec::Zero(_nPar);
 
     NT_MASTER
     {
         FOR_EACH_2D_IMAGE
         {
-            RFLOAT diff = _par[l].diffTopR();
+            RFLOAT diff = _par[l]->diffTopR();
 
             rc(_ID[l]) = diff;
-
-            /***
-            if (_par[l].diffTopC())
-                rc(_ID[l]) = _par[l].diffTopR();
-            else
-                rc(_ID[l]) = 1;
-            ***/
         }
     }
 
@@ -5788,20 +5534,6 @@ void Optimiser::refreshRotationChange()
                   TS_MPI_DOUBLE,
                   MPI_SUM,
                   MPI_COMM_WORLD);
-/***
-    int nNoZero = 0;
-    for (int i = 0; i < _nPar; i++)
-        if (rc(i) != 0)
-            nNoZero += 1;
-    ***/
-
-    //vec rcNoZero = vec::Zero(nNoZero);
-
-    //TSGSL_sort_largest(rcNoZero.data(), nNoZero, rc.data(), 1, _nPar);
-    //TSGSL_sort_largest(rc.data(), nNoZero, rc.data(), 1, _nPar);
-
-    //RFLOAT mean = TSGSL_stats_mean(rc.data(), 1, _nPar);
-    //RFLOAT std = TSGSL_stats_sd_m(rc.data(), 1, _nPar, mean);
 
     RFLOAT mean, std;
     TSGSL_sort(rc.data(), 1, _nPar);
@@ -5810,6 +5542,31 @@ void Optimiser::refreshRotationChange()
 
     _model.setRChange(mean);
     _model.setStdRChange(std);
+}
+
+void Optimiser::refreshClassChange()
+{
+    int cc = 0;
+
+    NT_MASTER
+    {
+        FOR_EACH_2D_IMAGE
+        {
+            if (_iRefPrev[l] != _iRef[l])
+            {
+                cc += 1;
+            }
+        }
+    }
+
+    MPI_Allreduce(MPI_IN_PLACE,
+                  &cc,
+                  1,
+                  MPI_INT,
+                  MPI_SUM,
+                  MPI_COMM_WORLD);
+
+    _model.setCChange((RFLOAT)cc / _nPar);
 }
 
 void Optimiser::refreshClassDistr()
@@ -5825,7 +5582,9 @@ void Optimiser::refreshClassDistr()
         {
             for (int k = 0; k < _para.k; k++)
             {
-                _par[l].rand(cls);
+                // _par[l]->rand(cls);
+
+                cls = _iRef[l];
 
                 #pragma omp atomic
                 _cDistr(cls) += 1;
@@ -5971,11 +5730,14 @@ void Optimiser::refreshVariance()
         {
 #ifdef OPTIMISER_REFRESH_VARIANCE_BEST_CLASS
             size_t cls;
-            _par[l].rand(cls);
+            _par[l]->rand(cls);
+
+            // ADDED
+            cls = _par[l].topC();
 
             if (cls == (size_t)bestClass)
             {
-                _par[l].vari(rVari,
+                _par[l]->vari(rVari,
                              tVariS0,
                              tVariS1,
                              dVari);
@@ -5988,7 +5750,7 @@ void Optimiser::refreshVariance()
                 dVari = GSL_NAN;
             }
 #else
-            _par[l].vari(rVari,
+            _par[l]->vari(rVari,
                          tVariS0,
                          tVariS1,
                          dVari);
@@ -6106,7 +5868,6 @@ void Optimiser::refreshScale(const bool coord,
     {
         Image img(size(), size(), FT_SPACE);
 
-        size_t cls;
         dmat22 rot2D;
         dmat33 rot3D;
         dvec2 tran;
@@ -6155,11 +5916,11 @@ void Optimiser::refreshScale(const bool coord,
             {
                 if (_para.mode == MODE_2D)
                 {
-                    _par[l].rank1st(cls, rot2D, tran, d);
+                    _par[l]->rank1st(rot2D, tran, d);
                 }
                 else if (_para.mode == MODE_3D)
                 {
-                    _par[l].rank1st(cls, rot3D, tran, d);
+                    _par[l]->rank1st(rot3D, tran, d);
                 }
                 else
                     REPORT_ERROR("INEXISTENT MODE");
@@ -6168,24 +5929,24 @@ void Optimiser::refreshScale(const bool coord,
                 {
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
 #ifdef OPTIMISER_SCALE_MASK
-                    _model.proj(cls).project(img, rot2D, tran, _para.nThreadsPerProcess);
+                    _model.proj(_iRef[l]).project(img, rot2D, tran, _para.nThreadsPerProcess);
 #else
-                    _model.proj(cls).project(img, rot2D, tran - _offset[l], _para.nThreadsPerProcess);
+                    _model.proj(_iRef[l]).project(img, rot2D, tran - _offset[l], _para.nThreadsPerProcess);
 #endif
 #else
-                    _model.proj(cls).project(img, rot2D, tran, _para.nThreadsPerProcess);
+                    _model.proj(_iRef[l]).project(img, rot2D, tran, _para.nThreadsPerProcess);
 #endif
                 }
                 else if (_para.mode == MODE_3D)
                 {
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
 #ifdef OPTIMISER_SCALE_MASK
-                    _model.proj(cls).project(img, rot3D, tran, _para.nThreadsPerProcess);
+                    _model.proj(_iRef[l]).project(img, rot3D, tran, _para.nThreadsPerProcess);
 #else
-                    _model.proj(cls).project(img, rot3D, tran - _offset[l], _para.nThreadsPerProcess);
+                    _model.proj(_iRef[l]).project(img, rot3D, tran - _offset[l], _para.nThreadsPerProcess);
 #endif
 #else
-                    _model.proj(cls).project(img, rot3D, tran, _para.nThreadsPerProcess);
+                    _model.proj(_iRef[l]).project(img, rot3D, tran, _para.nThreadsPerProcess);
 #endif
                 }
                 else
@@ -6407,7 +6168,7 @@ void Optimiser::reCentreImg()
         _img.endLastVisit(l);
         _imgOri.endLastVisit(l);
 
-        _par[l].rank1st(tran);
+        _par[l]->rank1st(tran);
 
         _offset[l](0) -= tran(0);
         _offset[l](1) -= tran(1);
@@ -6418,10 +6179,20 @@ void Optimiser::reCentreImg()
                   _offset[l](1),
                   1);
 
-        _par[l].setT(_par[l].t().rowwise() - tran.transpose());
+        for (int t = 0; t < _para.k; t++)
+        {
+            _parAll[t * _ID.size() + l].setT(_parAll[t * _ID.size() + l].t().rowwise() - tran.transpose());
 
-        _par[l].setTopT(_par[l].topT() - tran);
-        _par[l].setTopTPrev(_par[l].topTPrev() - tran);
+            _parAll[t * _ID.size() + l].setTopT(_parAll[t * _ID.size() + l].topT() - tran);
+            _parAll[t * _ID.size() + l].setTopTPrev(_parAll[t * _ID.size() + l].topTPrev() - tran);
+        }
+
+        /***
+        _par[l]->setT(_par[l]->t().rowwise() - tran.transpose());
+
+        _par[l]->setTopT(_par[l]->topT() - tran);
+        _par[l]->setTopTPrev(_par[l]->topTPrev() - tran);
+        ***/
     }
 }
 #endif
@@ -6528,8 +6299,6 @@ void Optimiser::normCorrection()
 
     vec norm = vec::Zero(_nPar);
 
-    size_t cls;
-
     dmat22 rot2D;
     dmat33 rot3D;
 
@@ -6541,7 +6310,7 @@ void Optimiser::normCorrection()
     {
         MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
         MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
-        #pragma omp parallel for private(cls, rot2D, rot3D, tran, d) firstprivate(imgDustman, imgOriDustman)
+        #pragma omp parallel for private(rot2D, rot3D, tran, d) firstprivate(imgDustman, imgOriDustman)
         FOR_EACH_2D_IMAGE
         {
             _img.endLastVisit(l);
@@ -6564,32 +6333,30 @@ void Optimiser::normCorrection()
 
                 if (_para.mode == MODE_2D)
                 {
-                    //_par[l].rand(cls, rot2D, tran, d);
-                    _par[l].rank1st(cls, rot2D, tran, d);
+                    _par[l]->rank1st(rot2D, tran, d);
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
 #ifdef OPTIMISER_NORM_MASK
-                    _model.proj(cls).project(img, rot2D, tran, 1);
+                    _model.proj(_iRef[l]).project(img, rot2D, tran, 1);
 #else
-                    _model.proj(cls).project(img, rot2D, tran - _offset[l], 1);
+                    _model.proj(_iRef[l]).project(img, rot2D, tran - _offset[l], 1);
 #endif
 #else
-                    _model.proj(cls).project(img, rot2D, tran, 1);
+                    _model.proj(_iRef[l]).project(img, rot2D, tran, 1);
 #endif
                 }
                 else if (_para.mode == MODE_3D)
                 {
-                    //_par[l].rand(cls, rot3D, tran, d);
-                    _par[l].rank1st(cls, rot3D, tran, d);
+                    _par[l]->rank1st(rot3D, tran, d);
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
 #ifdef OPTIMISER_NORM_MASK
-                    _model.proj(cls).project(img, rot3D, tran, 1);
+                    _model.proj(_iRef[l]).project(img, rot3D, tran, 1);
 #else
-                    _model.proj(cls).project(img, rot3D, tran - _offset[l], 1);
+                    _model.proj(_iRef[l]).project(img, rot3D, tran - _offset[l], 1);
 #endif
 #else
-                    _model.proj(cls).project(img, rot3D, tran, 1);
+                    _model.proj(_iRef[l]).project(img, rot3D, tran, 1);
 #endif
                 }
 
@@ -6758,8 +6525,6 @@ void Optimiser::allReduceSigma(const bool mask,
     ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Recalculating Sigma";
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Recalculating Sigma";
 
-    size_t cls;
-
     dmat22 rot2D;
     dmat33 rot3D;
 
@@ -6775,7 +6540,7 @@ void Optimiser::allReduceSigma(const bool mask,
 
     MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
     MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
-    #pragma omp parallel for private(cls, rot2D, rot3D, tran, d) schedule(dynamic) firstprivate(imgDustman, imgOriDustman)
+    #pragma omp parallel for private(rot2D, rot3D, tran, d) schedule(dynamic) firstprivate(imgDustman, imgOriDustman)
     FOR_EACH_2D_IMAGE
     {
         _img.endLastVisit(l);
@@ -6791,7 +6556,7 @@ void Optimiser::allReduceSigma(const bool mask,
             RFLOAT w;
 
             if (_para.parGra)
-                w = _par[l].compressR();
+                w = _par[l]->compressR();
             else
                 w = 1;
 #else
@@ -6813,33 +6578,33 @@ void Optimiser::allReduceSigma(const bool mask,
             if (_para.mode == MODE_2D)
             {
 #ifdef OPTIMISER_SIGMA_RANK1ST
-                _par[l].rank1st(cls, rot2D, tran, d);
+                _par[l]->rank1st(rot2D, tran, d);
 #else
-                _par[l].rand(cls, rot2D, tran, d);
+                _par[l]->rand(rot2D, tran, d);
 #endif
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                 _model.proj(cls).project(imgM, rot2D, tran, 1);
-                 _model.proj(cls).project(imgN, rot2D, tran - _offset[l], 1);
+                 _model.proj(_iRef[l]).project(imgM, rot2D, tran, 1);
+                 _model.proj(_iRef[l]).project(imgN, rot2D, tran - _offset[l], 1);
 #else
-                 _model.proj(cls).project(imgM, rot2D, tran, 1);
-                 _model.proj(cls).project(imgN, rot2D, tran, 1);
+                 _model.proj(_iRef[l]).project(imgM, rot2D, tran, 1);
+                 _model.proj(_iRef[l]).project(imgN, rot2D, tran, 1);
 #endif
             }
             else if (_para.mode == MODE_3D)
             {
 #ifdef OPTIMISER_SIGMA_RANK1ST
-                _par[l].rank1st(cls, rot3D, tran, d);
+                _par[l]->rank1st(rot3D, tran, d);
 #else
-                _par[l].rand(cls, rot3D, tran, d);
+                _par[l]->rand(rot3D, tran, d);
 #endif
 
 #ifdef OPTIMISER_RECENTRE_IMAGE_EACH_ITERATION
-                _model.proj(cls).project(imgM, rot3D, tran, 1);
-                _model.proj(cls).project(imgN, rot3D, tran - _offset[l], 1);
+                _model.proj(_iRef[l]).project(imgM, rot3D, tran, 1);
+                _model.proj(_iRef[l]).project(imgN, rot3D, tran - _offset[l], 1);
 #else
-                _model.proj(cls).project(imgM, rot3D, tran, 1);
-                _model.proj(cls).project(imgN, rot3D, tran, 1);
+                _model.proj(_iRef[l]).project(imgM, rot3D, tran, 1);
+                _model.proj(_iRef[l]).project(imgN, rot3D, tran, 1);
 #endif
             }
 
@@ -7192,8 +6957,13 @@ void Optimiser::reconstructRef(const bool fscFlag,
             #pragma omp parallel for
             FOR_EACH_2D_IMAGE
             {
+                if (_searchType != SEARCH_TYPE_STOP)
+                {
+                    _par[l]->calScore();
+                }
+                
                 if (_para.parGra && _para.k == 1)
-                    w[l] = _par[l].compressR();
+                    w[l] = _par[l]->compressR();
                 else
                     w[l] = 1;
 
@@ -7216,14 +6986,20 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 int shift = l * _para.mReco;
                 for (int m = 0; m < _para.mReco; m++)
                 {
-                    size_t cls;
                     dvec4 quat;
                     dvec2 tran;
                     double d;
 
-                    _par[l].rand(cls, quat, tran, d);
-
-                    nc[shift + m] = cls;
+                    if (_para.k == 1)
+                    {
+                        _par[l]->rand(quat, tran, d);
+                    }
+                    else
+                    {
+                        _par[l]->rank1st(quat, tran, d);
+                    }
+                    
+                    nc[shift + m] = _iRef[l];
                     nt[(shift + m) * 2] = tran(0);
                     nt[(shift + m) * 2 + 1] = tran(1);
                     nr[(shift + m) * 2] = quat(0);
@@ -7367,7 +7143,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 FOR_EACH_2D_IMAGE
                 {
                     if (_para.parGra && _para.k == 1)
-                        w[l] = _par[l].compressR();
+                        w[l] = _par[l]->compressR();
                     else
                         w[l] = 1;
 
@@ -7389,9 +7165,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
                     for (int m = 0; m < _para.mReco; m++)
                     {
-                        size_t cls;
-                        _par[l].rand(cls);
-                        nc[cls * _ID.size() + l]++;
+                        nc[_iRef[l] * _ID.size() + l]++;
                     }
                 }
 
@@ -7435,9 +7209,15 @@ void Optimiser::reconstructRef(const bool fscFlag,
                                 dvec4 quat;
                                 dvec2 tran;
                                 double d;
-                                _par[l].rand(quat);
-                                _par[l].rand(tran);
-                                _par[l].rand(d);
+                                
+                                if (_para.k == 1)
+                                {
+                                    _par[l]->rand(quat, tran, d);
+                                }
+                                else
+                                {
+                                    _par[l]->rank1st(quat, tran, d);
+                                }
 
                                 nt[(shift + m) * 2] = tran(0);
                                 nt[(shift + m) * 2 + 1] = tran(1);
@@ -7578,7 +7358,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 FOR_EACH_2D_IMAGE
                 {
                     if (_para.parGra && _para.k == 1)
-                        w[l] = _par[l].compressR();
+                        w[l] = _par[l]->compressR();
                     else
                         w[l] = 1;
 
@@ -7601,12 +7381,18 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     int shift = l * _para.mReco;
                     for (int m = 0; m < _para.mReco; m++)
                     {
-                        size_t cls;
                         dvec4 quat;
                         dvec2 tran;
                         double d;
 
-                        _par[l].rand(cls, quat, tran, d);
+                        if (_para.k == 1)
+                        {
+                            _par[l]->rand(quat, tran, d);
+                        }
+                        else
+                        {
+                            _par[l]->rank1st(quat, tran, d);
+                        }
 
                         nt[(shift + m) * 2] = tran(0);
                         nt[(shift + m) * 2 + 1] = tran(1);
@@ -7784,13 +7570,17 @@ void Optimiser::reconstructRef(const bool fscFlag,
             if (_searchType != SEARCH_TYPE_STOP)
             {
                 // allow user change score when only performing a reconstruction without expectation
-                _par[l].calScore();
+                _par[l]->calScore();
             }
 
             if ((_para.parGra) && (_para.k == 1))
-                w = _par[l].compressR();
+            {
+                w = _par[l]->compressR();
+            }
             else
+            {
                 w = 1;
+            }
 
             w /= _para.mReco;
 
@@ -7804,14 +7594,20 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
             for (int m = 0; m < _para.mReco; m++)
             {
-                size_t cls;
                 dvec4 quat;
                 dvec2 tran;
                 double d;
 
                 if (_para.mode == MODE_2D)
                 {
-                    _par[l].rand(cls, quat, tran, d);
+                    if (_para.k == 1)
+                    {
+                        _par[l]->rand(quat, tran, d);
+                    }
+                    else
+                    {
+                        _par[l]->rank1st(quat, tran, d);
+                    }
 
                     dmat22 rot2D;
 
@@ -7874,14 +7670,14 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     vec sig = _sig.row(_groupID[l] - 1).transpose();
 
-                    _model.reco(cls).insertP(transImgPR,
+                    _model.reco(_iRef[l]).insertP(transImgPR,
                                              transImgPI,
                                              ctf,
                                              rot2D,
                                              w,
                                              &sig);
 #else
-                    _model.reco(cls).insertP(transImgPR,
+                    _model.reco(_iRef[l]).insertP(transImgPR,
                                              transImgPI,
                                              ctf,
                                              rot2D,
@@ -7895,12 +7691,19 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #else
                     dvec2 dir = -rot2D * tran;
 #endif
-                    _model.reco(cls).insertDir(dir);
+                    _model.reco(_iRef[l]).insertDir(dir);
                 }
 
                 else if (_para.mode == MODE_3D)
                 {
-                    _par[l].rand(cls, quat, tran, d);
+                    if (_para.k == 1)
+                    {
+                        _par[l]->rand(quat, tran, d);
+                    }
+                    else
+                    {
+                        _par[l]->rank1st(quat, tran, d);
+                    }
 
                     dmat33 rot3D;
 
@@ -7962,14 +7765,14 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #ifdef OPTIMISER_RECONSTRUCT_SIGMA_REGULARISE
                     vec sig = _sig.row(_groupID[l] - 1).transpose();
 
-                    _model.reco(cls).insertP(transImgPR,
+                    _model.reco(_iRef[l]).insertP(transImgPR,
                                              transImgPI,
                                              ctf,
                                              rot3D,
                                              w,
                                              &sig);
 #else
-                    _model.reco(cls).insertP(transImgPR,
+                    _model.reco(_iRef[l]).insertP(transImgPR,
                                              transImgPI,
                                              ctf,
                                              rot3D,
@@ -7985,7 +7788,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #else
                     dvec3 dir = -rot3D * dvec3(tran[0], tran[1], 0);
 #endif
-                    _model.reco(cls).insertDir(dir);
+                    _model.reco(_iRef[l]).insertDir(dir);
                 }
                 else
                 {
@@ -9309,7 +9112,6 @@ void Optimiser::saveDatabase(const bool finished,
                ? fopen(filename, "w")
                : fopen(filename, "a");
 
-    size_t cls;
     dvec4 quat;
     dvec2 tran;
     double df;
@@ -9325,9 +9127,9 @@ void Optimiser::saveDatabase(const bool finished,
 
     FOR_EACH_2D_IMAGE
     {
-        _par[l].rank1st(cls, quat, tran, df);
+        _par[l]->rank1st(quat, tran, df);
 
-        _par[l].vari(k1, k2, k3, s0, s1, s);
+        _par[l]->vari(k1, k2, k3, s0, s1, s);
 
         rotate3D(rotB, quat);
 
@@ -9376,7 +9178,7 @@ void Optimiser::saveDatabase(const bool finished,
                          _db.coordX(_ID[l]),
                          _db.coordY(_ID[l]),
                          _groupID[l],
-                         cls,
+                         _iRef[l],
                          quat(0),
                          quat(1),
                          quat(2),
@@ -9395,7 +9197,7 @@ void Optimiser::saveDatabase(const bool finished,
                          s1,
                          df,
                          s,
-                         _par[l].compressR());
+                         _par[l]->compressR());
             }
 
         }
@@ -9422,7 +9224,7 @@ void Optimiser::saveDatabase(const bool finished,
                      _db.coordX(_ID[l]),
                      _db.coordY(_ID[l]),
                      _groupID[l],
-                     cls,
+                     _iRef[l],
                      quat(0),
                      quat(1),
                      quat(2),
@@ -9441,7 +9243,7 @@ void Optimiser::saveDatabase(const bool finished,
                      s1,
                      df,
                      s,
-                     _par[l].compressR());
+                     _par[l]->compressR());
         }
 
     }
@@ -9484,7 +9286,6 @@ void Optimiser::saveSubtract(const bool symmetrySubtract,
 
     Image box(reboxSize, reboxSize, RL_SPACE);
 
-    size_t cls;
     dmat33 rotB; // rot for base left closet
     dmat33 rotC; // rot for every left closet
     dvec2 tran;
@@ -9500,7 +9301,7 @@ void Optimiser::saveSubtract(const bool symmetrySubtract,
             abort();
         }
 
-        _par[l].rank1st(cls, rotB, tran, d);
+        _par[l]->rank1st(rotB, tran, d);
 
 #ifdef OPTIMISER_CTF_ON_THE_FLY
 
@@ -9538,7 +9339,7 @@ void Optimiser::saveSubtract(const bool symmetrySubtract,
                 rotC = R.transpose() * rotB;
             }
 
-            _model.proj(cls).project(result, rotC, tran - _offset[l], _para.nThreadsPerProcess);
+            _model.proj(_iRef[l]).project(result, rotC, tran - _offset[l], _para.nThreadsPerProcess);
 
             MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
             #pragma omp parallel for firstprivate(imgOriDustman)
@@ -9563,9 +9364,9 @@ void Optimiser::saveSubtract(const bool symmetrySubtract,
 
             if (i == -1)
             {
-                _par[l].setT(_par[l].t().rowwise() - (tran - _offset[l]).transpose());
-                _par[l].setTopT(_par[l].topT() - tran + _offset[l]);
-                _par[l].setTopTPrev(_par[l].topTPrev() - tran + _offset[l]);
+                _par[l]->setT(_par[l]->t().rowwise() - (tran - _offset[l]).transpose());
+                _par[l]->setTopT(_par[l]->topT() - tran + _offset[l]);
+                _par[l]->setTopTPrev(_par[l]->topTPrev() - tran + _offset[l]);
             }
 
             _fftImg.bwExecutePlan(diff, _para.nThreadsPerProcess);
@@ -9601,7 +9402,6 @@ void Optimiser::saveBestProjections()
     Image diff(_para.size, _para.size, FT_SPACE);
     char filename[FILE_NAME_LENGTH];
 
-    size_t cls;
     dmat22 rot2D;
     dmat33 rot3D;
     dvec2 tran;
@@ -9619,15 +9419,15 @@ void Optimiser::saveBestProjections()
 
             if (_para.mode == MODE_2D)
             {
-                _par[l].rank1st(cls, rot2D, tran, d);
+                _par[l]->rank1st(rot2D, tran, d);
 
-                _model.proj(cls).project(result, rot2D, tran, _para.nThreadsPerProcess);
+                _model.proj(_iRef[l]).project(result, rot2D, tran, _para.nThreadsPerProcess);
             }
             else if (_para.mode == MODE_3D)
             {
-                _par[l].rank1st(cls, rot3D, tran, d);
+                _par[l]->rank1st(rot3D, tran, d);
 
-                _model.proj(cls).project(result, rot3D, tran, _para.nThreadsPerProcess);
+                _model.proj(_iRef[l]).project(result, rot3D, tran, _para.nThreadsPerProcess);
             }
             else
                 REPORT_ERROR("INEXISTENT MODE");

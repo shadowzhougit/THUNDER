@@ -1105,67 +1105,84 @@ void Model::updateR(const RFLOAT thres)
     if ((_r == _rGlobal) &&
         (_searchType == SEARCH_TYPE_GLOBAL))
     {
-
+        if (_k == 1)
+        {
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
-        MLOG(INFO, "LOGGER_SYS") << "Using rChangeDecreaseFactor "
-                                 << R_CHANGE_DECREASE_STUN;
-        elevate = determineIncreaseR(R_CHANGE_DECREASE_STUN);
+            MLOG(INFO, "LOGGER_SYS") << "Using rChangeDecreaseFactor "
+                                     << R_CHANGE_DECREASE_STUN;
+            elevate = determineIncreaseR(R_CHANGE_DECREASE_STUN);
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_R_T_VARI
-        MLOG(INFO, "LOGGER_SYS") << "Using rVariDecreaseFactor "
-                                 << T_VARI_DECREASE_STUN;
-        elevate = determineIncreaseR(T_VARI_DECREASE_STUN);
+            MLOG(INFO, "LOGGER_SYS") << "Using rVariDecreaseFactor "
+                                     << T_VARI_DECREASE_STUN;
+            elevate = determineIncreaseR(T_VARI_DECREASE_STUN);
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_FSC
-        MLOG(INFO, "LOGGER_SYS") << "Using fscIncreaseFactor "
-                                 << FSC_INCREASE_STUN;
-        elevate = determineIncreaseR(FSC_INCREASE_STUN);
+            MLOG(INFO, "LOGGER_SYS") << "Using fscIncreaseFactor "
+                                     << FSC_INCREASE_STUN;
+            elevate = determineIncreaseR(FSC_INCREASE_STUN);
 #endif
-
+        }
+        else
+        {
+            elevate = determineIncreaseRClass(C_CHANGE_DECREASE_STUN);
+        }
     }
     else if (_searchType == SEARCH_TYPE_GLOBAL)
     {
-
+        if (_k == 1)
+        {
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
-        MLOG(INFO, "LOGGER_SYS") << "Using rChangeDecreaseFactor "
-                                 << R_CHANGE_DECREASE_GLOBAL;
-        elevate = determineIncreaseR(R_CHANGE_DECREASE_GLOBAL);
+            MLOG(INFO, "LOGGER_SYS") << "Using rChangeDecreaseFactor "
+                                     << R_CHANGE_DECREASE_GLOBAL;
+            elevate = determineIncreaseR(R_CHANGE_DECREASE_GLOBAL);
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_R_T_VARI
-        MLOG(INFO, "LOGGER_SYS") << "Using rVariDecreaseFactor "
-                                 << T_VARI_DECREASE_GLOBAL;
-        elevate = determineIncreaseR(T_VARI_DECREASE_GLOBAL);
+            MLOG(INFO, "LOGGER_SYS") << "Using rVariDecreaseFactor "
+                                     << T_VARI_DECREASE_GLOBAL;
+            elevate = determineIncreaseR(T_VARI_DECREASE_GLOBAL);
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_FSC
-        MLOG(INFO, "LOGGER_SYS") << "Using fscIncreaseFactor "
-                                 << FSC_INCREASE_GLOBAL;
-        elevate = determineIncreaseR(FSC_INCREASE_GLOBAL);
+            MLOG(INFO, "LOGGER_SYS") << "Using fscIncreaseFactor "
+                                     << FSC_INCREASE_GLOBAL;
+            elevate = determineIncreaseR(FSC_INCREASE_GLOBAL);
 #endif
-
+        }
+        else
+        {
+            elevate = determineIncreaseRClass(C_CHANGE_DECREASE_GLOBAL);
+        }
     }
     else
     {
+        if (_k == 1)
+        {
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
-        MLOG(INFO, "LOGGER_SYS") << "Using rChangeDecreaseFactor "
-                                 << R_CHANGE_DECREASE_LOCAL;
-        elevate = determineIncreaseR(R_CHANGE_DECREASE_LOCAL);
+            MLOG(INFO, "LOGGER_SYS") << "Using rChangeDecreaseFactor "
+                                     << R_CHANGE_DECREASE_LOCAL;
+            elevate = determineIncreaseR(R_CHANGE_DECREASE_LOCAL);
 #endif
 
 #ifdef MODEL_DETERMINE_INCREASE_R_T_VARI
-        MLOG(INFO, "LOGGER_SYS") << "Using rVariDecreaseFactor "
-                                 << T_VARI_DECREASE_LOCAL;
-        elevate = determineIncreaseR(T_VARI_DECREASE_LOCAL);
+            MLOG(INFO, "LOGGER_SYS") << "Using rVariDecreaseFactor "
+                                     << T_VARI_DECREASE_LOCAL;
+            elevate = determineIncreaseR(T_VARI_DECREASE_LOCAL);
 #endif
         
 #ifdef MODEL_DETERMINE_INCREASE_FSC
-        MLOG(INFO, "LOGGER_SYS") << "Using fscIncreaseFactor "
-                                 << FSC_INCREASE_LOCAL;
-        elevate = determineIncreaseR(FSC_INCREASE_LOCAL);
+            MLOG(INFO, "LOGGER_SYS") << "Using fscIncreaseFactor "
+                                     << FSC_INCREASE_LOCAL;
+            elevate = determineIncreaseR(FSC_INCREASE_LOCAL);
 #endif
+        }
+        else
+        {
+            elevate = determineIncreaseRClass(C_CHANGE_DECREASE_LOCAL);
+        }
     }
 
     if (elevate)
@@ -1328,11 +1345,13 @@ void Model::setRChange(const RFLOAT rChange)
 
 void Model::resetRChange()
 {
-    _rChangePrev = 1;
+    _rChangePrev = TS_MAX_RFLOAT_VALUE;
     
-    _rChange = 1;
+    _rChange = TS_MAX_RFLOAT_VALUE;
 
     _stdRChange = 0;
+
+    _stdRChangePrev = 0;
 }
 
 void Model::setStdRChange(const RFLOAT stdRChange)
@@ -1350,6 +1369,28 @@ int Model::nRChangeNoDecrease() const
 void Model::setNRChangeNoDecrease(const int nRChangeNoDecrease)
 {
     _nRChangeNoDecrease = nRChangeNoDecrease;
+}
+
+RFLOAT Model::cChange() const
+{
+    return _cChange;
+}
+
+RFLOAT Model::cChangePrev() const
+{
+    return _cChangePrev;
+}
+
+void Model::setCChange(const RFLOAT cChange)
+{
+    _cChangePrev = _cChange;
+    _cChange = cChange;
+}
+
+void Model::resetCChange()
+{
+    _cChangePrev = TS_MAX_RFLOAT_VALUE;
+    _cChange = TS_MAX_RFLOAT_VALUE;
 }
 
 int Model::nTopResNoImprove() const
@@ -1523,6 +1564,60 @@ void Model::clear()
     _reco.clear();
 }
 
+bool Model::determineIncreaseRClass(const RFLOAT cChangeDecreaseFactor)
+{
+    IF_MASTER
+    {
+        if ((_cChange > (1 - cChangeDecreaseFactor) * _cChangePrev) ||
+            (_cChange < C_CHANGE_LIMIT))
+        {
+            _nRChangeNoDecrease += 1;
+        }
+        else
+        {
+            _nRChangeNoDecrease = 0;
+        }
+
+        switch (_searchType)
+        {
+            case SEARCH_TYPE_STOP:
+                _increaseR = false;
+                break;
+
+            case SEARCH_TYPE_GLOBAL:
+                _increaseR = (_nRChangeNoDecrease
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_CLASSIFICATION));
+                break;
+
+            case SEARCH_TYPE_LOCAL:
+                _increaseR = (_nRChangeNoDecrease
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_CLASSIFICATION));
+                break;
+
+            case SEARCH_TYPE_CTF:
+                _increaseR = (_nRChangeNoDecrease
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_CTF_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_CTF_CLASSIFICATION));
+                break;
+        }
+    }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    MPI_Bcast(&_increaseR,
+              1,
+              MPI_C_BOOL,
+              MASTER_ID,
+              MPI_COMM_WORLD);
+
+    return _increaseR;
+}
+
 #ifdef MODEL_DETERMINE_INCREASE_R_R_CHANGE
 
 bool Model::determineIncreaseR(const RFLOAT rChangeDecreaseFactor)
@@ -1536,7 +1631,9 @@ bool Model::determineIncreaseR(const RFLOAT rChangeDecreaseFactor)
             _nRChangeNoDecrease += 1;
         }
         else
+        {
             _nRChangeNoDecrease = 0;
+        }
 
         switch (_searchType)
         {
@@ -1546,13 +1643,23 @@ bool Model::determineIncreaseR(const RFLOAT rChangeDecreaseFactor)
 
             case SEARCH_TYPE_GLOBAL:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_CLASSIFICATION));
                 break;
 
             case SEARCH_TYPE_LOCAL:
+                _increaseR = (_nRChangeNoDecrease
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_CLASSIFICATION));
+                break;
+
             case SEARCH_TYPE_CTF:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_CTF_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_CTF_CLASSIFICATION));
                 break;
         }
     }
@@ -1594,17 +1701,23 @@ bool Model::determineIncreaseR(const RFLOAT tVariDecreaseFactor)
 
             case SEARCH_TYPE_GLOBAL:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_CLASSIFICATION));
                 break;
 
             case SEARCH_TYPE_LOCAL:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_CLASSIFICATION));
                 break;
 
             case SEARCH_TYPE_CTF:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_CTF);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_CTF_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_CTF_CLASSIFICATION));
                 break;
         }
     }
@@ -1649,17 +1762,23 @@ bool Model::determineIncreaseR(const RFLOAT fscIncreaseFactor)
 
             case SEARCH_TYPE_GLOBAL:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_GLOBAL_CLASSIFICATION));
                 break;
 
             case SEARCH_TYPE_LOCAL:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_LOCAL_CLASSIFICATION));
                 break;
 
             case SEARCH_TYPE_CTF:
                 _increaseR = (_nRChangeNoDecrease
-                           >= MAX_ITER_R_CHANGE_NO_DECREASE_CTF);
+                           >= ((_k == 1)
+                             ? MAX_ITER_R_CHANGE_NO_DECREASE_CTF_REFINEMENT
+                             : MAX_ITER_R_CHANGE_NO_DECREASE_CTF_CLASSIFICATION));
                 break;
         }
     }
