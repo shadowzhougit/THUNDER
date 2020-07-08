@@ -2236,14 +2236,14 @@ void expectGlobal3D(vector<int>& iGPU,
                 cudaCheckErrors("for memset wC.");
 
                 cudaMemcpyAsync(devwR[smidx + baseS],
-                                wR + (long long)i * nR,
+                                wR + (long long)i * nK * nR,
                                 batch * nK * nR * sizeof(RFLOAT),
                                 cudaMemcpyHostToDevice,
                                 *((cudaStream_t*)stream[smidx + baseS]));
                 cudaCheckErrors("for memset wR.");
 
                 cudaMemcpyAsync(devwT[smidx + baseS],
-                                wT + (long long)i * nT,
+                                wT + (long long)i * nK * nT,
                                 batch * nK * nT * sizeof(RFLOAT),
                                 cudaMemcpyHostToDevice,
                                 *((cudaStream_t*)stream[smidx + baseS]));
@@ -10174,6 +10174,8 @@ void GCTF(vector<void*>& stream,
             cudaFree(dev_ctfattr_buf[i + baseS]);
         }
     }
+
+    cbArgsA.clear();
 
     LOG(INFO) << "CTF calculation done.";
 }

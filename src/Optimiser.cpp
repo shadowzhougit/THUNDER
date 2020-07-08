@@ -1690,6 +1690,9 @@ void Optimiser::expectationG()
     ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Allocating Space for Pre-calculation in Expectation";
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Allocating Space for Pre-calculation in Expectation";
 
+    long memUsage = memoryCheckRM();
+    printf("expect global memory check work begin:%dG!\n", memUsage / MEGABYTE);
+    
     allocPreCalIdx(_r, _rL);
 
     printf("Round:%d, Before expectation GPU memory check!\n", _iter);
@@ -1931,6 +1934,11 @@ void Optimiser::expectationG()
             hostFree(pglk_ctfP);
             hostFree(pglk_sigRcpP);
 
+            free(pglk_datPR);
+            free(pglk_datPI);
+            free(pglk_ctfP);
+            free(pglk_sigRcpP);
+
             freeRotran(_iGPU,
                        devrotP,
                        devtraP,
@@ -2074,6 +2082,11 @@ void Optimiser::expectationG()
             hostFree(pglk_datPI);
             hostFree(pglk_ctfP);
             hostFree(pglk_sigRcpP);
+
+            free(pglk_datPR);
+            free(pglk_datPI);
+            free(pglk_ctfP);
+            free(pglk_sigRcpP);
 
             freeRotran2D(_iGPU,
                          symArray,
@@ -2322,6 +2335,9 @@ void Optimiser::expectationG()
         //    printf("Expectation globalB time_use:%lf\n", time_use);
     }
 
+    long memUsageG = memoryCheckRM();
+    printf("expect global memory check work done:%dG!\n", memUsageG / MEGABYTE);
+    
 #ifdef OPTIMISER_PARTICLE_FILTER
 
     //float time_use = 0;
@@ -3616,6 +3632,9 @@ void Optimiser::expectationG()
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Freeing Space GPU iCol & iRow";
 
     freePreCalIdx();
+    
+    long memUsageL = memoryCheckRM();
+    printf("expect local memory check work done:%dG!\n", memUsageL / MEGABYTE);
     
     printf("Round:%d, after expectation GPU memory check!\n", _iter);
     gpuMemoryCheck(_iGPU,
@@ -5334,9 +5353,12 @@ void Optimiser::initCTF()
 
         _ctfAttr.push_back(ctfAttr);
 
+#ifndef OPTIMISER_CTF_ON_THE_FLY
         _ctf.push_back(Image(size(), size(), FT_SPACE));
+#endif
     }
 
+#ifndef OPTIMISER_CTF_ON_THE_FLY
     int dimSizeFT = _para.size * (_para.size / 2 + 1);
     int nImg = _ID.size();
     int batch = IMAGE_BATCH;
@@ -5381,6 +5403,7 @@ void Optimiser::initCTF()
 
     hostFree(ctfData);
     free(ctfData);
+#endif
 #else
 
     FOR_EACH_2D_IMAGE
@@ -6512,6 +6535,7 @@ void Optimiser::reMaskImgG()
         }
 
         hostFree(imgData);
+        free(imgData);
     }
     else
     {
@@ -7064,6 +7088,9 @@ void Optimiser::reconstructRef(const bool fscFlag,
     else
         allocPreCal(false, false, true);
 
+    CHECK_MEMORY_USAGE("Reconstruct Insert begin!!!");
+    long memUsageRM = memoryCheckRM();
+    printf("insert memory check work begin:%dG!\n", memUsageRM / MEGABYTE);
 #ifdef GPU_VERSION
     Complex *modelF;
     RFLOAT *modelT;
@@ -7307,6 +7334,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
             hostFree(pglk_ctfP);
             hostFree(pglk_sigRcpP);
             
+            free(pglk_datPR);
+            free(pglk_datPI);
+            free(pglk_ctfP);
+            free(pglk_sigRcpP);
+                
             allReduceFTO(_iGPU,
                          _stream,
                          modelF,
@@ -7546,7 +7578,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         
                         _model.reco(t).setOx(arrayO[t * 3]);
                         _model.reco(t).setOy(arrayO[t * 3 + 1]);
-                        _model.reco(t).setOy(arrayO[t * 3 + 2]);
+                        _model.reco(t).setOz(arrayO[t * 3 + 2]);
                         _model.reco(t).setCounter(arrayC[t]);
                         
                         delete[]nr;
@@ -7560,6 +7592,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 hostFree(pglk_ctfP);
                 hostFree(pglk_sigRcpP);
 
+                free(pglk_datPR);
+                free(pglk_datPI);
+                free(pglk_ctfP);
+                free(pglk_sigRcpP);
+                
                 delete[]w;
                 delete[]offS;
                 delete[]nc;
@@ -7700,6 +7737,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 hostFree(pglk_ctfP);
                 hostFree(pglk_sigRcpP);
 
+                free(pglk_datPR);
+                free(pglk_datPI);
+                free(pglk_ctfP);
+                free(pglk_sigRcpP);
+                
                 allReduceFTO(_iGPU,
                              _stream,
                              modelF,
@@ -7730,7 +7772,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 
                 _model.reco(0).setOx(arrayO[0]);
                 _model.reco(0).setOy(arrayO[1]);
-                _model.reco(0).setOy(arrayO[2]);
+                _model.reco(0).setOz(arrayO[2]);
                 _model.reco(0).setCounter(arrayC[0]);
                         
                 free(w);
@@ -7765,6 +7807,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
         delete[] arrayO;
         delete[] arrayC;
+        delete[] arrayTau;
 #else
         // Complex* poolTransImgP = (Complex*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(Complex));
 
@@ -8061,6 +8104,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
+
+    CHECK_MEMORY_USAGE("Reconstruct Insert done!!!");
+    long memUsageD = memoryCheckRM();
+    printf("insert memory check work done:%dG!\n", memUsageD / MEGABYTE);
 
 #ifdef OPTIMISER_BALANCE_CLASS
     umat2 bm;
@@ -8718,8 +8765,10 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
         _model.compareTwoHemispheres(false, true, AVERAGE_TWO_HEMISPHERE_THRES, _para.nThreadsPerProcess);
     }
-
 #endif
+
+    long memUsage = memoryCheckRM();
+    printf("reconstruct memory check work done:%dG!\n", memUsage / MEGABYTE);
 
 #ifdef GPU_VERSION
     NT_MASTER
