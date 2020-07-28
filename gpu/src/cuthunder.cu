@@ -10076,6 +10076,8 @@ void GCTF(vector<void*>& stream,
         }
     }
 
+    cbArgsA.clear();
+
     LOG(INFO) << "CTF calculation done.";
 }
 

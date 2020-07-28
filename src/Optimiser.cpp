@@ -2237,6 +2237,11 @@ void Optimiser::expectationG()
             hostFree(pglk_ctfP);
             hostFree(pglk_sigRcpP);
 
+            free(pglk_datPR);
+            free(pglk_datPI);
+            free(pglk_ctfP);
+            free(pglk_sigRcpP);
+
             freeRotran(_iGPU,
                        devrotP,
                        devtraP,
@@ -2380,6 +2385,11 @@ void Optimiser::expectationG()
             hostFree(pglk_datPI);
             hostFree(pglk_ctfP);
             hostFree(pglk_sigRcpP);
+
+            free(pglk_datPR);
+            free(pglk_datPI);
+            free(pglk_ctfP);
+            free(pglk_sigRcpP);
 
             freeRotran2D(_iGPU,
                          symArray,
@@ -6283,6 +6293,7 @@ void Optimiser::reMaskImgG()
         }
 
         hostFree(imgData);
+        free(imgData);
     }
     else
     {
@@ -7083,6 +7094,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
             hostFree(pglk_ctfP);
             hostFree(pglk_sigRcpP);
             
+            free(pglk_datPR);
+            free(pglk_datPI);
+            free(pglk_ctfP);
+            free(pglk_sigRcpP);
+
             allReduceFTO(_iGPU,
                          _stream,
                          modelF,
@@ -7326,7 +7342,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         
                         _model.reco(t).setOx(arrayO[t * 3]);
                         _model.reco(t).setOy(arrayO[t * 3 + 1]);
-                        _model.reco(t).setOy(arrayO[t * 3 + 2]);
+                        _model.reco(t).setOz(arrayO[t * 3 + 2]);
                         _model.reco(t).setCounter(arrayC[t]);
                         
                         delete[]nr;
@@ -7339,6 +7355,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 hostFree(pglk_datPI);
                 hostFree(pglk_ctfP);
                 hostFree(pglk_sigRcpP);
+
+                free(pglk_datPR);
+                free(pglk_datPI);
+                free(pglk_ctfP);
+                free(pglk_sigRcpP);
 
                 delete[]w;
                 delete[]offS;
@@ -7486,6 +7507,11 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 hostFree(pglk_ctfP);
                 hostFree(pglk_sigRcpP);
 
+                free(pglk_datPR);
+                free(pglk_datPI);
+                free(pglk_ctfP);
+                free(pglk_sigRcpP);
+
                 allReduceFTO(_iGPU,
                              _stream,
                              modelF,
@@ -7516,7 +7542,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 
                 _model.reco(0).setOx(arrayO[0]);
                 _model.reco(0).setOy(arrayO[1]);
-                _model.reco(0).setOy(arrayO[2]);
+                _model.reco(0).setOz(arrayO[2]);
                 _model.reco(0).setCounter(arrayC[0]);
                         
                 free(w);
