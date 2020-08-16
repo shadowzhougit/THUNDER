@@ -9943,6 +9943,7 @@ void GCTF(vector<void*>& stream,
           vector<int>& iGPU,
           Complex* ctf,
           vector<CTFAttr*>& ctfaData,
+          RFLOAT* dpara,
           RFLOAT pixelSize,
           int ndim,
           int nImg,
@@ -9954,9 +9955,15 @@ void GCTF(vector<void*>& stream,
     int threadInBlock = (nCol / 2 + 1 > THREAD_PER_BLOCK) ? THREAD_PER_BLOCK : nCol / 2 + 1;
     int nStream = nGPU * NUM_STREAM_PER_DEVICE;
 
+    cudaHostRegister(dpara, 
+                     nImg * sizeof(RFLOAT), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register dPara data.");
+
     CTFAttr *pglk_ctfattr_buf[nStream];
     CTFAttr *dev_ctfattr_buf[nStream];
     Complex *dev_image_buf[nStream];
+    RFLOAT  *dev_dpara_buf[nStream];
     vector<CB_UPIB_ta> cbArgsA;
 
     LOG(INFO) << "Allocate Memory.";
@@ -9972,6 +9979,7 @@ void GCTF(vector<void*>& stream,
         for (int i = 0; i < NUM_STREAM_PER_DEVICE; i++)
         {
             allocDeviceComplexBuffer(&dev_image_buf[i + baseS], BATCH_SIZE * imgSizeFT);
+            allocDeviceParamBuffer(&dev_dpara_buf[i + baseS], BATCH_SIZE);
             allocPGLKCTFAttrBuffer(&pglk_ctfattr_buf[i + baseS], BATCH_SIZE);
             allocDeviceCTFAttrBuffer(&dev_ctfattr_buf[i + baseS], BATCH_SIZE);
         }
@@ -10033,12 +10041,19 @@ void GCTF(vector<void*>& stream,
                             *((cudaStream_t*)stream[smidx + baseS]));
             cudaCheckErrors("Memory copy CTFAttr to device.");
 
+            cudaMemcpyAsync(dev_dpara_buf[smidx + baseS],
+                            dpara + i,
+                            nImgBatch * sizeof(RFLOAT),
+                            cudaMemcpyHostToDevice,
+                            *((cudaStream_t*)stream[smidx + baseS]));
+            cudaCheckErrors("Memory copy dpara to device.");
 
             kernel_CTF<<<nImgBatch,
                          threadInBlock,
                          0,
                          *((cudaStream_t*)stream[smidx + baseS])>>>(dev_image_buf[smidx + baseS],
                                                                     dev_ctfattr_buf[smidx + baseS],
+                                                                    dev_dpara_buf[smidx + baseS],
                                                                     pixelSize,
                                                                     nRow,
                                                                     nCol,
@@ -10078,6 +10093,7 @@ void GCTF(vector<void*>& stream,
 
     cbArgsA.clear();
 
+    cudaHostUnregister(dpara);
     LOG(INFO) << "CTF calculation done.";
 }
 

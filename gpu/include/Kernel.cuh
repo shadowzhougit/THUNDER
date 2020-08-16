@@ -1549,6 +1549,7 @@ __global__ void kernel_MulMask(RFLOAT *dev_image,
  */
 __global__ void kernel_CTF(Complex *devCtf,
                            CTFAttr *ctfData,
+                           RFLOAT *dpara,
                            RFLOAT pixelSize,
                            int nRow,
                            int nCol,

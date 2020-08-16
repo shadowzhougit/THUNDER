@@ -1450,6 +1450,7 @@ int Model::searchType()
                         _nTopResNoImprove = 0;
 
                         resetTVari();
+                        resetCChange();
                         resetRChange();
                         resetFSCArea();
                         setNRChangeNoDecrease(0);
@@ -1477,6 +1478,7 @@ int Model::searchType()
                         _nTopResNoImprove = 0;
 
                         resetTVari();
+                        resetCChange();
                         resetRChange();
                         resetFSCArea();
                         setNRChangeNoDecrease(0);

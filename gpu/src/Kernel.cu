@@ -5752,6 +5752,7 @@ __global__ void kernel_MulMask(RFLOAT *dev_image,
 
 __global__ void kernel_CTF(Complex *devCtf,
                            CTFAttr *ctfData,
+                           RFLOAT *dpara,
                            RFLOAT pixelSize,
                            int nRow,
                            int nCol,
@@ -5792,7 +5793,7 @@ __global__ void kernel_CTF(Complex *devCtf,
         defocus = -(ctfData[blockIdx.x].defocusU 
                     + ctfData[blockIdx.x].defocusV 
                     + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
-                    * cosf(2 * angle)) 
+                    * cosf(2 * angle)) * dpara[blockIdx.x] 
                 / 2;
         ki = K1 * defocus * u * u 
            + K2 * u * u * u * u 
@@ -5823,7 +5824,7 @@ __global__ void kernel_CTF(Complex *devCtf,
         defocus = -(ctfData[blockIdx.x].defocusU 
                     + ctfData[blockIdx.x].defocusV 
                     + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
-                    * cos(2 * angle)) 
+                    * cos(2 * angle)) * dpara[blockIdx.x]
                 / 2;
         ki = K1 * defocus * u * u 
            + K2 * u * u * u * u 

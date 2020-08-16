@@ -326,6 +326,15 @@ void Optimiser::init()
         BLOG(INFO, "LOGGER_INIT") << "Initialising IDs of 2D Images";
 
         initID();
+        
+        _nChange.clear();
+        _nChange.resize(_ID.size());
+        
+        #pragma omp parallel for
+        FOR_EACH_2D_IMAGE
+        {
+            _nChange[l] = 0;
+        }
 
 #ifdef VERBOSE_LEVEL_1
         MPI_Barrier(_hemi);
@@ -1331,7 +1340,7 @@ void Optimiser::expectation()
             double dVari = 5 * _para.ctfRefineS;
 #endif
 
-            for (int phase = ((_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0); phase < ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 2); phase++)
+            for (int phase = ((_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0); phase < ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 1); phase++)
             {
                 // wR, wT, wD and baseLine should be reset
                 // in this section, the class ID, i.e., k, and the image ID, i.e., l, are given
@@ -1350,13 +1359,18 @@ void Optimiser::expectation()
                     // _par[l]->perturb(_para.perturbFactorL, PAR_R);
                     // _par[l]->perturb(_para.perturbFactorL, PAR_T);
 
-                    par->perturb(_para.perturbFactorL, PAR_R);
-                    par->perturb(_para.perturbFactorL, PAR_T);
-
-                    if (_searchType == SEARCH_TYPE_CTF)
+                    if (_para.alignR)
                     {
-                        // _par[l]->initD(_para.mLD, _para.ctfRefineS);
+                        par->perturb(_para.perturbFactorL, PAR_R);
+                    }
+                    
+                    if (_para.alignT)
+                    {
+                        par->perturb(_para.perturbFactorL, PAR_T);
+                    }
 
+                    if (_para.alignD && _searchType == SEARCH_TYPE_CTF)
+                    {
                         par->initD(_para.mLD, _para.ctfRefineS);
                     }
                 }
@@ -2846,7 +2860,7 @@ void Optimiser::expectationG()
             double tVariS1 = 5 * _para.transS;
             double dVari = 5 * _para.ctfRefineS;
 #endif
-            for (int phase = ((_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0); phase < ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 2); phase++)
+            for (int phase = ((_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0); phase < ((_para.alignR || _para.alignT || _para.alignD) ? MAX_N_PHASE_PER_ITER : 1); phase++)
             {
 #ifdef OPTIMISER_GLOBAL_PERTURB_LARGE
                 if (phase == (_searchType == SEARCH_TYPE_GLOBAL) ? 1 : 0)
@@ -2854,11 +2868,20 @@ void Optimiser::expectationG()
                 if (phase == 0)
 #endif
                 {
-                    par->perturb(_para.perturbFactorL, PAR_R);
-                    par->perturb(_para.perturbFactorL, PAR_T);
+                    if (_para.alignR)
+                    {
+                        par->perturb(_para.perturbFactorL, PAR_R);
+                    }
+                    
+                    if (_para.alignT)
+                    {
+                        par->perturb(_para.perturbFactorL, PAR_T);
+                    }
 
-                    if (_searchType == SEARCH_TYPE_CTF)
+                    if (_para.alignD && _searchType == SEARCH_TYPE_CTF)
+                    {
                         par->initD(_para.mLD, _para.ctfRefineS);
+                    }
                 }
                 else
                 {
@@ -4015,7 +4038,7 @@ void Optimiser::run()
             //_model.resetTVari();
             //_model.resetFSCArea();
 
-            _model.resetCChange();
+            //_model.resetCChange();
             _model.resetRChange();
 
             _model.setNRChangeNoDecrease(0);
@@ -5139,9 +5162,13 @@ void Optimiser::initCTF()
 
     CTFAttr ctfAttr;
 #ifdef GPU_VERSION
+    RFLOAT *dpara = (RFLOAT*)malloc(sizeof(RFLOAT) * _ID.size());
+
     FOR_EACH_2D_IMAGE
     {
         _db.ctf(ctfAttr, _ID[l]);
+
+        dpara[l] = _db.d(_ID[l]);
 
         _ctfAttr.push_back(ctfAttr);
 
@@ -5175,6 +5202,7 @@ void Optimiser::initCTF()
                  _iGPU,
                  ctfData,
                  _ctfAttr,
+                 dpara + l,
                  _para.pixelSize,
                  _para.size,
                  l,
@@ -5192,6 +5220,7 @@ void Optimiser::initCTF()
 
     hostFree(ctfData);
     free(ctfData);
+    free(dpara);
 #else
 
     FOR_EACH_2D_IMAGE
@@ -5217,8 +5246,8 @@ void Optimiser::initCTF()
         CTF(_ctf[l],
             _para.pixelSize,
             _ctfAttr[l].voltage,
-            _ctfAttr[l].defocusU,
-            _ctfAttr[l].defocusV,
+            _ctfAttr[l].defocusU * _db.d(_ID[l]),
+            _ctfAttr[l].defocusV * _db.d(_ID[l]),
             _ctfAttr[l].defocusTheta,
             _ctfAttr[l].Cs,
             _ctfAttr[l].amplitudeContrast,
@@ -5983,8 +6012,8 @@ void Optimiser::refreshScale(const bool coord,
             CTF(ctf,
                 _para.pixelSize,
                 _ctfAttr[l].voltage,
-                _ctfAttr[l].defocusU,
-                _ctfAttr[l].defocusV,
+                _ctfAttr[l].defocusU * d,
+                _ctfAttr[l].defocusV * d,
                 _ctfAttr[l].defocusTheta,
                 _ctfAttr[l].Cs,
                 _ctfAttr[l].amplitudeContrast,
@@ -6390,8 +6419,8 @@ void Optimiser::normCorrection()
                     CTF(ctf,
                         _para.pixelSize,
                         _ctfAttr[l].voltage,
-                        _ctfAttr[l].defocusU,
-                        _ctfAttr[l].defocusV,
+                        _ctfAttr[l].defocusU * d,
+                        _ctfAttr[l].defocusV * d,
                         _ctfAttr[l].defocusTheta,
                         _ctfAttr[l].Cs,
                         _ctfAttr[l].amplitudeContrast,
@@ -6626,8 +6655,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU,
-                    _ctfAttr[l].defocusV,
+                    _ctfAttr[l].defocusU * d,
+                    _ctfAttr[l].defocusV * d,
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
@@ -7001,14 +7030,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                     dvec2 tran;
                     double d;
 
-                    if (_para.k == 1)
-                    {
-                        _par[l]->rand(quat, tran, d);
-                    }
-                    else
-                    {
-                        _par[l]->rank1st(quat, tran, d);
-                    }
+                    _par[l]->rank1st(quat, tran, d);
                     
                     nc[shift + m] = _iRef[l];
                     nt[(shift + m) * 2] = tran(0);
@@ -7226,14 +7248,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                                 dvec2 tran;
                                 double d;
                                 
-                                if (_para.k == 1)
-                                {
-                                    _par[l]->rand(quat, tran, d);
-                                }
-                                else
-                                {
-                                    _par[l]->rank1st(quat, tran, d);
-                                }
+                                _par[l]->rank1st(quat, tran, d);
 
                                 nt[(shift + m) * 2] = tran(0);
                                 nt[(shift + m) * 2 + 1] = tran(1);
@@ -7406,14 +7421,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         dvec2 tran;
                         double d;
 
-                        if (_para.k == 1)
-                        {
-                            _par[l]->rand(quat, tran, d);
-                        }
-                        else
-                        {
-                            _par[l]->rank1st(quat, tran, d);
-                        }
+                        _par[l]->rank1st(quat, tran, d);
 
                         nt[(shift + m) * 2] = tran(0);
                         nt[(shift + m) * 2 + 1] = tran(1);
@@ -7626,14 +7634,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
                 if (_para.mode == MODE_2D)
                 {
-                    if (_para.k == 1)
-                    {
-                        _par[l]->rand(quat, tran, d);
-                    }
-                    else
-                    {
-                        _par[l]->rank1st(quat, tran, d);
-                    }
+                    _par[l]->rank1st(quat, tran, d);
 
                     dmat22 rot2D;
 
@@ -7722,14 +7723,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
                 else if (_para.mode == MODE_3D)
                 {
-                    if (_para.k == 1)
-                    {
-                        _par[l]->rand(quat, tran, d);
-                    }
-                    else
-                    {
-                        _par[l]->rank1st(quat, tran, d);
-                    }
+                    _par[l]->rank1st(quat, tran, d);
 
                     dmat33 rot3D;
 
@@ -9108,7 +9102,8 @@ void Optimiser::writeDescInfo(FILE *file) const
     fprintf(file, "#23:STD_TRANSLATION_Y\tFLOAT\t18.9f\n");
     fprintf(file, "#24:DEFOCUS_FACTOR\tFLOAT\t18.9f\n");
     fprintf(file, "#25:STD_DEFOCUS_FACTOR\tFLOAT\t18.9f\n");
-    fprintf(file, "#26:SCORE\tFLOAT\t18.9f\n\n");
+    fprintf(file, "#26:SCORE\tFLOAT\t18.9f\n");
+    fprintf(file, "#27:CHANGENUM\tINT\t6d\n\n");
 
 }
 
@@ -9191,7 +9186,7 @@ void Optimiser::saveDatabase(const bool finished,
                          %18.9lf %18.9lf %18.9lf \
                          %18.9lf %18.9lf %18.9lf %18.9lf \
                          %18.9lf %18.9lf \
-                         %18.9lf\n",
+                         %18.9lf %6d\n",
                          _ctfAttr[l].voltage,
                          _ctfAttr[l].defocusU,
                          _ctfAttr[l].defocusV,
@@ -9223,7 +9218,8 @@ void Optimiser::saveDatabase(const bool finished,
                          s1,
                          df,
                          s,
-                         _par[l]->compressR());
+                         _par[l]->compressR(),
+                         _nChange[l]);
             }
 
         }
@@ -9237,7 +9233,7 @@ void Optimiser::saveDatabase(const bool finished,
                      %18.9lf %18.9lf %18.9lf \
                      %18.9lf %18.9lf %18.9lf %18.9lf \
                      %18.9lf %18.9lf \
-                     %18.9lf\n",
+                     %18.9lf %6d\n",
                      _ctfAttr[l].voltage,
                      _ctfAttr[l].defocusU,
                      _ctfAttr[l].defocusV,
@@ -9269,7 +9265,8 @@ void Optimiser::saveDatabase(const bool finished,
                      s1,
                      df,
                      s,
-                     _par[l]->compressR());
+                     _par[l]->compressR(),
+                     _nChange[l]);
         }
 
     }
@@ -9335,8 +9332,8 @@ void Optimiser::saveSubtract(const bool symmetrySubtract,
         CTF(ctf,
             _para.pixelSize,
             _ctfAttr[l].voltage,
-            _ctfAttr[l].defocusU,
-            _ctfAttr[l].defocusV,
+            _ctfAttr[l].defocusU * d,
+            _ctfAttr[l].defocusV * d,
             _ctfAttr[l].defocusTheta,
             _ctfAttr[l].Cs,
             _ctfAttr[l].amplitudeContrast,

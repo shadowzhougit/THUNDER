@@ -692,34 +692,39 @@ class Optimiser : public Parallel
 
         RFLOAT _mean;
 
-        /*
-         * standard deviation of noise
-         */
+        /**
+          * standard deviation of noise
+          */
         RFLOAT _stdN;
 
-        /*
-         * standard deviation of data
-         */
+        /**
+          * standard deviation of data
+          */
         RFLOAT _stdD;
 
-        /*
-         * standard deviation of signal
-         */
+        /**
+          * standard deviation of signal
+          */
         RFLOAT _stdS;
 
-        /*
-         * standard deviation of standard deviation of noise
-         */
+        /**
+          * standard deviation of standard deviation of noise
+          */
         RFLOAT _stdStdN;
 
         /**
-         * images distribution over classes
-         */
+          * images distribution over classes
+          */
         vec _cDistr;
 
         /**
-         * whether to generate mask or not
-         */
+          * images classification change
+          */
+        vector<int> _nChange;
+       
+        /** 
+          * whether to generate mask or not
+          */
         bool _genMask;
 
         /**

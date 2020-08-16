@@ -296,9 +296,14 @@ void readPara(OptimiserPara &dst, const Json::Value src)
     dst.mLD = dst.alignR
             ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_L_D).asInt()
             : 1;
-    dst.mReco = (dst.alignR && dst.alignT && dst.alignD && (dst.k == 1))
+    /*  
+    dst.mReco = (dst.alignR && dst.alignT && dst.alignD)
               ? JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_RECO).asInt()
               : 1;
+     */
+    //FOR TEST
+    dst.mReco = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_M_RECO).asInt();
+
     dst.ignoreRes = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_IGNORE_RES).asFloat();
     dst.sclCorRes = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_SCL_COR_RES).asFloat();
     dst.thresCutoffFSC = JSONCPP_READ_ERROR_HANDLER(src, "Advanced", KEY_THRES_CUTOFF_FSC).asFloat();

@@ -919,17 +919,21 @@ void Particle::calVari(const ParticleType pt)
     {
         if (_mode == MODE_2D)
         {
+            /*
             if (_nR == 1)
             {
                 _k1 = VARIANCE_MIN;
             }
             else
+            */
+            if (_nR != 1)
             {
                 inferVMS(_k1, _r);
             }
         }
         else if (_mode == MODE_3D)
         {
+            /*  
             if (_nR == 1)
             {
                 _k1 = VARIANCE_MIN;
@@ -937,6 +941,8 @@ void Particle::calVari(const ParticleType pt)
                 _k3 = VARIANCE_MIN;
             }
             else
+            */
+            if (_nR != 1)
             {
                 dvec4 meanR;
 
@@ -991,12 +997,15 @@ void Particle::calVari(const ParticleType pt)
     }
     else if (pt == PAR_T)
     {
+        /*
         if (_nT == 1)
         {
             _s0 = VARIANCE_MIN;
             _s1 = VARIANCE_MIN;
         }
         else
+        */
+        if (_nT != 1)
         {
 #ifdef PARTICLE_CAL_VARI_TRANS_ZERO_MEAN
             _s0 = gsl_stats_sd_m(_t.col(0).data(), 1, _t.rows(), 0);
@@ -1010,20 +1019,26 @@ void Particle::calVari(const ParticleType pt)
     else if (pt == PAR_D)
     {
 #ifdef PARTICLE_CAL_VARI_DEFOCUS_ZERO_MEAN
+        /*  
         if (_d.size() == 1)
         {
             _s = gsl_stats_sd_with_fixed_mean(_d.data(), 1, _d.size(), 0);
         }
         else
+        */
+        if (_d.size() != 1)
         {
             _s = gsl_stats_sd_m(_d.data(), 1, _d.size(), 0);
         }
 #else
+        /*  
         if (_d.size() == 1)
         {
             _s = 0;
         }
         else
+        */
+        if (_d.size() != 1)
         {
             _s = gsl_stats_sd(_d.data(), 1, _d.size());
         }
