@@ -1988,12 +1988,6 @@ void Reconstructor::reconstructG(std::vector<int>& iGPU,
     IF_MASTER return;
 
 #ifdef VERBOSE_LEVEL_2
-    IF_MODE_2D
-    {
-        ALOG(INFO, "LOGGER_RECO") << "Reconstructing Under 2D Mode";
-        BLOG(INFO, "LOGGER_RECO") << "Reconstructing Under 2D Mode";
-    }
-
     IF_MODE_3D
     {
         ALOG(INFO, "LOGGER_RECO") << "Reconstructing Under 3D Mode";
@@ -2002,30 +1996,10 @@ void Reconstructor::reconstructG(std::vector<int>& iGPU,
 #endif
     
     RFLOAT* volumeT;
-    RFLOAT* volumeW;
     RFLOAT* dev_W[nGPU];
     RFLOAT* dev_T[nGPU];
 
-    if (_mode == MODE_2D)
-    {
-        size_t dimSize = _T2D.sizeFT();
-        volumeT = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
-        volumeW = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
-	    
-        #pragma omp parallel for num_threads(nThread)
-        for(size_t i = 0; i < dimSize; i++)
-	    {
-            volumeT[i] = REAL(_T2D[i]);
-            volumeW[i] = REAL(_W2D[i]);
-	    }
-        
-        allocVolume(iGPU,
-                    dev_T,
-                    dev_W,
-                    nGPU,
-                    dimSize);
-    }
-    else if (_mode == MODE_3D)
+    if (_mode == MODE_3D)
     {
         size_t dimSize = _T3D.sizeFT();
         volumeT = (RFLOAT*)malloc(dimSize * sizeof(RFLOAT));
@@ -2205,6 +2179,7 @@ void Reconstructor::reconstructG(std::vector<int>& iGPU,
             dst.setRL(padDst.getRL(i, j, k), i, j, k);
         
         padDst.clearRL();
+        padDst.clearFT();
 
         RFLOAT nf = 0;
 #ifdef RECONSTRUCTOR_MKB_KERNEL

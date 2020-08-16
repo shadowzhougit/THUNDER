@@ -9955,11 +9955,6 @@ void GCTF(vector<void*>& stream,
     int threadInBlock = (nCol / 2 + 1 > THREAD_PER_BLOCK) ? THREAD_PER_BLOCK : nCol / 2 + 1;
     int nStream = nGPU * NUM_STREAM_PER_DEVICE;
 
-    cudaHostRegister(dpara, 
-                     nImg * sizeof(RFLOAT), 
-                     cudaHostRegisterDefault);
-    cudaCheckErrors("Register dPara data.");
-
     CTFAttr *pglk_ctfattr_buf[nStream];
     CTFAttr *dev_ctfattr_buf[nStream];
     Complex *dev_image_buf[nStream];
@@ -10093,7 +10088,6 @@ void GCTF(vector<void*>& stream,
 
     cbArgsA.clear();
 
-    cudaHostUnregister(dpara);
     LOG(INFO) << "CTF calculation done.";
 }
 
