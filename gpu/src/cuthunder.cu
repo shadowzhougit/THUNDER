@@ -2062,10 +2062,10 @@ void expectGlobal3D(vector<int>& iGPU,
                      cudaHostRegisterDefault);
     cudaCheckErrors("Register wC data.");
 
-    //cudaHostRegister(wC, 
-    //                 imgNum * nK * sizeof(RFLOAT), 
-    //                 cudaHostRegisterDefault);
-    //cudaCheckErrors("Register wC data.");
+    cudaHostRegister(wC, 
+                     imgNum * sizeof(RFLOAT), 
+                     cudaHostRegisterDefault);
+    cudaCheckErrors("Register wC data.");
 
     cudaHostRegister(wR, 
                      (long long)imgNum * nR * sizeof(RFLOAT), 
