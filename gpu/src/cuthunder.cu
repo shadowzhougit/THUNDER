@@ -4938,6 +4938,7 @@ void InsertFT(vector<int>& iGPU,
  * @param
  */
 void allReduceFTO(vector<int>& iGPU,
+                  vector<int>& gpusPerProcess,
                   vector<void*>& stream,
                   Complex* volumeF,
                   Complex** dev_F,
@@ -4970,17 +4971,27 @@ void allReduceFTO(vector<int>& iGPU,
     
     MPI_Bcast(&commIdF, NCCL_UNIQUE_ID_BYTES, MPI_CHAR, 0, hemi);
 
+    int totalGPUs = 0;
+    int baseIdx = 0;
+    
+    for (int i = 0; i < sizeF; i++)
+        totalGPUs += gpusPerProcess[i];
+
+    for (int i = 0; i < rankF; i++)
+        baseIdx += gpusPerProcess[i];
+
     int* gpus = new int[nGPU];
     for (int n = 0; n < nGPU; n++)
         gpus[n] = iGPU[n];
     NCCLCHECK(ncclGroupStart());
+    
     for (int i = 0; i < nGPU; i++)
     {
         cudaSetDevice(iGPU[i]);
         NCCLCHECK(ncclCommInitRank(commF + i,
-                                   sizeF * nGPU,
+                                   totalGPUs,
                                    commIdF,
-                                   rankF * nGPU + i));
+                                   baseIdx + i));
     }
     NCCLCHECK(ncclGroupEnd());
 

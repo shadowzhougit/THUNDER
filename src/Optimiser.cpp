@@ -15,20 +15,19 @@
 
 void Optimiser::setGPUEnv()
 {
-    IF_MASTER
+    _nGPU = 0;
+    _iGPU.clear();
+    
+    NT_MASTER
     {
-        _nGPU = 0;
-        _iGPU.clear();
-    }
-    else
-    {
-        bool flag;
-        MPI_Status status;
-
-        if (_commRank != 1)
-            MPI_Recv(&flag, 1, MPI_C_BOOL, _commRank - 1, 0, MPI_COMM_WORLD, &status);
-
-        ILOG(INFO, "LOGGER_GPU") << "GPU DEVICE(S) FOR PROCESS RANK " << _commRank;
+        int rank, size;
+        MPI_Comm_size(_hemi, &size);
+        MPI_Comm_rank(_hemi, &rank);
+        
+        _gpusPerProcess.resize(size);
+        
+        int *recvbuf = (int*)malloc(size * sizeof(int));
+        memset(recvbuf, 0, size * sizeof(int));
 
         readGPUPARA(_para.gpus,
                     _iGPU,
@@ -38,10 +37,17 @@ void Optimiser::setGPUEnv()
                  _iGPU,
                  _nGPU);
 
-        if (_commRank != _commSize - 1)
-            MPI_Send(&flag, 1, MPI_C_BOOL, _commRank + 1, 0, MPI_COMM_WORLD);
+        recvbuf[rank] = _nGPU;
+
+        MPI_Allgather(&_nGPU, 1, MPI_INT, recvbuf, 1, MPI_INT, _hemi);
+        
+        for (int i = 0; i < size; i++)
+            _gpusPerProcess[i] = recvbuf[i];
+    
+        free(recvbuf);
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 void Optimiser::destoryGPUEnv()
@@ -51,9 +57,12 @@ void Optimiser::destoryGPUEnv()
         gpuEnvDestory(_stream,
                       _iGPU,
                       _nGPU);
+
+        _nGPU = 0;
+        _gpusPerProcess.clear();
     }
     
-    _nGPU = 0;
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 #endif
 
@@ -7142,6 +7151,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
             free(pglk_sigRcpP);
             
             allReduceFTO(_iGPU,
+                         _gpusPerProcess,
                          _stream,
                          modelF,
                          dev_F,
@@ -7348,6 +7358,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         }
 
                         allReduceFTO(_iGPU,
+                                     _gpusPerProcess,
                                      _stream,
                                      modelF,
                                      dev_F,
@@ -7541,6 +7552,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 free(pglk_sigRcpP);
                 
                 allReduceFTO(_iGPU,
+                             _gpusPerProcess,
                              _stream,
                              modelF,
                              dev_F,

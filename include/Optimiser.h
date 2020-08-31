@@ -538,6 +538,7 @@ class Optimiser : public Parallel
 #ifdef GPU_VERSION
         std::vector<void*> _stream;
         std::vector<int> _iGPU;
+        std::vector<int> _gpusPerProcess;
         int _nGPU;
 #endif
 
