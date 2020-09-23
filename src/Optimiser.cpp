@@ -5971,7 +5971,7 @@ void Optimiser::refreshScale(const bool coord,
                 }
                 else
                     REPORT_ERROR("INEXISTENT MODE");
-                d = _db.d(_ID[l])
+                d = _db.d(_ID[l]);
             }
             else
             {
