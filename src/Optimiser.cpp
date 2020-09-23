@@ -221,8 +221,8 @@ void Optimiser::init()
 
     if (_para.size / 2 - CEIL(_para.maskRadius / _para.pixelSize) < 1)
     {
-        REPORT_ERROR("INPROPER RADIUS OF MASK");
-        abort();
+        MLOG(WARNING, "LOGGER_SYS") << "Inproper radius of mask, modified it to half of image size.";
+        _para.maskRadius = FLOOR(_para.size * _para.pixelSize / 2);
     }
 
     //_rS = AROUND(resA2P(1.0 / _para.sclCorRes, _para.size, _para.pixelSize)) + 1;
@@ -556,15 +556,10 @@ void Optimiser::init()
 
     NT_MASTER
     {
-        ALOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
-        BLOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
-
-        initSigma();
-
         if (_para.gSearch)
         {
-            ALOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma Using Random Projections";
-            BLOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma Using Random Projections";
+            ALOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
+            BLOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
 
             initSigma();
         }
@@ -5976,6 +5971,7 @@ void Optimiser::refreshScale(const bool coord,
                 }
                 else
                     REPORT_ERROR("INEXISTENT MODE");
+                d = _db.d(_ID[l])
             }
             else
             {
@@ -6445,8 +6441,8 @@ void Optimiser::normCorrection()
                     CTF(ctf,
                         _para.pixelSize,
                         _ctfAttr[l].voltage,
-                        _ctfAttr[l].defocusU * d,
-                        _ctfAttr[l].defocusV * d,
+                        _ctfAttr[l].defocusU * _db.d(_ID[l]),
+                        _ctfAttr[l].defocusV * _db.d(_ID[l]),
                         _ctfAttr[l].defocusTheta,
                         _ctfAttr[l].Cs,
                         _ctfAttr[l].amplitudeContrast,
@@ -6681,8 +6677,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU * d,
-                    _ctfAttr[l].defocusV * d,
+                    _ctfAttr[l].defocusU * _db.d(_ID[l]),
+                    _ctfAttr[l].defocusV * _db.d(_ID[l]),
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
