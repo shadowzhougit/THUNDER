@@ -4492,15 +4492,56 @@ void Optimiser::bcastGroupInfo()
 {
     ALOG(INFO, "LOGGER_INIT") << "Storing GroupID";
 
+    bool flag = 0;
+    MPI_Status status;
+    bool flagAll[_commSize];
+    
     _groupID.clear();
 
     NT_MASTER
+    {
         FOR_EACH_2D_IMAGE
             _groupID.push_back(_db.groupID(_ID[l]));
+    
+        vector<int>::iterator result = std::find(_groupID.begin(), _groupID.end(), 0);
+        
+        if (result == _groupID.end())
+        {
+            flag = 1;
+        }
+    }
 
-    MLOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
+    MPI_Allgather(&flag, 1, MPI_C_BOOL, flagAll, 1, MPI_C_BOOL, MPI_COMM_WORLD);
 
-    _nGroup = _db.nGroup();
+    int sum = 0;
+    for (int i = 0; i < _commSize; i++)
+    {
+        if (flagAll[i] == 1)
+        {
+            sum = 1;
+            break;
+        }
+    }
+        
+    if (sum == 1)
+    {
+        _groupID.clear();
+        
+        NT_MASTER
+            FOR_EACH_2D_IMAGE
+                _groupID.push_back(_db.groupID(_ID[l]) + 1);
+            
+            ALOG(WARNING, "LOGGER_INIT") << "GroupID is from 1, not 0";
+            ALOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
+
+            _nGroup = _db.nGroup() + 1;
+    }
+    else
+    {
+        ALOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
+
+        _nGroup = _db.nGroup();
+    }
 
     MLOG(INFO, "LOGGER_INIT") << "Number of Group: " << _nGroup;
 
@@ -8891,8 +8932,8 @@ void Optimiser::allocPreCal(const bool mask,
     // RFLOAT ratio = 1;
 
     std::cout << "Round " << _iter << ", ratio = " << ratio << std::endl;
-    std::cout << "Round " << _nPxl << ", _nPxl = " << _nPxl << std::endl;
-    std::cout << "Round " << _ID.size() << ", _ID.size() = " << _ID.size() << std::endl;
+    std::cout << "Round " << _iter << ", _nPxl = " << _nPxl << std::endl;
+    std::cout << "Round " << _iter << ", _ID.size() = " << _ID.size() << std::endl;
 
     // divide 4, as there are 4 containers in each stall
 
@@ -8912,7 +8953,7 @@ void Optimiser::allocPreCal(const bool mask,
     uvec si = uvec::Zero(_ID.size());
     for (size_t l = 0; l < _ID.size(); l++)
         si(l) = l;
-
+    
     MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
     MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
@@ -8936,7 +8977,7 @@ void Optimiser::allocPreCal(const bool mask,
             _datPR[pixelMajor
                  ? (i * _ID.size() + rl)
                  : (_nPxl * rl + i)] = data.dat[0];
-
+    
             _datPI[pixelMajor
                  ? (i * _ID.size() + rl)
                  : (_nPxl * rl + i)] = data.dat[1];
@@ -8969,8 +9010,8 @@ void Optimiser::allocPreCal(const bool mask,
             CTF(ctf,
                 _para.pixelSize,
                 _ctfAttr[rl].voltage,
-                _ctfAttr[rl].defocusU,
-                _ctfAttr[rl].defocusV,
+                _ctfAttr[rl].defocusU * _db.d(_ID[l]),
+                _ctfAttr[rl].defocusV * _db.d(_ID[l]),
                 _ctfAttr[rl].defocusTheta,
                 _ctfAttr[rl].Cs,
                 _ctfAttr[rl].amplitudeContrast,
