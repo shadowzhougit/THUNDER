@@ -2016,7 +2016,7 @@ void Optimiser::expectationG()
     BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << "Allocating Space for Pre-calculation in Expectation";
 
     long memUsage = memoryCheckRM();
-    printf("expect global memory check work begin:%dG!\n", memUsage / MEGABYTE);
+    printf("expect global memory check work begin:%ldG!\n", memUsage / MEGABYTE);
     
     allocPreCalIdx(_r, _rL);
 
@@ -2586,7 +2586,7 @@ void Optimiser::expectationG()
     }
 
     long memUsageG = memoryCheckRM();
-    printf("expect global memory check work done:%dG!\n", memUsageG / MEGABYTE);
+    printf("expect global memory check work done:%ldG!\n", memUsageG / MEGABYTE);
     
 #ifdef OPTIMISER_PARTICLE_FILTER
 
@@ -3287,8 +3287,8 @@ void Optimiser::expectationG()
 
                 nPer += 1;
 
-                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", class " << cls << ", " << nPer * 10 << "\% Expectation Performed";
-                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", class " << cls << ", " << nPer * 10 << "\% Expectation Performed";
+                ALOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10 << "\% Expectation Performed";
+                BLOG(INFO, "LOGGER_ROUND") << "Round " << _iter << ", " << nPer * 10 << "\% Expectation Performed";
             }
 
 #ifdef OPTIMISER_SAVE_PARTICLES
@@ -3445,7 +3445,7 @@ void Optimiser::expectationG()
     freePreCalIdx();
     
     long memUsageL = memoryCheckRM();
-    printf("expect local memory check work done:%dG!\n", memUsageL / MEGABYTE);
+    printf("expect local memory check work done:%ldG!\n", memUsageL / MEGABYTE);
     
     printf("Round:%d, after expectation GPU memory check!\n", _iter);
     gpuMemoryCheck(_iGPU,
@@ -4493,7 +4493,6 @@ void Optimiser::bcastGroupInfo()
     ALOG(INFO, "LOGGER_INIT") << "Storing GroupID";
 
     bool flag = 0;
-    MPI_Status status;
     bool flagAll[_commSize];
     
     _groupID.clear();
@@ -4501,11 +4500,13 @@ void Optimiser::bcastGroupInfo()
     NT_MASTER
     {
         FOR_EACH_2D_IMAGE
+        {
             _groupID.push_back(_db.groupID(_ID[l]));
-    
+        }
+
         vector<int>::iterator result = std::find(_groupID.begin(), _groupID.end(), 0);
         
-        if (result == _groupID.end())
+        if (result != _groupID.end())
         {
             flag = 1;
         }
@@ -4528,17 +4529,21 @@ void Optimiser::bcastGroupInfo()
         _groupID.clear();
         
         NT_MASTER
+        {
             FOR_EACH_2D_IMAGE
+            {
                 _groupID.push_back(_db.groupID(_ID[l]) + 1);
-            
-            ALOG(WARNING, "LOGGER_INIT") << "GroupID is from 1, not 0";
-            ALOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
+            }
 
-            _nGroup = _db.nGroup() + 1;
+        }
+        MLOG(WARNING, "LOGGER_INIT") << "GroupID is from 1, not 0";
+        MLOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
+        
+        _nGroup = _db.nGroup() + 1;
     }
     else
     {
-        ALOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
+        MLOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
 
         _nGroup = _db.nGroup();
     }
@@ -6012,7 +6017,6 @@ void Optimiser::refreshScale(const bool coord,
                 }
                 else
                     REPORT_ERROR("INEXISTENT MODE");
-                d = _db.d(_ID[l]);
             }
             else
             {
@@ -6075,8 +6079,8 @@ void Optimiser::refreshScale(const bool coord,
             CTF(ctf,
                 _para.pixelSize,
                 _ctfAttr[l].voltage,
-                _ctfAttr[l].defocusU * d,
-                _ctfAttr[l].defocusV * d,
+                _ctfAttr[l].defocusU,
+                _ctfAttr[l].defocusV,
                 _ctfAttr[l].defocusTheta,
                 _ctfAttr[l].Cs,
                 _ctfAttr[l].amplitudeContrast,
@@ -6482,8 +6486,8 @@ void Optimiser::normCorrection()
                     CTF(ctf,
                         _para.pixelSize,
                         _ctfAttr[l].voltage,
-                        _ctfAttr[l].defocusU * _db.d(_ID[l]),
-                        _ctfAttr[l].defocusV * _db.d(_ID[l]),
+                        _ctfAttr[l].defocusU,
+                        _ctfAttr[l].defocusV,
                         _ctfAttr[l].defocusTheta,
                         _ctfAttr[l].Cs,
                         _ctfAttr[l].amplitudeContrast,
@@ -6718,8 +6722,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU * _db.d(_ID[l]),
-                    _ctfAttr[l].defocusV * _db.d(_ID[l]),
+                    _ctfAttr[l].defocusU,
+                    _ctfAttr[l].defocusV,
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
@@ -6934,7 +6938,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
     CHECK_MEMORY_USAGE("Reconstruct Insert begin!!!");
     long memUsageRM = memoryCheckRM();
-    printf("insert memory check work begin:%dG!\n", memUsageRM / MEGABYTE);
+    printf("insert memory check work begin:%ldG!\n", memUsageRM / MEGABYTE);
 #ifdef GPU_VERSION
     Complex *modelF;
     RFLOAT *modelT;
@@ -7957,7 +7961,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
     CHECK_MEMORY_USAGE("Reconstruct Insert done!!!");
     long memUsageD = memoryCheckRM();
-    printf("insert memory check work done:%dG!\n", memUsageD / MEGABYTE);
+    printf("insert memory check work done:%ldG!\n", memUsageD / MEGABYTE);
 
 #ifdef OPTIMISER_BALANCE_CLASS
     umat2 bm;
@@ -8618,7 +8622,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 #endif
 
     long memUsage = memoryCheckRM();
-    printf("reconstruct memory check work done:%dG!\n", memUsage / MEGABYTE);
+    printf("reconstruct memory check work done:%ldG!\n", memUsage / MEGABYTE);
 
 #ifdef GPU_VERSION
     NT_MASTER
@@ -8997,7 +9001,7 @@ void Optimiser::allocPreCal(const bool mask,
 #ifdef OPTIMISER_CTF_ON_THE_FLY
         RFLOAT* poolCTF = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
 #endif
-
+        
         MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
         #pragma omp parallel for firstprivate(ctfPDustman)
         FOR_EACH_2D_IMAGE
@@ -9010,8 +9014,8 @@ void Optimiser::allocPreCal(const bool mask,
             CTF(ctf,
                 _para.pixelSize,
                 _ctfAttr[rl].voltage,
-                _ctfAttr[rl].defocusU * _db.d(_ID[l]),
-                _ctfAttr[rl].defocusV * _db.d(_ID[l]),
+                _ctfAttr[rl].defocusU,
+                _ctfAttr[rl].defocusV,
                 _ctfAttr[rl].defocusTheta,
                 _ctfAttr[rl].Cs,
                 _ctfAttr[rl].amplitudeContrast,
@@ -9165,7 +9169,7 @@ void Optimiser::writeDescInfo(FILE *file) const
     fprintf(file, "#10:COORDINATE_Y\tFLOAT\t18.9f\n");
     fprintf(file, "#11:GROUP_ID\tINT\t6d\n");
     fprintf(file, "#12:CLASS_ID\tINT\t6d\n");
-    fprintf(file, "#13QUATERNION_0\tFLOAT\t18.9f\n");
+    fprintf(file, "#13:QUATERNION_0\tFLOAT\t18.9f\n");
     fprintf(file, "#14:QUATERNION_1\tFLOAT\t18.9f\n");
     fprintf(file, "#15:QUATERNION_2\tFLOAT\t18.9f\n");
     fprintf(file, "#16:QUATERNION_3\tFLOAT\t18.9f\n");
@@ -9271,7 +9275,7 @@ void Optimiser::saveDatabase(const bool finished,
                          _ctfAttr[l].amplitudeContrast,
                          _ctfAttr[l].phaseShift,
                          subtractPath,
-                         _db.micrographPath(_ID[l]).c_str(),
+                         _db.path(_ID[l]).c_str(),
                          _db.coordX(_ID[l]),
                          _db.coordY(_ID[l]),
                          _groupID[l],

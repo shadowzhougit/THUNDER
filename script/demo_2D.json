@@ -2,6 +2,7 @@
     "Basic" :
     {
         "Number of Threads Per Process" : 24,
+        "Available GPUs" : "",
         "2D or 3D Mode" : "2D",
         "Global Search" : true,
         "Local Search" : true,
@@ -23,7 +24,10 @@
         "Calculate FSC Using Masked Region" : false,
         "Particle Grading" : false,
         "Auto-Recentre Reference" : true,
-        "Maximum Memory Usage Per Process (GB)" : 250
+        "Maximum Memory Usage Per Process (GB)" : 250,
+        "Rotation Alignment" : true,
+        "Translation Alignment" : true,
+        "Defocus Alignment" : true
     },
 
     "Reference Mask" :
