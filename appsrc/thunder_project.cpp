@@ -93,7 +93,7 @@ int main(int argc, char* argv[])
     int nThread;
     int pf;
 
-    char option[] = {'o', 'i', 'n', 'm', 'p', 'j', 'f'};
+    char option[] = {'o', 'i', 'n', 'p', 'm', 'j', 'f'};
 
     int option_index = 0;
 
