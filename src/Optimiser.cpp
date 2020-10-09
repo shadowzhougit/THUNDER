@@ -1360,14 +1360,10 @@ void Optimiser::expectation()
                 if (phase == 0)
 #endif
                 {
-                    // _par[l]->perturb(_para.perturbFactorL, PAR_R);
-                    // _par[l]->perturb(_para.perturbFactorL, PAR_T);
-
                     if (_para.alignR)
                     {
                         par->perturb(_para.perturbFactorL, PAR_R);
                     }
-                    
                     if (_para.alignT)
                     {
                         par->perturb(_para.perturbFactorL, PAR_T);
@@ -5313,8 +5309,8 @@ void Optimiser::initCTF()
         CTF(_ctf[l],
             _para.pixelSize,
             _ctfAttr[l].voltage,
-            _ctfAttr[l].defocusU * _db.d(_ID[l]),
-            _ctfAttr[l].defocusV * _db.d(_ID[l]),
+            _ctfAttr[l].defocusU,
+            _ctfAttr[l].defocusV,
             _ctfAttr[l].defocusTheta,
             _ctfAttr[l].Cs,
             _ctfAttr[l].amplitudeContrast,
@@ -5661,6 +5657,7 @@ void Optimiser::refreshClassChange()
             if (_iRefPrev[l] != _iRef[l])
             {
                 cc += 1;
+                _nChange[l] += 1;
             }
         }
     }
