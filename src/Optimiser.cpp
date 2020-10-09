@@ -9221,7 +9221,10 @@ void Optimiser::saveDatabase(const bool finished,
     dmat33 rotB; // rot for base left closet
     dmat33 rotC; // rot for every left closet
 
-    writeDescInfo(file);
+    if (_commRank == 1)
+    {
+        writeDescInfo(file);
+    }
 
     FOR_EACH_2D_IMAGE
     {
