@@ -457,7 +457,7 @@ void InsertFT(std::vector<int>& iGPU,
               int nGPU);
 
 void allReduceFTO(std::vector<int>& iGPU,
-                  std::vector<int>& gpusPerProcess,
+                  std::vector<int>& gpuPerProcess, 
                   std::vector<void*>& stream,
                   Complex* volumeF,
                   Complex** dev_F,

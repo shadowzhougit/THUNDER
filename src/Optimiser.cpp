@@ -23,11 +23,11 @@ void Optimiser::setGPUEnv()
         int rank, size;
         MPI_Comm_size(_hemi, &size);
         MPI_Comm_rank(_hemi, &rank);
-        
-        _gpusPerProcess.resize(size);
-        
-        int *recvbuf = (int*)malloc(size * sizeof(int));
-        memset(recvbuf, 0, size * sizeof(int));
+
+        _gpuPerProcess.resize(size);
+
+        int *recvBuf = (int*)malloc(size * sizeof(int));
+        memset(recvBuf, 0, size * sizeof(int));
 
         readGPUPARA(_para.gpus,
                     _iGPU,
@@ -36,17 +36,17 @@ void Optimiser::setGPUEnv()
         gpuCheck(_stream,
                  _iGPU,
                  _nGPU);
-
-        recvbuf[rank] = _nGPU;
-
-        MPI_Allgather(&_nGPU, 1, MPI_INT, recvbuf, 1, MPI_INT, _hemi);
         
-        for (int i = 0; i < size; i++)
-            _gpusPerProcess[i] = recvbuf[i];
-    
-        free(recvbuf);
-    }
+        recvBuf[rank] = _nGPU;
 
+        MPI_Allgather(&_nGPU, 1, MPI_INT, recvBuf, 1, MPI_INT, _hemi);
+
+        for (int i = 0; i < size; i++)
+            _gpuPerProcess[i] = recvBuf[i];
+
+        free(recvBuf);
+    }
+    
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
@@ -59,7 +59,7 @@ void Optimiser::destoryGPUEnv()
                       _nGPU);
 
         _nGPU = 0;
-        _gpusPerProcess.clear();
+        _gpuPerProcess.clear();
     }
     
     MPI_Barrier(MPI_COMM_WORLD);
@@ -221,8 +221,8 @@ void Optimiser::init()
 
     if (_para.size / 2 - CEIL(_para.maskRadius / _para.pixelSize) < 1)
     {
-        MLOG(WARNING, "LOGGER_SYS") << "Inproper radius of mask, modified it to half of image size.";
-        _para.maskRadius = FLOOR(_para.size * _para.pixelSize / 2);
+        REPORT_ERROR("INPROPER RADIUS OF MASK");
+        abort();
     }
 
     //_rS = AROUND(resA2P(1.0 / _para.sclCorRes, _para.size, _para.pixelSize)) + 1;
@@ -556,10 +556,15 @@ void Optimiser::init()
 
     NT_MASTER
     {
+        ALOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
+        BLOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
+
+        initSigma();
+
         if (_para.gSearch)
         {
-            ALOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
-            BLOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma";
+            ALOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma Using Random Projections";
+            BLOG(INFO, "LOGGER_INIT") << "Estimating Initial Sigma Using Random Projections";
 
             initSigma();
         }
@@ -1364,6 +1369,7 @@ void Optimiser::expectation()
                     {
                         par->perturb(_para.perturbFactorL, PAR_R);
                     }
+                    
                     if (_para.alignT)
                     {
                         par->perturb(_para.perturbFactorL, PAR_T);
@@ -2764,6 +2770,7 @@ void Optimiser::expectationG()
     MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> sigRcpPDustman(&_sigRcpP);
 
+    nPer = 0;
     for (int cls = 0; cls < _para.k; cls++)
     {
         if (_para.mode == MODE_3D)
@@ -2779,7 +2786,6 @@ void Optimiser::expectationG()
             }
         }
         
-        nPer = 0;
         #pragma omp parallel for schedule(dynamic) firstprivate(datPRDustman, datPIDustman, ctfPDustman, sigRcpPDustman)
         FOR_EACH_2D_IMAGE
         {
@@ -4046,8 +4052,8 @@ void Optimiser::run()
 
             //_model.resetTVari();
             //_model.resetFSCArea();
-
             //_model.resetCChange();
+
             _model.resetRChange();
 
             _model.setNRChangeNoDecrease(0);
@@ -4490,7 +4496,7 @@ void Optimiser::bcastGroupInfo()
 
     bool flag = 0;
     bool flagAll[_commSize];
-    
+
     _groupID.clear();
 
     NT_MASTER
@@ -4501,7 +4507,7 @@ void Optimiser::bcastGroupInfo()
         }
 
         vector<int>::iterator result = std::find(_groupID.begin(), _groupID.end(), 0);
-        
+
         if (result != _groupID.end())
         {
             flag = 1;
@@ -4519,22 +4525,21 @@ void Optimiser::bcastGroupInfo()
             break;
         }
     }
-        
+
     if (sum == 1)
     {
         _groupID.clear();
-        
+
         NT_MASTER
         {
             FOR_EACH_2D_IMAGE
             {
                 _groupID.push_back(_db.groupID(_ID[l]) + 1);
             }
-
         }
         MLOG(WARNING, "LOGGER_INIT") << "GroupID is from 1, not 0";
         MLOG(INFO, "LOGGER_INIT") << "Getting Number of Groups from Database";
-        
+
         _nGroup = _db.nGroup() + 1;
     }
     else
@@ -6719,8 +6724,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU,
-                    _ctfAttr[l].defocusV,
+                    _ctfAttr[l].defocusU * d,
+                    _ctfAttr[l].defocusV * d,
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
@@ -6745,8 +6750,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU * d,
-                    _ctfAttr[l].defocusV * d,
+                    _ctfAttr[l].defocusU,
+                    _ctfAttr[l].defocusV,
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
@@ -7189,7 +7194,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
             free(pglk_sigRcpP);
             
             allReduceFTO(_iGPU,
-                         _gpusPerProcess,
+                         _gpuPerProcess,
                          _stream,
                          modelF,
                          dev_F,
@@ -7396,7 +7401,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                         }
 
                         allReduceFTO(_iGPU,
-                                     _gpusPerProcess,
+                                     _gpuPerProcess,
                                      _stream,
                                      modelF,
                                      dev_F,
@@ -7590,7 +7595,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
                 free(pglk_sigRcpP);
                 
                 allReduceFTO(_iGPU,
-                             _gpusPerProcess,
+                             _gpuPerProcess,
                              _stream,
                              modelF,
                              dev_F,
@@ -7794,7 +7799,7 @@ void Optimiser::reconstructRef(const bool fscFlag,
 
                 else if (_para.mode == MODE_3D)
                 {
-                    _par[l]->rank1st(quat, tran, d);
+                    _par[l]->rand(quat, tran, d);
 
                     dmat33 rot3D;
 
@@ -8933,8 +8938,8 @@ void Optimiser::allocPreCal(const bool mask,
     // RFLOAT ratio = 1;
 
     std::cout << "Round " << _iter << ", ratio = " << ratio << std::endl;
-    std::cout << "Round " << _iter << ", _nPxl = " << _nPxl << std::endl;
-    std::cout << "Round " << _iter << ", _ID.size() = " << _ID.size() << std::endl;
+    std::cout << "Round " << _iter << _nPxl << ", _nPxl = " << _nPxl << std::endl;
+    std::cout << "Round " << _iter << _ID.size() << ", _ID.size() = " << _ID.size() << std::endl;
 
     // divide 4, as there are 4 containers in each stall
 
@@ -8954,7 +8959,7 @@ void Optimiser::allocPreCal(const bool mask,
     uvec si = uvec::Zero(_ID.size());
     for (size_t l = 0; l < _ID.size(); l++)
         si(l) = l;
-    
+
     MemoryBazaarDustman<Image, DerivedType, 4> imgDustman(&_img);
     MemoryBazaarDustman<Image, DerivedType, 4> imgOriDustman(&_imgOri);
     MemoryBazaarDustman<RFLOAT, BaseType, 4> datPRDustman(&_datPR);
@@ -8978,7 +8983,7 @@ void Optimiser::allocPreCal(const bool mask,
             _datPR[pixelMajor
                  ? (i * _ID.size() + rl)
                  : (_nPxl * rl + i)] = data.dat[0];
-    
+
             _datPI[pixelMajor
                  ? (i * _ID.size() + rl)
                  : (_nPxl * rl + i)] = data.dat[1];
@@ -8998,7 +9003,7 @@ void Optimiser::allocPreCal(const bool mask,
 #ifdef OPTIMISER_CTF_ON_THE_FLY
         RFLOAT* poolCTF = (RFLOAT*)TSFFTW_malloc(_nPxl * omp_get_max_threads() * sizeof(RFLOAT));
 #endif
-        
+
         MemoryBazaarDustman<RFLOAT, BaseType, 4> ctfPDustman(&_ctfP);
         #pragma omp parallel for firstprivate(ctfPDustman)
         FOR_EACH_2D_IMAGE
@@ -9181,7 +9186,6 @@ void Optimiser::writeDescInfo(FILE *file) const
     fprintf(file, "#25:STD_DEFOCUS_FACTOR\tFLOAT\t18.9f\n");
     fprintf(file, "#26:SCORE\tFLOAT\t18.9f\n");
     fprintf(file, "#27:CHANGENUM\tINT\t6d\n\n");
-
 }
 
 void Optimiser::saveDatabase(const bool finished,
@@ -9412,8 +9416,8 @@ void Optimiser::saveSubtract(const bool symmetrySubtract,
         CTF(ctf,
             _para.pixelSize,
             _ctfAttr[l].voltage,
-            _ctfAttr[l].defocusU * d,
-            _ctfAttr[l].defocusV * d,
+            _ctfAttr[l].defocusU,
+            _ctfAttr[l].defocusV,
             _ctfAttr[l].defocusTheta,
             _ctfAttr[l].Cs,
             _ctfAttr[l].amplitudeContrast,

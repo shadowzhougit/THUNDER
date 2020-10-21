@@ -955,7 +955,7 @@ void InsertFT(std::vector<int>& iGPU,
 }
 
 void allReduceFTO(std::vector<int>& iGPU,
-                  std::vector<int>& gpusPerProcess,
+                  std::vector<int>& gpuPerProcess, 
                   std::vector<void*>& stream,
                   Complex* volumeF,
                   Complex** dev_F,
@@ -976,7 +976,7 @@ void allReduceFTO(std::vector<int>& iGPU,
                   int nGPU)
 {
     cuthunder::allReduceFTO(iGPU,
-                            gpusPerProcess,
+                            gpuPerProcess,
                             stream,
                             reinterpret_cast<cuthunder::Complex*>(volumeF),
                             reinterpret_cast<cuthunder::Complex**>(dev_F),

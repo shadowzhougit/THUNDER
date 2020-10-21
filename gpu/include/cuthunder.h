@@ -690,7 +690,7 @@ void InsertFT(vector<int>& iGPU,
  * @param
  */
 void allReduceFTO(vector<int>& iGPU,
-                  vector<int>& gpusPerProcess,
+                  vector<int>& gpuPerProcess, 
                   vector<void*>& stream,
                   Complex* volumeF,
                   Complex** dev_F,

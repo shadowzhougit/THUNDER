@@ -5790,10 +5790,15 @@ __global__ void kernel_CTF(Complex *devCtf,
                   * (j / (pixelSize * nRow)));
 
         angle = atan2f(j, i) - ctfData[blockIdx.x].defocusTheta;
+        //defocus = -(ctfData[blockIdx.x].defocusU 
+        //            + ctfData[blockIdx.x].defocusV 
+        //            + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
+        //            * cosf(2 * angle)) * dpara[blockIdx.x] 
+        //        / 2;
         defocus = -(ctfData[blockIdx.x].defocusU 
                     + ctfData[blockIdx.x].defocusV 
                     + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
-                    * cosf(2 * angle)) * dpara[blockIdx.x] 
+                    * cosf(2 * angle))
                 / 2;
         ki = K1 * defocus * u * u 
            + K2 * u * u * u * u 
@@ -5821,10 +5826,15 @@ __global__ void kernel_CTF(Complex *devCtf,
                  * (j / (pixelSize * nRow)));
 
         angle = atan2(j, i) - ctfData[blockIdx.x].defocusTheta;
+        //defocus = -(ctfData[blockIdx.x].defocusU 
+        //            + ctfData[blockIdx.x].defocusV 
+        //            + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
+        //            * cos(2 * angle)) * dpara[blockIdx.x]
+        //        / 2;
         defocus = -(ctfData[blockIdx.x].defocusU 
                     + ctfData[blockIdx.x].defocusV 
                     + (ctfData[blockIdx.x].defocusU - ctfData[blockIdx.x].defocusV) 
-                    * cos(2 * angle)) * dpara[blockIdx.x]
+                    * cos(2 * angle))
                 / 2;
         ki = K1 * defocus * u * u 
            + K2 * u * u * u * u 
