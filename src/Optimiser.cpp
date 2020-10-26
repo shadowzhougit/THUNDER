@@ -221,8 +221,8 @@ void Optimiser::init()
 
     if (_para.size / 2 - CEIL(_para.maskRadius / _para.pixelSize) < 1)
     {
-        REPORT_ERROR("INPROPER RADIUS OF MASK");
-        abort();
+        MLOG(WARNING, "LOGGER_SYS") << "Inproper radius of mask, modified it to half of image size.";
+        _para.maskRadius = FLOOR(_para.size * _para.pixelSize / 2);
     }
 
     //_rS = AROUND(resA2P(1.0 / _para.sclCorRes, _para.size, _para.pixelSize)) + 1;
@@ -6724,8 +6724,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU * d,
-                    _ctfAttr[l].defocusV * d,
+                    _ctfAttr[l].defocusU,
+                    _ctfAttr[l].defocusV,
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
@@ -6750,8 +6750,8 @@ void Optimiser::allReduceSigma(const bool mask,
                 CTF(ctf,
                     _para.pixelSize,
                     _ctfAttr[l].voltage,
-                    _ctfAttr[l].defocusU,
-                    _ctfAttr[l].defocusV,
+                    _ctfAttr[l].defocusU * d,
+                    _ctfAttr[l].defocusV * d,
                     _ctfAttr[l].defocusTheta,
                     _ctfAttr[l].Cs,
                     _ctfAttr[l].amplitudeContrast,
@@ -8938,8 +8938,8 @@ void Optimiser::allocPreCal(const bool mask,
     // RFLOAT ratio = 1;
 
     std::cout << "Round " << _iter << ", ratio = " << ratio << std::endl;
-    std::cout << "Round " << _iter << _nPxl << ", _nPxl = " << _nPxl << std::endl;
-    std::cout << "Round " << _iter << _ID.size() << ", _ID.size() = " << _ID.size() << std::endl;
+    std::cout << "Round " << _iter << ", _nPxl = " << _nPxl << std::endl;
+    std::cout << "Round " << _iter << ", _ID.size() = " << _ID.size() << std::endl;
 
     // divide 4, as there are 4 containers in each stall
 
