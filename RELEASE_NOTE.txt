@@ -1,0 +1,4 @@
+Please note the following points:
+    1. This is the version used and tested internally. 
+    2. The content of the input json file has a few changes compared to that in master branch, you can refer to json examples in script directory.
+
